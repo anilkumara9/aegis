@@ -1,4 +1,4 @@
-"""Aegis CLI: aegis [repl] | scan | guard | respond | kb | hunt | watch | version."""
+"""Aegis CLI: aegis [repl] | scan | guard | respond | kb | hunt | emulate | watch | version."""
 
 from __future__ import annotations
 
@@ -94,6 +94,17 @@ def cmd_hunt(args) -> int:
     return 0
 
 
+def cmd_emulate(args) -> int:
+    from .emulate import EmulateError, emulate_dir
+    try:
+        print(emulate_dir(args.target, campaign=args.campaign, kb=_kb(),
+                          as_json=args.as_json))
+    except EmulateError as exc:
+        print(f"emulate: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aegis",
                                 description="Aegis defensive guard agent")
@@ -134,6 +145,15 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("watch_args", nargs=argparse.REMAINDER,
                    help="--once|--interval|--triage|--schedule <dir> [...]")
 
+    e = sub.add_parser("emulate", help="purple-team adversary campaign "
+                       "emulation on your own local code")
+    e.add_argument("--target", required=True,
+                   help="local directory to emulate against (own assets only)")
+    e.add_argument("--campaign", default="credential-theft",
+                   help="credential-theft|supply-chain|insider-exfil")
+    e.add_argument("--json", action="store_true", dest="as_json",
+                   help="machine-readable JSON output")
+
     sub.add_parser("version", help="print version")
     p.add_argument("--provider", default="", help="anthropic|openai|google|ollama|mock")
     p.add_argument("--model", default="", help="model name override")
@@ -167,6 +187,8 @@ def main(argv=None) -> int:
         return cmd_kb(args)
     if cmd == "hunt":
         return cmd_hunt(args)
+    if cmd == "emulate":
+        return cmd_emulate(args)
     if cmd == "version":
         print(f"aegis {__version__}")
         return 0

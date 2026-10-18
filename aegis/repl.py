@@ -14,7 +14,7 @@ from .agent import AgentLoop
 from .guard import Policy
 from .kb import KB
 from .providers import get_provider
-from .skills import SKILLS, hunt, plan_attack_surface
+from .skills import SKILLS, emulate, hunt, plan_attack_surface
 from .tools import safe_path
 from .tools.registry import TOOL_NAMES
 
@@ -282,6 +282,11 @@ def _handle_slash(line: str, loop: AgentLoop,
         return False
     if cmd == "/plan":
         print(plan_attack_surface(rest, kb))
+        return False
+    if cmd == "/emulate":
+        parts = (rest or "").split(None, 1)
+        print(emulate(parts[0] if parts else "",
+                      parts[1] if len(parts) > 1 else None, kb))
         return False
     if cmd == "/mode":
         want = (rest or "").strip().lower()
