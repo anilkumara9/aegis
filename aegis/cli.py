@@ -94,6 +94,11 @@ def cmd_hunt(args) -> int:
     return 0
 
 
+def cmd_graph(args) -> int:
+    from .graph import run_graph
+    return run_graph(args.target, json_mode=args.json, top=args.top)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aegis",
                                 description="Aegis defensive guard agent")
@@ -134,6 +139,14 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("watch_args", nargs=argparse.REMAINDER,
                    help="--once|--interval|--triage|--schedule <dir> [...]")
 
+    gr = sub.add_parser("graph", help="attack graph: ranked adversary paths "
+                                      "for a local system")
+    gr.add_argument("target", help="local directory to analyze "
+                                  "(read-only; remote targets refused)")
+    gr.add_argument("--json", action="store_true", help="emit JSON report")
+    gr.add_argument("--top", type=int, default=5,
+                    help="ranked paths to show (default 5)")
+
     sub.add_parser("version", help="print version")
     p.add_argument("--provider", default="", help="anthropic|openai|google|ollama|mock")
     p.add_argument("--model", default="", help="model name override")
@@ -167,6 +180,8 @@ def main(argv=None) -> int:
         return cmd_kb(args)
     if cmd == "hunt":
         return cmd_hunt(args)
+    if cmd == "graph":
+        return cmd_graph(args)
     if cmd == "version":
         print(f"aegis {__version__}")
         return 0
