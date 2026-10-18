@@ -1,0 +1,679 @@
+pack: c2_operations
+version: "1.0"
+techniques:
+  - id: AEG-T277
+    name: "Beacon Cadence Analysis: Jitter and Wake-Offset Signatures"
+    category: c2_operations
+    description: >-
+      Operators tune implant check-ins to blend with normal traffic by adding
+      randomized jitter around a base interval and by scheduling wake windows
+      to overlap with human working hours. Defenders detect this not by any
+      payload, which is encrypted, but by the statistical shape of connection
+      timing: inter-arrival times clustering around a hidden period, jitter
+      ranges that stay inside a narrow band, and wake offsets that align with
+      a victim timezone instead of legitimate application polling.
+    how_it_works: >-
+      The implant calls home every N seconds plus or minus a configured jitter
+      percentage, so naive fixed-interval detectors miss it while the traffic
+      still forms a tight distribution of inter-arrival times around the base
+      period. Telemetry shows periodic small sessions to one destination with
+      low byte variance, connections grouped in working-hours windows, and
+      gaps that match sleep intervals rather than user activity. Detection
+      uses time-series statistics (autocorrelation, variance of inter-arrival
+      times, entropy of intervals) and compares observed cadence against the
+      host's legitimate polling applications, which typically randomize fully
+      or follow rigid OS-driven schedules.
+    variants:
+      - "Fixed-interval beacons with bounded random jitter"
+      - "Working-hours-only beacons aligned to the victim's timezone"
+      - "Sleep-window beacons that go silent for configured quiet periods"
+      - "Adaptive beacons that lengthen intervals when the channel is quiet"
+    indicators:
+      - "Outbound connections from one host to a rare destination with inter-arrival times forming a tight cluster around a single period"
+      - "Connection timing whose jitter range stays inside a narrow band instead of resembling organic application randomness"
+      - "Wake windows that align with a victim timezone's business hours while going silent nights and weekends"
+      - "Tiny symmetric byte counts in both directions on every check-in over long-lived sessions"
+    detection:
+      rule: detect_beacon_cadence
+      patterns:
+        - '(?i)inter.?arrival.{0,20}(cluster|tight|period)'
+        - '(?i)beacon.{0,30}(jitter|cadence|interval)'
+        - '(?i)(autocorrel|periodicity).{0,30}network'
+        - '(?i)wake.{0,15}window.{0,25}(timezone|working.hours)'
+    severity: high
+    mitigations:
+      - "Run NDR analytics that score connection timing statistics (periodicity, inter-arrival variance) per destination instead of relying on fixed-interval rules"
+      - "Baseline legitimate polling behavior per host and alert when a new rare destination adopts a tight cadence"
+      - "Egress-filter rare and newly observed destinations so a statistical catch becomes a containment action"
+      - "Correlate cadence anomalies with endpoint evidence (new implants, injected processes) before isolating the host"
+    examples:
+      - summary: "Mandiant's 3CX analysis documents the SmoothOperator beaconing pattern: periodic HTTPS check-ins carrying encrypted tasking to attacker infrastructure, detected through network rhythm analysis rather than payload signatures."
+        reference: "https://intel.mjolnirsecurity.com/3cx-supply-chain"
+    references:
+      - "https://intel.mjolnirsecurity.com/3cx-supply-chain"
+      - "https://www.decryptiondigest.com/blog/cobalt-strike-detection-defense"
+
+  - id: AEG-T278
+    name: "Domain Fronting and CDN-Abuse C2"
+    category: c2_operations
+    description: >-
+      Domain fronting hides C2 traffic behind a high-reputation CDN domain by
+      placing a trusted name in the TLS Server Name Indication while the
+      encrypted HTTP Host header names the attacker's own CDN distribution.
+      External observers see only traffic to a legitimate CDN edge network,
+      while the CDN itself routes the request to the operator's origin. When
+      providers block classic fronting, operators pivot to CDN-hosted
+      infrastructure and domainless fronting where the SNI is left blank.
+    how_it_works: >-
+      The implant performs a DNS lookup for a benign CDN-hosted domain and
+      sets it as the TLS SNI, then sends HTTPS requests whose Host header
+      points to the attacker's distribution on the same CDN. Because the
+      Host header is encrypted inside TLS, network filters relying on SNI or
+      destination IP see only reputable CDN traffic. Telemetry anomalies
+      include non-browser TLS fingerprints (JA3) talking to CDNs, HTTP POSTs
+      against CDN-hosted static-looking resources, Host-header/SNI mismatch
+      visible at TLS-terminating inspection points, and blank-SNI handshakes
+      that still produce working responses from a CDN edge node.
+    variants:
+      - "Classic domain fronting: trusted SNI with attacker Host header on the same CDN"
+      - "Domainless fronting: SNI left blank, routing driven by the Host header alone"
+      - "Direct CDN infrastructure: team servers hosted on cloud/CDN IP ranges for reputation cover"
+      - "Fronted fallback: CDN-routed channel activated only after the primary C2 is blocked"
+    indicators:
+      - "TLS ClientHello SNI differing from the HTTP Host header observed at a TLS-terminating proxy or sensor"
+      - "A non-browser JA3 fingerprint originating CDN-bound traffic, especially HTTPS POSTs to static-looking paths"
+      - "Blank or missing SNI handshakes to CDN edge nodes that nonetheless complete and carry interactive traffic"
+      - "Multiple user agents from one host contacting CDN domains, suggesting automated tooling rather than one browser"
+    detection:
+      rule: detect_domain_fronting
+      patterns:
+        - '(?i)sni.{0,20}(mismatch|host.?header|diverge)'
+        - '(?i)domain.{0,5}front(ing)?'
+        - '(?i)(ja3|ja4).{0,25}(cdn|cloudfront)'
+        - '(?i)blank.{0,10}sni'
+    severity: critical
+    mitigations:
+      - "Terminate TLS at the proxy for corporate egress so Host-header/SNI mismatches and blank-SNI sessions can be inspected and blocked"
+      - "Alert on non-browser JA3 fingerprints issuing HTTPS POSTs to CDN-hosted domains from workstations"
+      - "Work with CDN and cloud providers on takedown and abuse-reporting channels when attacker origins are identified"
+      - "Constrain which processes may reach CDN ranges for interactive use; flag tooling that no approved application should run"
+    examples:
+      - summary: "Cisco Talos documented an operator using Cloudflare-based domain fronting against Myanmar government infrastructure in 2021: the Cobalt Strike beacon resolved a legitimate high-reputation domain while rewriting the HTTPS Host header so the CDN routed traffic to the attacker host."
+        reference: "https://www.comparitech.com/blog/information-security/what-is-a-domain-fronting-attack/"
+    references:
+      - "https://www.comparitech.com/blog/information-security/what-is-a-domain-fronting-attack/"
+      - "https://undercodetesting.com/unmasking-the-ghost-how-adversaries-use-cloudfront-for-covert-c2-infiltration/"
+
+  - id: AEG-T279
+    name: "DNS-over-HTTPS as a C2 Channel"
+    category: c2_operations
+    description: >-
+      Operators move C2 resolution inside encrypted DNS (DoH or DoT) so that
+      passive DNS monitoring sees only an opaque HTTPS session to a
+      well-known resolver. The implant fetches TXT records containing
+      next-stage server addresses over the encrypted channel, which defeats
+      defenders who depend on plaintext DNS logs for C2 detection and
+      takedown. Unlike classic DNS tunneling, the blind spot is architectural:
+      the queries are legitimate protocol, just unreadable in transit.
+    how_it_works: >-
+      The implant issues HTTPS requests to a public DoH resolver (or a
+      third-party HTTPS API that resolves names) asking for TXT or A records
+      of operator-controlled domains, then decodes the answers into C2
+      addresses and rotates infrastructure at will. In telemetry this appears
+      as recurring HTTPS POST or GET sessions to known resolver endpoints
+      from a process that has no business doing its own DNS, often with
+      unusually small, periodic request sizes. Detection shifts from DNS
+      logs to HTTPS inspection: flagging DoH sessions outside the approved
+      resolver list, processes bypassing the OS resolver, and encrypted-DNS
+      traffic patterns that match C2 cadence.
+    variants:
+      - "DoH-based dead-drop resolution: TXT records fetched over encrypted DNS to locate C2"
+      - "DoT sessions to unapproved encrypted resolvers carrying C2 queries"
+      - "HTTPS DNS APIs abused by implants as an encrypted resolver service"
+      - "Resolver redundancy: plaintext DNS, DoH, and hardcoded IPs layered as fallbacks"
+    indicators:
+      - "HTTPS sessions from an endpoint process to public DoH resolver endpoints when the OS resolver is configured elsewhere"
+      - "Periodic short HTTPS exchanges with a resolver that carry no browsing context and repeat at beacon cadence"
+      - "A process issuing its own DNS resolution instead of using the platform resolver APIs"
+      - "TXT-heavy encrypted-DNS usage correlated with subsequent connections to freshly observed IPs"
+    detection:
+      rule: detect_doh_c2
+      patterns:
+        - '(?i)(doh|dns.over.https).{0,25}(c2|beacon|malware)'
+        - '(?i)(godlua|chameldoh)'
+        - '(?i)unapproved.{0,15}(doh|encrypted.dns).{0,15}resolver'
+        - '(?i)process.{0,20}bypass.{0,15}(os|system).{0,10}resolver'
+    severity: high
+    mitigations:
+      - "Enforce a single approved resolver fleet and block DoH/DoT to unapproved endpoints at the firewall"
+      - "Require endpoint processes to use the OS resolver; alert on applications implementing their own DNS stack"
+      - "Log TLS SNI and session cadence for resolver-bound traffic and hunt for beacon-shaped patterns"
+      - "Sinkhole the domains returned by malicious encrypted lookups at the approved resolver layer once identified"
+    examples:
+      - summary: "Qihoo 360 Netlab's analysis of the Godlua backdoor showed it abusing DNS-over-HTTPS to retrieve the C2 server's address from a domain's TXT record, making the resolution invisible to passive DNS monitoring and blending it into ordinary encrypted web traffic."
+        reference: "https://www.zdnet.com/article/first-ever-malware-strain-spotted-abusing-new-doh-dns-over-https-protocol/"
+    references:
+      - "https://www.zdnet.com/article/first-ever-malware-strain-spotted-abusing-new-doh-dns-over-https-protocol/"
+      - "https://www.trendmicro.com/vinfo/za-en/security/news/cybercrime-and-digital-threats/new-godlua-backdoor-found-abusing-dns-over-https-doh-protocol"
+
+  - id: AEG-T280
+    name: "Dead-Drop Resolvers"
+    category: c2_operations
+    description: >-
+      Instead of hardcoding C2 addresses, operators publish them on
+      legitimate web services — a code repository, a map dataset, a social
+      profile, a paste site — and the implant reads the current address from
+      that public post. The technique (MITRE T1102.001) gives huge cover
+      because the initial lookup targets a service employees already visit,
+      and rotating infrastructure becomes a matter of editing a public
+      document rather than rebuilding implants.
+    how_it_works: >-
+      The implant performs an HTTPS request to an ordinary public service and
+      parses a post, profile field, image metadata, or repository file for an
+      encoded domain or IP, then connects to whatever it finds. Telemetry
+      shows the implant contacting a high-reputation service it otherwise
+      has no reason to use, fetching content with embedded encoded data
+      rather than browsing, and then immediately opening sessions to a
+      freshly resolved and otherwise rare destination. The public post is the
+      weakest link: taking it down or monitoring it blinds the whole
+      campaign, which is why defenders report dead drops to the platform as
+      soon as they are identified.
+    variants:
+      - "Code-repository dead drops: C2 addresses hidden in README files or binary assets"
+      - "Map and dataset services abused to store encoded infrastructure pointers"
+      - "Social-profile dead drops: profile fields or posts carrying encoded addresses"
+      - "Paste-site resolvers: raw text posts used as redirect pointers for implants"
+    indicators:
+      - "An endpoint process with no browsing role fetching content from public code or paste services and then connecting to a brand-new rare destination"
+      - "HTTPS responses from a legitimate service containing high-entropy blobs or base64-like data that the process parses"
+      - "A newly deployed implant contacting GitHub, Pastebin-class, or map API endpoints before any operator infrastructure"
+      - "C2 infrastructure changes correlating with edits to a public post, profile, or repository"
+    detection:
+      rule: detect_dead_drop_resolver
+      patterns:
+        - '(?i)dead.?drop.{0,15}(resolver|c2)'
+        - '(?i)(t1102.001|T1102.001)'
+        - '(?i)(github|pastebin|mapbox).{0,20}(c2|dead.drop|resolver)'
+        - '(?i)encoded.{0,15}(c2|address).{0,20}(public|repository|profile)'
+    severity: high
+    mitigations:
+      - "Alert on endpoint processes whose first-ever network contact is a public code/paste service followed by sessions to rare infrastructure"
+      - "Deploy web-proxy policy that inspects service-API fetches by non-browser processes for encoded payloads"
+      - "Report identified dead-drop posts and accounts to the hosting platform for rapid takedown"
+      - "Hunt retrospectively for sibling implants resolving through the same public post before takedown"
+    examples:
+      - summary: "Mandiant's 3CX SmoothOperator analysis found the trojanized desktop client using a GitHub-hosted dead-drop resolver: the loader pulled encoded data appended to repository icon files to decode its live C2 addresses, surviving even the takedown of direct infrastructure."
+        reference: "https://intel.mjolnirsecurity.com/3cx-supply-chain"
+    references:
+      - "https://intel.mjolnirsecurity.com/3cx-supply-chain"
+      - "https://center-for-threat-informed-defense.github.io/mappings-explorer/attack/attack-9.0/domain-enterprise/techniques/T1102.001/"
+
+  - id: AEG-T281
+    name: "Fast-Flux Service Networks"
+    category: c2_operations
+    description: >-
+      Fast flux makes C2 infrastructure resistant to takedown by rotating the
+      IP addresses behind one domain every few minutes, using very short DNS
+      TTLs so resolvers constantly re-query. The rotating addresses usually
+      belong to compromised hosts acting as proxies, so blocking any single
+      IP is pointless and the true back-end server stays hidden. A joint
+      CISA/NSA/FBI advisory in 2025 flagged it as a national-security-level
+      gap in network defenses, used by both ransomware gangs and
+      nation-state groups.
+    how_it_works: >-
+      The authoritative nameserver for the operator's domain returns a
+      changing set of A/AAAA records with TTLs of minutes or less, drawn from
+      a pool of compromised proxies that relay to the real server. In double
+      flux, the NS records themselves rotate too, hiding the DNS chain as
+      well as the content servers. Telemetry shows one domain resolving to
+      many unrelated IPs across diverse ASNs and geographies, TTL values far
+      below organizational norms, and beacons that keep succeeding even as
+      individual flux IPs are blocked. Detection is DNS-analytic: churn rate,
+      TTL distributions, and ASN/geolocation entropy per domain.
+    variants:
+      - "Single flux: A/AAAA records rotate rapidly while nameservers stay fixed"
+      - "Double flux: NS records rotate alongside the address records"
+      - "Bulletproof-fronted flux: compromised proxies fronting infrastructure rented from tolerant hosts"
+      - "Phishing-adjacent flux: the same rotation protecting malware delivery and credential pages"
+    indicators:
+      - "A single domain resolving to many geographically dispersed IPs with TTL values under a few minutes"
+      - "DNS answers for one domain drawing addresses from unrelated ASNs and residential networks"
+      - "Beacon sessions surviving IP-level blocks because the next lookup returns fresh flux addresses"
+      - "NS records for a suspicious domain changing on the same rapid cadence as its address records"
+    detection:
+      rule: detect_fast_flux
+      patterns:
+        - '(?i)fast.?flux'
+        - '(?i)ttl.{0,15}(<|below|under).{0,10}300'
+        - '(?i)(t1568.001|T1568.001)'
+        - '(?i)(double|single).{0,5}flux'
+    severity: high
+    mitigations:
+      - "Block at the domain and DNS layer, not the IP layer: flux IPs are disposable, the domain is the asset"
+      - "Deploy passive-DNS analytics that score per-domain IP churn, TTL distributions, and ASN entropy"
+      - "Sinkhole flux domains at the resolver so internal beacons fail and reveal the infected hosts"
+      - "Coordinate with registrars and hosters on takedown when the back-end or the domain registration is identified"
+    examples:
+      - summary: "The April 2025 joint advisory AA25-093A from CISA, NSA, and the FBI warned that ransomware actors behind Hive and Nefilim, plus the Gamaredon group, were using fast flux to keep C2 and phishing infrastructure reachable despite takedown efforts, urging defenders to close the DNS-layer gap."
+        reference: "https://www.anvilogic.com/threat-reports/fast-flux-c2-advisory"
+    references:
+      - "https://www.anvilogic.com/threat-reports/fast-flux-c2-advisory"
+      - "https://www.akamai.com/glossary/what-is-fast-flux"
+
+  - id: AEG-T282
+    name: "C2 Infrastructure Lifecycle: Burner Domains and Bulletproof Hosting"
+    category: c2_operations
+    description: >-
+      Operators treat infrastructure as disposable: domains are registered
+      days or hours before use, aged briefly or not at all, pointed at C2
+      for a campaign, then abandoned when defenders catch on. Bulletproof
+      hosts that ignore abuse complaints provide the stable layer underneath,
+      while cheap registrars and privacy-protected WHOIS records obscure
+      ownership. Defenders exploit the lifecycle itself: brand-new domains
+      and punycode lookalikes have almost no legitimate business appearing
+      in enterprise traffic.
+    how_it_works: >-
+      The operator registers batches of typo-squat, punycode, or keyword
+      domains, parks them behind bulletproof or compromised hosting, and
+      rotates implants through them as each gets burned by blocklists.
+      Telemetry shows implants contacting domains registered within the last
+      days, WHOIS records with privacy protection and recent creation dates,
+      hosting ASNs associated with abuse-tolerant providers, and bursts of
+      lookalike-domain registrations around a campaign. Detection combines
+      newly-registered-domain feeds, certificate-transparency monitoring,
+      and lexical scoring for lookalike and algorithmically generated names.
+    variants:
+      - "Burner domains: registered days before use, abandoned after detection"
+      - "Lookalike and punycode domains: typos of trusted brands for credibility and confusion"
+      - "Bulletproof hosting: providers that ignore abuse reports sheltering back-end servers"
+      - "Domain fluxing: algorithmically generated batches of throwaway names"
+    indicators:
+      - "Enterprise hosts contacting domains whose WHOIS creation date is within the last week"
+      - "Punycode or typo-squat variants of trusted brands appearing in DNS or proxy logs"
+      - "C2 sessions terminating in ASNs or IP ranges flagged for abuse-tolerant hosting"
+      - "Bursts of new domain registrations or TLS certificates matching a lexical pattern around one campaign"
+    detection:
+      rule: detect_burner_infrastructure
+      patterns:
+        - '(?i)(newly.?registered|brand.?new).{0,15}domain'
+        - '(?i)punycode.{0,15}(lookalike|squat)'
+        - '(?i)bulletproof.{0,10}host'
+        - '(?i)domain.{0,10}age.{0,15}(<|days|hours)'
+    severity: high
+    mitigations:
+      - "Block or heavily scrutinize newly registered domains at the DNS and proxy layer by policy"
+      - "Ingest newly-registered-domain and certificate-transparency feeds into the SIEM for retro-hunting"
+      - "Alert on punycode and lookalike domains of the organization's own brands and key vendors"
+      - "Pressure upstream: report bulletproof hosts to their transit providers and law-enforcement channels"
+    examples:
+      - summary: "Forescout's 2026 analysis of ClickFix-to-C2 malware loaders documents the infrastructure layer in practice: C2 domains registered within days of first use and hosted on abuse-prone ranges, letting defenders retro-hunt DNS and proxy logs for the registration cohort."
+        reference: "https://www.forescout.com/blog/from-clickfix-to-c2-comparative-analysis-of-two-malware-loaders/"
+    references:
+      - "https://www.forescout.com/blog/from-clickfix-to-c2-comparative-analysis-of-two-malware-loaders/"
+      - "https://intel.mjolnirsecurity.com/fast-flux-dns"
+
+  - id: AEG-T283
+    name: "Process Injection Family Behaviors"
+    category: c2_operations
+    description: >-
+      Injection lets operator code run inside a legitimate process so its
+      network connections and file access appear to come from a trusted
+      program. The family includes classic DLL injection, process hollowing
+      (launching a suspended legitimate process, replacing its memory, and
+      resuming it), APC queuing, thread hijacking, and doppelganging.
+      Defenders cannot trust the process name alone; they watch memory
+      permissions, cross-process API calls, and code that has no file behind
+      it.
+    how_it_works: >-
+      The loader opens the target process, allocates memory inside it, writes
+      operator code, and starts execution via a remote thread, hijacked
+      thread context, or the hollowed process's own resumed entry point. In
+      telemetry this produces Sysmon Event ID 8 (remote thread creation from
+      an unusual source), Event ID 10 (process opened with memory-write
+      rights), Event ID 25 (process tampering), and private executable memory
+      regions that are not backed by any file on disk — the classic
+      Volatility malfind signature. Legitimate software also injects, so
+      detection is contextual: the source-target process pair, the timing
+      after an initial download, and the lack of a signed image behind the
+      code.
+    variants:
+      - "Process hollowing (T1055.012): suspended legitimate process whose memory is replaced"
+      - "DLL and PE injection (T1055.001/.002): code mapped into a running process"
+      - "Thread execution hijacking (T1055.003) and APC injection (T1055.004)"
+      - "Process doppelganging (T1055.013): transactional file trickery to evade image-path checks"
+    indicators:
+      - "Sysmon Event ID 8 where the source process is not a known injector and the target is a system process"
+      - "Sysmon Event ID 10 showing memory-write access requests against high-value targets like lsass or svchost"
+      - "Private executable (often RWX) memory regions with no backing file on disk in memory forensics"
+      - "A normally quiet process suddenly loading network libraries and making outbound connections it never made before"
+    detection:
+      rule: detect_process_injection
+      patterns:
+        - '(?i)(sysmon|event).{0,5}(id.{0,3}8|id.{0,3}25).{0,30}inject'
+        - '(?i)process.{0,10}hollow'
+        - '(?i)(t1055.012|T1055.012|t1055|T1055)'
+        - '(?i)rwx.{0,15}(private|memory).{0,15}no.{0,10}file'
+    severity: critical
+    mitigations:
+      - "Deploy Sysmon with Event IDs 8, 10, and 25 enabled and build SIEM rules on anomalous source-target process pairs"
+      - "Enforce signed-binary and memory-integrity policies (HVCI) that block unsigned code injection"
+      - "Run periodic memory-forensic sweeps for fileless executable regions on high-value servers"
+      - "Treat hollowed system processes as active incidents: isolate the host and hunt for the injector and its delivery chain"
+    examples:
+      - summary: "Wazuh's public detection guide walks through catching process hollowing with Sysmon telemetry: Event ID 8 remote-thread creation from a downloader into a system process, correlated with unbacked executable memory — the same signal defenders hunt for LokiBot-style hollowed processes."
+        reference: "https://wazuh.com/blog/detecting-process-injection-attacks-with-wazuh/"
+    references:
+      - "https://wazuh.com/blog/detecting-process-injection-attacks-with-wazuh/"
+      - "https://www.manageengine.com/log-management/mitre-attack/defense-evasion/process-injection.html"
+
+  - id: AEG-T284
+    name: "Sandbox and Analysis Evasion Behaviors"
+    category: c2_operations
+    description: >-
+      Before doing anything malicious, modern implants check whether they are
+      being watched: they look for virtualization artifacts, sleep past
+      sandbox timeouts, require human interaction, or verify the machine
+      looks like a real workstation. If the environment smells like analysis,
+      the sample stays quiet and gets classified benign. Defenders counter by
+      reading the evasion attempts themselves as evidence and by making
+      sandboxes harder to fingerprint.
+    how_it_works: >-
+      The sample queries environment signals — hypervisor registry keys and
+      drivers, virtual NIC MAC prefixes, tiny disk sizes, low CPU counts,
+      analysis-tool processes, sandbox hostnames — and compares elapsed time
+      around sleep calls to detect clock acceleration. It may stall with
+      busy-loop calculations instead of sleep calls so timer-based sandboxes
+      cannot skip ahead, or gate execution on mouse movement, document
+      scrolling, or a populated user profile. In telemetry these appear as
+      environment-enumeration bursts with no follow-on action, long idle
+      periods followed by sudden C2 contact, and sleep durations that exceed
+      any legitimate application's.
+    variants:
+      - "Time-based stalling: long sleeps and busy-loop delays that outlast analysis windows"
+      - "Environment fingerprinting: checks for VM artifacts, analysis tools, and sandbox hostnames"
+      - "Interaction gates: execution conditioned on mouse movement, scrolling, or user clicks"
+      - "Target scoping: running only on specific geographies, domains, or machine configurations"
+    indicators:
+      - "A sample enumerating virtualization artifacts, sandbox processes, or hypervisor keys and then exiting without action"
+      - "Sleep or stall durations orders of magnitude longer than any legitimate use on that host class"
+      - "Malicious behavior that appears only after simulated user interaction in re-analysis"
+      - "Clock-acceleration checks: code measuring whether requested sleep time actually elapsed"
+    detection:
+      rule: detect_sandbox_evasion
+      patterns:
+        - '(?i)sandbox.{0,15}evasion'
+        - '(?i)stall(ing)?.{0,15}(code|sleep|delay)'
+        - '(?i)(vm|hypervisor|analysis).{0,15}artifact.{0,15}check'
+        - '(?i)(t1497|T1497)'
+    severity: medium
+    mitigations:
+      - "Harden sandboxes: realistic images, populated profiles, simulated interaction, and full-duration sleeps at human clock speed"
+      - "Treat a clean sandbox verdict as weak evidence; require multi-engine and behavioral corroboration for high-risk samples"
+      - "Log and alert on environment-enumeration behavior itself — fingerprinting attempts are a signal, not an absence of signal"
+      - "Reserve bare-metal analysis for targeted samples where VM artifacts are the suspected blocker"
+    examples:
+      - summary: "Virus Bulletin's analysis-evasion research documents the standard playbook defenders still fight today: sleep calls with long delays, stalling code that burns CPU cycles instead of sleeping, and checks for sandbox-specific processes like Sandboxie and Joe Sandbox before any payload runs."
+        reference: "https://www.virusbulletin.com/virusbulletin/2013/02/techniques-evading-automated-analysis"
+    references:
+      - "https://www.virusbulletin.com/virusbulletin/2013/02/techniques-evading-automated-analysis"
+      - "https://www.sonicwall.com/en-us/blog/overcoming-advanced-evasion-of-malware-detection/"
+
+  - id: AEG-T285
+    name: "Living-off-Cloud C2: Messaging and Collaboration Abuse"
+    category: c2_operations
+    description: >-
+      Operators route C2 through services the enterprise already allows —
+      Discord channels, Telegram bots, Slack workspaces, Teams webhooks, cloud
+      storage — so the traffic is encrypted to a trusted destination and
+      blends with employee use. The implant posts task requests as chat
+      messages or file drops and reads operator replies the same way. Because
+      the destination is legitimate, URL reputation and IP blocklists are
+      useless; detection depends on behavior, not on where the packets go.
+    how_it_works: >-
+      The implant uses the platform's public API or embeds a bot token, then
+      polls a dedicated channel, bot conversation, or cloud-storage folder
+      for new commands and posts results back as attachments or messages.
+      Telemetry shows a non-browser process generating API traffic to a
+      collaboration service with machine-like regularity, uploads of system
+      reconnaissance files to chat or storage APIs, and command-shaped message
+      content. Defenders hunt the actor, not the address: which process is
+      talking, how regular the polling is, what it uploads, and whether the
+      bot token or webhook URL belongs to any approved integration.
+    variants:
+      - "Discord and Telegram bots: channels and bot APIs carrying tasking and results"
+      - "Cloud-storage dead drops: OneDrive/Google Drive folders polled for command files"
+      - "Webhook abuse: Teams/Slack incoming webhooks used as one-way command or exfil channels"
+      - "Code-platform issues and comments used as covert message boards"
+    indicators:
+      - "A non-browser endpoint process issuing regular API calls to a messaging platform with no associated user session"
+      - "Reconnaissance files or screenshots uploaded to chat or cloud-storage APIs by an unknown process"
+      - "Bot tokens or webhook URLs hardcoded in binaries that belong to no approved integration"
+      - "Machine-regular polling of a channel or folder that never carries human conversational content"
+    detection:
+      rule: detect_living_off_cloud_c2
+      patterns:
+        - '(?i)(discord|telegram|slack).{0,15}(c2|bot.{0,10}token|command)'
+        - '(?i)(t1102|T1102)'
+        - '(?i)webhook.{0,15}(abuse|c2|exfil)'
+        - '(?i)cloud.?storage.{0,15}(dead.?drop|poll)'
+    severity: high
+    mitigations:
+      - "Inventory every approved bot, webhook, and cloud integration; alert on any token or webhook URL seen in endpoint binaries that is not on the list"
+      - "Proxy and log collaboration-platform API traffic by process, and hunt for non-browser clients with machine-regular cadence"
+      - "Restrict which processes may upload files to external chat and storage services via DLP policy"
+      - "Work with platform trust-and-safety teams to disable identified operator bots, channels, and accounts"
+    examples:
+      - summary: "Darktrace's analysis of the CikaBika Rust RAT showed it registering the victim device with Discord and running interactive command handlers (!shell, !upload, !download) through a dedicated channel — the collaboration service acting as the full C2 platform."
+        reference: "https://www.spartechsoftware.com/cybersecurity-news/cikabika-bot-discord-rat-c2/"
+    references:
+      - "https://www.spartechsoftware.com/cybersecurity-news/cikabika-bot-discord-rat-c2/"
+      - "https://dev.to/anoymask/cikabika-rust-rat-uses-discord-c2-uac-bypass-and-edge-dll-placement-are-attempted-3i1b"
+
+  - id: AEG-T286
+    name: "Malleable C2 Profiles and Traffic Camouflage"
+    category: c2_operations
+    description: >-
+      C2 frameworks ship with malleable profiles that reshape beacon traffic
+      to impersonate ordinary applications — jQuery library fetches, RSS
+      updates, favicon requests — down to the URI structure, headers, and
+      certificate details. Operators pick profiles that match the victim's
+      environment so beacons look like software updates or web browsing.
+      Defenders defeat camouflage at the seams: TLS fingerprints that do not
+      match the impersonated application, and request fields no real client
+      would produce.
+    how_it_works: >-
+      The profile rewrites every beacon: HTTP method, URIs, header order and
+      values, user agents, and body encoding, so the wire traffic resembles a
+      chosen benign pattern while carrying encrypted tasking. Telemetry
+      shows requests to the right-looking URIs but with a non-browser JA3
+      fingerprint, TLS server fingerprints (JARM) matching known team-server
+      deployments, HTTP header combinations the real application never sends,
+      and responses whose content does not match the requested resource type.
+      Defenders maintain signature sets for default and popular profiles and
+      hunt for camouflage inconsistencies rather than exact strings.
+    variants:
+      - "Default profiles: unmodified framework templates with well-known network signatures"
+      - "Benign-mimic profiles: beacons shaped as jQuery, RSS, pixel, or update traffic"
+      - "Custom operator profiles: bespoke URI and header schemes extracted from real deployments"
+      - "Encrypted-metadata variants: camouflage layered with nonstandard encoding of tasking"
+    indicators:
+      - "Requests shaped like benign web traffic (jQuery, RSS, favicon) arriving with a non-browser JA3 fingerprint"
+      - "TLS server JARM hashes matching known C2 team-server fingerprints on internet-facing hosts"
+      - "Beacon URIs and header combinations that do not match the real application's documented behavior"
+      - "Encrypted blobs returned for requests that a real application would answer with images or scripts"
+    detection:
+      rule: detect_malleable_c2
+      patterns:
+        - '(?i)malleable.{0,10}c2'
+        - '(?i)(ja3|jarm).{0,25}(team.?server|fingerprint)'
+        - '(?i)camouflage.{0,20}(beacon|traffic)'
+        - '(?i)profile.{0,15}(cobalt|beacon).{0,15}http'
+    severity: high
+    mitigations:
+      - "Deploy JA3/JA4 and JARM fingerprinting at the boundary and alert on known C2 client and team-server hashes"
+      - "Maintain and update signatures for default and popular malleable profiles in IDS/IPS and NDR"
+      - "Hunt for camouflage inconsistencies: application-impersonating traffic whose TLS or header behavior does not match the real client"
+      - "Block or sinkhole internet-reachable team-server infrastructure identified through fingerprint scanning"
+    examples:
+      - summary: "Palo Alto Networks Unit 42 extracted malleable C2 profiles from live Cobalt Strike team servers and showed how operators disguised beacons behind benign services — then built detections for the profile-specific HTTP request and response patterns the camouflage could not fully hide."
+        reference: "https://unit42.paloaltonetworks.com/cobalt-strike-malleable-c2/"
+    references:
+      - "https://unit42.paloaltonetworks.com/cobalt-strike-malleable-c2/"
+      - "https://intel.mjolnirsecurity.com/cobalt-strike"
+
+  - id: AEG-T287
+    name: "Peer-to-Peer Lateral C2 (SMB Beacons and Named Pipes)"
+    category: c2_operations
+    description: >-
+      Once one host is implanted, operators pivot inward without touching the
+      internet: secondary implants communicate over SMB named pipes with a
+      parent beacon that relays to the outside. The lateral C2 rides on a
+      protocol every Windows network already uses, so perimeter sensors see
+      only the parent's egress. Defenders find it on the wire between hosts
+      and at the endpoint where pipes appear that no legitimate software
+      creates.
+    how_it_works: >-
+      The child beacon binds a named pipe and waits while the parent connects
+      over SMB, reads tasking, and returns results through the same pipe,
+      creating a peer-to-peer C2 mesh inside the LAN. Telemetry shows named
+      pipes with random-looking names (for example the MSSE-* or msagent_*
+      patterns) created by suspicious processes, SMB sessions between
+      workstations that carry no file sharing, and Sysmon pipe-created events
+      correlating with lateral service installations. EDR and network
+      monitoring of east-west traffic is the counterweight: the parent
+      beacon's egress cannot hide the pipe chatter once internal visibility
+      exists.
+    variants:
+      - "SMB beacons: child implants relaying through a parent over named pipes"
+      - "TCP pivot beacons: direct socket relays between internal hosts"
+      - "SSH-based internal relays on mixed-OS networks"
+      - "Mesh C2: multiple parents providing redundant internal relay paths"
+    indicators:
+      - "Named pipes with random or default-pattern names created by processes that should not serve IPC"
+      - "SMB sessions between workstations with no corresponding file-share activity"
+      - "Sysmon pipe-created events naming pipes matching known beacon defaults on multiple hosts"
+      - "An internet-facing beacon process also holding many internal SMB sessions to other workstations"
+    detection:
+      rule: detect_p2p_lateral_c2
+      patterns:
+        - '(?i)named.?pipe.{0,20}(beacon|c2|smb)'
+        - '(?i)(msse-[0-9]{4}-server|msagent_[0-9a-f]{2}|postex_[0-9a-f]{4})'
+        - '(?i)(t1569.002|T1569.002)'
+        - '(?i)smb.{0,15}(beacon|pivot|relay)'
+    severity: critical
+    mitigations:
+      - "Alert on named-pipe creation events from nonstandard processes and maintain a pipe-name watchlist"
+      - "Segment laterally: restrict workstation-to-workstation SMB and log all east-west sessions"
+      - "Hunt for the parent: correlate pipe activity with the host that also holds external beacon sessions"
+      - "Isolate both parent and children together; removing only the child leaves the relay path intact"
+    examples:
+      - summary: "The DFIR Report's Cobalt Strike defender's guide documents the full lateral-C2 pattern: beacons chaining through SMB named pipes after psexec-style lateral movement, with Sysmon pipe events and service-installation telemetry (EID 4697) marking each hop."
+        reference: "https://thedfirreport.com/2021/08/29/cobalt-strike-a-defenders-guide/"
+    references:
+      - "https://thedfirreport.com/2021/08/29/cobalt-strike-a-defenders-guide/"
+      - "https://hunt.io/blog/guide-hunting-cobalt-strike-part-1-open-directories"
+
+  - id: AEG-T288
+    name: "C2 Channel Fallback and Protocol Diversity"
+    category: c2_operations
+    description: >-
+      Professional implants never depend on one channel: they carry ranked
+      fallback lists — HTTPS first, then DNS, then ICMP or a cloud API — and
+      switch automatically when the primary is blocked or sinkholed.
+      Operators also stagger channels so that killing one only buys hours.
+      Defenders who celebrate blocking a single C2 domain have usually just
+      triggered the fallback; the win comes from mapping the whole channel
+      set and cutting them simultaneously while watching for the switch.
+    how_it_works: >-
+      The implant tests its primary channel on a timer and, on failure or on
+      receiving a rotate command, promotes the next channel: different
+      protocol, different infrastructure, sometimes a different encryption
+      scheme. Telemetry shows a host whose HTTPS beacons die and whose DNS
+      query volume or ICMP traffic immediately rises, or an implant that
+      suddenly starts using a cloud API it never touched before. Detection
+      keys on the transition: correlate channel-death events with new
+      anomalous protocol usage from the same host and process, and treat the
+      new channel as part of the same incident, not a new one.
+    variants:
+      - "Protocol fallbacks: HTTPS to DNS to ICMP when each layer is blocked"
+      - "Infrastructure fallbacks: burner domains, dead drops, then hardcoded IPs"
+      - "Cloud-API fallbacks: switching to living-off-cloud channels after network blocks"
+      - "Time-delayed fallbacks: dormant secondary channels that activate days later"
+    indicators:
+      - "A host whose primary C2 channel dies followed within minutes by anomalous use of a different protocol"
+      - "DNS query or ICMP volume spikes from a host immediately after its HTTPS beacons are blocked"
+      - "An implant contacting a cloud API it never used before right after infrastructure takedown"
+      - "Multiple distinct channel fingerprints tied to the same implant process over time"
+    detection:
+      rule: detect_c2_fallback
+      patterns:
+        - '(?i)(fallback|failover).{0,15}(c2|channel|beacon)'
+        - '(?i)protocol.{0,15}(switch|diversity|fallback)'
+        - '(?i)channel.{0,15}(rotat|promot|switch)'
+        - '(?i)secondary.{0,10}(c2|channel).{0,15}activat'
+    severity: high
+    mitigations:
+      - "Plan takedowns as simultaneous multi-channel actions: block the full known channel set before tipping off the operator"
+      - "Keep the host under observation after blocking one channel; alert on any new anomalous protocol from the same process"
+      - "Hunt historically for secondary channels that were provisioned but never activated"
+      - "Coordinate endpoint isolation with network blocks so the implant cannot reach any fallback before containment"
+    examples:
+      - summary: "The DFIR Report's Cobalt Strike guide notes that operators routinely configure fallback channels so beacons survive primary-C2 blocking — defenders who only block the HTTP channel see the implant return through DNS or SMB pivots, confirming the need for whole-set takedowns."
+        reference: "https://thedfirreport.com/2021/08/29/cobalt-strike-a-defenders-guide/"
+    references:
+      - "https://thedfirreport.com/2021/08/29/cobalt-strike-a-defenders-guide/"
+      - "https://socdfir.com/2025/06/05/from-recon-to-remediation-the-dfir-series-part-6-command-and-control/"
+
+doctrine_notes:
+  - title: "OPSEC is their survival function"
+    body: >-
+      A malware operator's first job is not the victim — it is staying
+      invisible to you. Everything about C2 operations (burner domains,
+      fast flux, jitter, dead drops, living off trusted services) is
+      infrastructure discipline aimed at one goal: that you find the implant
+      before you find the operator. Defenders invert this: every OPSEC
+      measure leaves a shape — churn, cadence, infrastructure reuse across
+      victims. Hunt the shape of their discipline, and one catch becomes the
+      whole campaign.
+  - title: "Infrastructure is disposable; implants are cheap; operators are expensive"
+    body: >-
+      Domains, IPs, and even whole C2 servers are designed to be burned.
+      Blocking one IP is the operator's expected cost of doing business,
+      which is why they build fallbacks and dead-drop resolvers. The
+      durable targets are the operator's habits: the registrar they reuse,
+      the naming patterns in their domains, the malleable profile they
+      forget to change, the working hours their beacons keep. Detect the
+      habit, not the asset.
+  - title: "They hide in what you already allow"
+    body: >-
+      Every C2 technique in this pack is a bet that defenders will not
+      inspect what they trust: CDN traffic, encrypted DNS, chat platforms,
+      benign-looking web requests. The operator studies your allow-lists as
+      carefully as you study their malware. The defensive answer is
+      behavioral, not reputational: judge the process, the cadence, and the
+      content shape — never the destination's reputation.
+  - title: "Anti-analysis is reconnaissance against you"
+    body: >-
+      When a sample probes for your sandbox, sleeps past your timeout, or
+      demands human interaction, it is doing reconnaissance on your defenses
+      — learning what you can see and when you stop watching. Treat every
+      evasion attempt as an intelligence gift: it tells you the operator
+      fears dynamic analysis, which means their payload is fragile against
+      it. Feed the sample a convincing lie (a hardened, interactive,
+      bare-metal-looking sandbox) and let it show you everything.
+  - title: "Redundancy is their doctrine, so single-point kills fail"
+    body: >-
+      Operators assume every channel will eventually be found. Fallback
+      lists, peer-to-peer relays, dead drops, and dormant secondary channels
+      are not extras — they are the design. A takedown that removes one
+      channel and declares victory has simply triggered the operator's
+      continuity plan. The defender's doctrine must match: map the whole
+      channel set, cut simultaneously, and watch the silence for the
+      reactivation signal.
+
+canonical_probes:
+  - "detect beacon cadence with jitter around a 60-second interval and working-hours wake window"
+  - "domain fronting SNI mismatch with blank SNI fallback to cloudfront edge"
+  - "DoH resolver abuse for TXT dead-drop C2 address retrieval"
+  - "fast flux single and double flux with TTL below 300 seconds"
+  - "named pipe SMB beacon lateral C2 using MSSE-1234-server pattern"

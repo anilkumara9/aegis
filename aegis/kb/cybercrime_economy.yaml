@@ -1,0 +1,806 @@
+pack: cybercrime_economy
+version: "1.0"
+techniques:
+  - id: AEG-T337
+    name: "RaaS Program Economics: Revenue Splits, Payment Collapse, and Affiliate Defection"
+    category: cybercrime_economy
+    description: >-
+      Ransomware-as-a-service programs run on revenue splits (historically
+      70-80% of each ransom to the affiliate), but the unit economics are
+      collapsing: Coveware measured only 23% of victims paying in Q3 2025,
+      the lowest rate ever recorded, with average payments down 66%
+      quarter-over-quarter. Defenders who read the affiliate's economics
+      can anticipate market shifts — high-volume low-demand targeting,
+      insider recruitment, and operator exit scams — as the signals of a
+      business model under pressure.
+    how_it_works: >-
+      Operators recruit affiliates with a revenue split, typically 70-80%
+      of each ransom to the affiliate, providing the encryptor, leak site,
+      and payment infrastructure while affiliates supply intrusions and
+      take the operational risk. When payment rates fall — Coveware's Q3
+      2025 data shows 23% paying, average payment $376,941 (down 66%) and
+      median $140,000 (down 65%) — three economic adaptations appear.
+      First, affiliates defect between brands and consolidate around
+      programs with the best effective payout, making brand attribution
+      decay even faster. Second, groups pivot to high-volume, low-demand
+      targeting of mid-market firms (median victim size ~362 employees):
+      smaller ransoms from organizations that cannot afford enterprise
+      defenses. Third, affiliates seek cheaper initial access, including
+      insider recruitment — Medusa reportedly attempted to bribe a BBC
+      employee for internal access in exchange for a ransom share.
+      Operator-side greed then triggers exit scams: after Change
+      Healthcare paid roughly $22 million, BlackCat/ALPHV administrators
+      kept the funds, staged a fake FBI seizure banner, and shut down
+      rather than pay the affiliate. For defenders, a contracting ransom
+      market does not mean fewer attacks — it means the telemetry shifts
+      toward data-theft-only extortion, re-extortion of already-paid
+      victims, and human-based initial access, all of which evade
+      encryptor-centric detections.
+    variants:
+      - "High-volume low-demand pivot: many small ransoms against mid-market firms replacing big-game hunting"
+      - "Affiliate defection waves between RaaS brands chasing better effective payout"
+      - "Operator exit scams: administrators seizing the ransom and abandoning affiliates (BlackCat/ALPHV 2024)"
+      - "Insider-recruitment economics: buying employees as cheaper initial access than broker listings"
+    indicators:
+      - "Threat-intel reporting of affiliate movement between ransomware brands or public operator-affiliate disputes over payouts"
+      - "Ransom demands shrinking in size but rising in volume against mid-market organizations in your sector"
+      - "Data-theft-only extortion attempts (no encryption) rising, the cheapest form of leverage in a low-payment market"
+      - "Insider-recruitment outreach or social-media solicitations offering employees a share of ransom payments"
+    detection:
+      rule: detect_raas_economic_shift
+      patterns:
+        - '(?i)(affiliate.*(defect|dispute|payout)|operator.*exit\s*scam)'
+        - '(?i)(payment\s*rate.*(23|record\s*low)|average\s*(ransom|payment).*(down|drop|collapse))'
+        - '(?i)(high.volume.*low.demand|mid.market).*(ransom|target|victim)'
+        - '(?i)(insider.*recruit|bribe.*employee).*(ransom|access|share)'
+    severity: high
+    mitigations:
+      - "Refuse ransom payments per CISA/FBI guidance: every non-payment starves the affiliate economy and is the primary driver of the payment collapse"
+      - "Prepare for the adaptation, not the extinction: harden against data-theft-only extortion (DLP, egress monitoring) and insider threats as groups re-specialize"
+      - "Track affiliate toolsets and economic behavior independently of ransomware brand names in threat-intel profiles"
+      - "Treat operator exit scams as victim opportunity: monitor for decryptor or key material surfacing from disgruntled affiliates after a collapse"
+    examples:
+      - summary: "Coveware's Q3 2025 data, reported by Security Affairs, showed only 23% of ransomware victims paid — a six-year decline continuing — with the average payment collapsing 66% to $376,941, evidence that the RaaS business model is contracting and affiliates are adapting."
+        reference: "https://securityaffairs.com/183941/cyber-crime/ransomware-payments-hit-record-low-only-23-pay-in-q3-2025.html"
+    references:
+      - "http://coveware.com/2025/10/insider-threats-loom-while-ransom-payment-rates-plummet/"
+      - "https://securityaffairs.com/183941/cyber-crime/ransomware-payments-hit-record-low-only-23-pay-in-q3-2025.html"
+      - "https://www.techloy.com/global-ransomware-activity-rises-36-in-q3-2035-but-average-payments-collapse/"
+
+  - id: AEG-T338
+    name: "Initial-Access-Broker Pricing Tiers and Early-Warning Chatter"
+    category: cybercrime_economy
+    description: >-
+      Rapid7's 2025 Access Brokers Report found corporate network access
+      selling for an average of about $2,700, with nearly 40% of listings
+      priced between $500 and $1,000 — and 71% of sales bundle privilege
+      levels such as Domain Admin, not just a foothold. Pricing tiers
+      reveal victim size and broker dwell time, and the listing window is
+      the defender's cheapest detection opportunity: the broker lingers to
+      raise the sale price, and that lingering is detectable.
+    how_it_works: >-
+      Brokers obtain footholds through phishing, stealer logs, or edge
+      exploitation, then linger inside the victim network to escalate
+      privileges before listing the access — Rapid7 found 71.4% of sales
+      include a privilege level and nearly 10% bundle multiple access
+      vectors, meaning a broker sale is usually a deep compromise, not a
+      shallow one. Listings are priced by alleged victim revenue and
+      access quality: commodity VPN/RDP credentials trade at the low end
+      (the $500-$1,000 band), while Domain Admin or admin-panel access to
+      government or large retail targets commands premium prices, with H2
+      2025 data showing brokers shifting toward larger targets and premium
+      pricing. Sales may be exclusive or resold to multiple buyers;
+      non-exclusive access means several affiliates may hit the same
+      victim. For defenders, broker chatter is structured early warning:
+      listings include victim profiling details (sector, revenue, user
+      counts) that can be matched against threat-intel feeds, and the
+      dwell-time brokers spend escalating is a detection window — hunting
+      for anomalous privilege-escalation and lateral movement catches the
+      broker before any buyer deploys ransomware. RDP, VPN, and RDWeb
+      remain the top vectors offered, so exposed remote-access
+      infrastructure is where broker supply originates.
+    variants:
+      - "Commodity credential sales: low-priced VPN/RDP access sold in volume"
+      - "Premium privileged access: Domain Admin or admin-panel listings against high-value targets at premium prices"
+      - "Non-exclusive access resold to multiple buyers, producing multi-actor intrusions in one victim"
+      - "Broker dwell-and-escalate: privilege escalation inside the victim network to raise the listing price"
+    indicators:
+      - "Threat-intel feeds reporting broker listings whose victim profiling (revenue, sector, user counts) matches your organization"
+      - "Anomalous privilege-escalation or lateral-movement activity by an unknown actor that stops short of ransomware — classic broker behavior"
+      - "Broker interest concentrating on your exposed RDP, VPN, or RDWeb footprint visible in external attack-surface data"
+      - "Multiple distinct threat actors appearing in the same environment, consistent with non-exclusive access resale"
+    detection:
+      rule: detect_iab_pricing_chatter
+      patterns:
+        - '(?i)(broker|iab).*(access|vpn|rdp|rdweb).*(for\s*sale|priced|listing|\$\d+)'
+        - '(?i)(domain\s*admin|privilege[sd]?).*(access|broker|listing).*(sale|priced|for\s*sale)'
+        - '(?i)(access\s*for\s*sale|listing).*(revenue|sector|user\s*count|employees)'
+        - '(?i)(broker.*dwell|escalat.*before.*sale|privilege.*escalation.*broker)'
+    severity: high
+    mitigations:
+      - "Monitor initial-access-broker chatter via commercial threat-intel feeds: match victim profiling in listings against your organization and act before a buyer appears"
+      - "Hunt for broker-phase activity (dwell-and-escalate without ransomware) as its own detection category — the broker's price-raising lingering is your cheapest catch"
+      - "Shrink broker supply: remove RDP from the internet, enforce phishing-resistant MFA on all VPN/RDWeb paths, and patch edge devices on a KEV-driven cadence"
+      - "Assume any commodity intrusion may be broker-sold access: investigate fully and rotate all credentials rather than removing only the visible malware"
+    examples:
+      - summary: "Rapid7's 2025 Access Brokers Report, drawn from six months of dark-web forum intelligence, found initial access selling for ~$2,700 on average with nearly 40% of listings at $500-$1,000, and 71% of sales bundling privilege levels — meaning buyers inherit a deep, pre-escalated compromise."
+        reference: "https://www.rapid7.com/blog/post/compromise-for-sale-inside-the-rapid7-2025-access-brokers-report/"
+    references:
+      - "https://www.rapid7.com/about/press-releases/rapid7-access-brokers-report-new-research-reveals-depth-of-compromise-in-access-broker-deals-with-71-offering-privileged-access/"
+      - "https://www.rapid7.com/blog/post/compromise-for-sale-inside-the-rapid7-2025-access-brokers-report/"
+      - "https://www.rapid7.com/blog/post/tr-initial-access-broker-shift-high-value-targets-premium-pricing/"
+
+  - id: AEG-T339
+    name: "Stolen-Data Monetization Chains Beyond Extortion"
+    category: cybercrime_economy
+    description: >-
+      Most stolen data is never used for extortion — it flows into fraud
+      supply chains: synthetic identities, ghost-student aid fraud,
+      payroll fraud, and account takeover. FinCEN alerts document fraud
+      rings building ghost students and synthetic identities from stolen
+      PII, while Chainalysis found laundering networks routinely
+      processing pig-butchering scam proceeds. Defenders must monitor
+      breach data for downstream fraud use, not just leak-site postings.
+    how_it_works: >-
+      After a breach, stolen PII is sorted by fraud utility: full identity
+      packages (name, SSN, date of birth, address) feed synthetic-identity
+      creation, where criminals combine real stolen PII with fabricated
+      details and GenAI-generated documents to open accounts; FinCEN
+      warns financial institutions that such accounts receive and launder
+      proceeds of check fraud, loan fraud, and unemployment fraud. A
+      second chain is benefits fraud: FinCEN's student-aid alert describes
+      rings using stolen PII to create 'ghost students' that siphon
+      federal aid, with real students sometimes blocked from enrolling by
+      the fraud volume. A third chain is payroll fraud, where stolen SSNs
+      support off-the-books employment schemes that generated over $2.5
+      billion in suspicious-activity reports in 2025 alone. Chainalysis
+      adds the crypto endpoint: Chinese-language laundering networks now
+      consistently launder more than 10% of pig-butchering scam proceeds.
+      For defenders, the implication is that a breach's blast radius
+      extends far beyond the breached organization — victim PII becomes
+      raw material for fraud elsewhere, so breach response should include
+      victim notification fast enough to preempt identity-fraud use, and
+      monitoring for the organization's data appearing in fraud, not only
+      on leak sites.
+    variants:
+      - "Synthetic-identity factories: stolen PII blended with fabricated details and GenAI documents to open fraudulent accounts"
+      - "Ghost-student and benefits fraud: stolen identities enrolled to siphon federal aid and benefit programs"
+      - "Payroll-fraud chains: stolen SSNs supporting off-the-books employment and tax-evasion schemes"
+      - "Scam-proceeds laundering: pig-butchering and investment-fraud funds routed through professional laundering networks"
+    indicators:
+      - "Breach victims reporting identity-theft or fraudulent accounts within weeks of a disclosed breach — the monetization lag is short"
+      - "FinCEN or industry alerts describing fraud typologies (ghost students, synthetic IDs) that match the PII fields your breach exposed"
+      - "Stolen identity documents or PII packages from your breach appearing in fraud-marketplace chatter rather than extortion channels"
+      - "Surges in account-opening fraud or benefits fraud correlated with a large breach in your sector"
+    detection:
+      rule: detect_data_monetization_chain
+      patterns:
+        - '(?i)(stolen\s*pii|breach\s*data).*(synthetic\s*identity|ghost\s*student|account\s*fraud)'
+        - '(?i)(identity\s*theft|fraud\s*ring).*(breach|stolen\s*(ssn|pii|identity))'
+        - '(?i)(pig.butchering|investment\s*fraud).*(launder|proceeds).*(network|wallet)'
+        - '(?i)(fraudulent\s*account|funnel\s*account).*(stolen\s*pii|genai|synthetic)'
+    severity: medium
+    mitigations:
+      - "Notify breach victims fast enough to preempt identity fraud: the monetization chain starts within days, not months"
+      - "Offer or recommend credit monitoring and identity-theft protection scaled to the PII fields actually exposed"
+      - "Minimize retained PII (data minimization) so a breach yields low-fraud-utility data rather than full identity packages"
+      - "Share breach-derived fraud indicators with financial-sector ISACs so downstream fraud can be caught at account opening"
+    examples:
+      - summary: "FinCEN's alert on federal student-aid fraud schemes describes rings using stolen PII to create 'ghost students' that unlawfully acquire aid funds, with real victims — including minors — unaware their identities are enrolled, showing how breach data monetizes through benefits fraud rather than extortion."
+        reference: "https://www.einpresswire.com/article/929143320/fincen-issues-alert-on-fraud-schemes-targeting-federal-student-aid"
+    references:
+      - "https://www.einpresswire.com/article/929143320/fincen-issues-alert-on-fraud-schemes-targeting-federal-student-aid"
+      - "https://www.mitchellwilliamslaw.com/fincen-warns-financial-institutions-of-fraud-schemes-arising-from-deepfake-media-using-generative-artificial-intelligence"
+      - "https://uabonline.org/english-news/chinese-language-money-laundering-networks-processed-16-1b-in-illicit-crypto-chainalysis/"
+
+  - id: AEG-T340
+    name: "Money-Mule Recruitment and Herding Networks"
+    category: cybercrime_economy
+    description: >-
+      Fraud proceeds must exit the banking system through human accounts,
+      and mule networks are that exit ramp. Europol's EMMA operations
+      identified 10,759 money mules and 474 recruiters in a single round,
+      with herders targeting students, migrants, and the economically
+      distressed through fake job ads and social media. Defenders and
+      banks detect mule accounts by transaction patterns; disrupting the
+      herders chokes the cash-out layer for every fraud type upstream.
+    how_it_works: >-
+      A mule network has three roles: recruiters (herders) who find
+      people, mules who receive and forward funds, and the criminal
+      principals who direct the flow. Herders recruit through
+      legitimate-looking job adverts, social-media posts, and messaging
+      apps, targeting students, immigrants, and people in economic
+      distress with offers of easy money; many mules are unwitting,
+      believing they are doing payroll or 'payment processing' work.
+      Recent EMMA operations show recruitment evolving: exploiting
+      migrants fleeing war zones to open accounts, impersonating bank
+      officials to persuade the elderly, using AI-generated identities to
+      bypass KYC, and handing young people gift cards to buy resalable
+      goods. Funds move through mule accounts in rapid pass-through
+      patterns — in, then out within hours — which is the core
+      bank-side detection signal. Law enforcement counters with
+      coordinated sweeps: EMMA 9 identified 10,759 mules and arrested
+      1,013 people with 2,822 banks cooperating, while a US case saw a
+      'mule cashout' operator plead guilty after tricking 15,000 Americans
+      into laundering over $10 million via fake job offers. For defenders,
+      mule-network intelligence reveals which fraud campaigns are active
+      and cashing out, and bank-side transaction monitoring is the
+      primary disruption point.
+    variants:
+      - "Fake-job recruitment: unwitting mules hired as 'payment processors' who forward fraud proceeds"
+      - "Romance-scam and social-engineering mules: victims manipulated into receiving and forwarding funds"
+      - "AI-identity mules: synthetic identities bypassing KYC to open mule accounts at scale"
+      - "Gift-card and goods mules: young recruits buying resalable merchandise for criminals to fence"
+    indicators:
+      - "Customer accounts showing rapid pass-through patterns: large credits followed by near-immediate outbound transfers"
+      - "Job adverts or social-media posts in your brand's name recruiting 'payment processors' — impersonation for mule recruitment"
+      - "Employees or customers reporting they were recruited for work-from-home money-handling jobs"
+      - "Europol/EMMA or FBI reporting of mule networks cashing out fraud campaigns targeting your sector"
+    detection:
+      rule: detect_money_mule_network
+      patterns:
+        - '(?i)(money\s*mule|mule\s*recruit).*(job|wire|transfer|herder|recruiter)'
+        - '(?i)fake\s*(remote\s*)?job\s*(ad|advert|offer|posting).*(wire|transfer|mule|payment\s*process)'
+        - '(?i)(rapid\s*pass.through|in.and.out).*(mule|account).*(hour|transfer)'
+        - '(?i)(emma|europol).*(money\s*mule|mule\s*action|arrest)'
+    severity: high
+    mitigations:
+      - "Deploy transaction-monitoring rules for pass-through patterns: rapid in/out transfers, new accounts receiving then forwarding large sums"
+      - "Run customer awareness campaigns (Europol's 'Don't be a mule' model): most mules are unwitting and stop when warned"
+      - "Monitor for brand impersonation in fake job ads and take them down — recruitment abuse of your brand is an early fraud signal"
+      - "Share mule-account indicators with law enforcement and banking partners; EMMA-style operations depend on public-private information sharing"
+    examples:
+      - summary: "Europol's EMMA 9 operation identified 10,759 money mules and 474 recruiters and arrested 1,013 people, with 2,822 banks cooperating and EUR 32 million in losses prevented — while warning that recruiters keep finding new victims among students, migrants, and the economically distressed."
+        reference: "https://www.infosecurity-magazine.com/news/police-arrest-1000-suspected-money/"
+    references:
+      - "https://www.infosecurity-magazine.com/news/police-arrest-1000-suspected-money/"
+      - "https://www.occrp.org/en/news/international-anti-money-laundering-operation-results-in-1803-arrests"
+      - "https://asumetech.com/2026/10/09/inside-the-scheme-that-tricked-15-000-americans-into-laundering-cybercrime-funds/"
+
+  - id: AEG-T341
+    name: "Criminal Market Trust Systems: Escrow, Reputation, and Dispute Resolution"
+    category: cybercrime_economy
+    description: >-
+      Trustless criminal markets manufacture trust with escrow, multisig
+      wallets, and vendor reputation scores — Oxford research on Silk
+      Road, AlphaBay, and Hansa documents buyer-feedback systems that
+      functioned like eBay ratings, with funds held in escrow until
+      delivery. For defenders, these trust systems are an attack surface:
+      escrow disputes reveal operator wallets, reputation manipulation
+      flags fraud, and every market seizure destroys trust economy-wide,
+      which is exactly why takedowns have lasting disruptive power.
+    how_it_works: >-
+      Without courts, criminal markets build their own justice. The core
+      mechanism is escrow: buyer funds are locked in a market-controlled
+      or multisig wallet (buyer, seller, and market each holding a key in
+      2-of-3 setups) and released only when the buyer confirms receipt,
+      with market admins mediating disputes. Layered on top is
+      reputation: quantitative ratings plus textual feedback displayed
+      beside each vendor's name, with research showing buyers relied more
+      on reputation scores than on escrow itself. Operators monetize the
+      trust through commissions on every sale. The fragility is the
+      point: because trust is the market's product, exit scams (operators
+      or vendors draining escrow and vanishing), selective scamming, and
+      reputation manipulation are constant, and each incident triggers
+      migration to a rival market. Defenders and law enforcement exploit
+      this: undercover purchases map vendor wallets and shipping
+      patterns; escrow-wallet seizures strand funds across thousands of
+      transactions at once; and publicized takedowns poison trust in the
+      next market, raising the 'trust tax' every criminal must pay.
+      Signaling research on AlphaBay found costly signals (established
+      reputation, escrow use) inversely associated with fraud — so
+      sudden reputation collapse or escrow avoidance is itself a
+      high-value indicator of an impending exit scam.
+    variants:
+      - "Centralized escrow: market holds buyer funds until delivery confirmation, with admin dispute arbitration"
+      - "Multisig escrow: 2-of-3 wallets splitting keys between buyer, seller, and market to reduce single-point betrayal"
+      - "Reputation-as-collateral: vendor rating scores functioning as the market's credit system"
+      - "Exit-scam economics: operators or vendors draining escrow and vanishing when trust peaks"
+    indicators:
+      - "Escrow disputes or withdrawal freezes on criminal markets preceding an exit scam — trust collapsing in real time"
+      - "Vendors demanding early finalization (release of escrow before delivery), a classic pre-scam signal"
+      - "Sudden reputation-score manipulation or mass negative feedback indicating selective scamming"
+      - "Post-takedown migration waves: user floods to rival markets that defenders can monitor for reconstituted networks"
+    detection:
+      rule: detect_market_trust_collapse
+      patterns:
+        - '(?i)escrow.*(dispute|multisig|drain|frozen|exit)'
+        - '(?i)multisig.*(wallet|escrow).*(drain|seiz|compromis)'
+        - '(?i)(finalize\s*early|early\s*finalization).*(vendor|escrow|scam)'
+        - '(?i)(exit\s*scam|selective\s*scam).*(market|vendor|escrow)'
+    severity: medium
+    mitigations:
+      - "Treat market trust collapses as intelligence opportunities: exit scams and disputes surface wallets, handles, and infrastructure for attribution"
+      - "Support and publicize law-enforcement market seizures — destroying criminal trust has compounding disruptive effects across the ecosystem"
+      - "Monitor post-takedown migration to identify which vendors and buyers reconstitute, and where"
+      - "Never engage with criminal markets directly; consume all market intelligence through licensed threat-intel feeds and law-enforcement liaison"
+    examples:
+      - summary: "Oxford Academic research on Silk Road, AlphaBay, and Hansa documents how all three markets ran buyer-feedback reputation systems with escrow fund protection, and found buyers relied on seller reputation scores even more than on escrow — the manufactured-trust mechanics defenders now target."
+        reference: "http://dx.doi.org/10.1093/ser/mwad069"
+    references:
+      - "http://dx.doi.org/10.1093/ser/mwad069"
+      - "https://www.purevpn.com/blog/how-escrow-works-on-dark-web/"
+      - "https://visualize.jove.com/40100870"
+
+  - id: AEG-T342
+    name: "Criminal OPSEC Failures Defenders and Law Enforcement Exploit"
+    category: cybercrime_economy
+    description: >-
+      Scale forces criminals into OPSEC shortcuts that investigators
+      exploit. AlphaBay's operator was identified partly through a
+      personal email address in early site messages; Silk Road's founder
+      through a forum post tied to a real identity. During Operation
+      Bayonet, Dutch police modified Hansa's code to capture photo
+      metadata and PGP plaintext, and planted a document that pinged back
+      to unmask user IPs. Defenders win the same way: criminals reuse
+      handles, passwords, and infrastructure.
+    how_it_works: >-
+      OPSEC failures cluster into repeatable patterns that investigators
+      and defenders systematically harvest. Identity bleed: using a real
+      email, handle, or login in one criminal context that is linked to a
+      real identity elsewhere — the AlphaBay case turned partly on early
+      administrative emails carrying the operator's personal address, and
+      the Silk Road case on a founder-tied forum post. Infrastructure
+      reuse: the same servers, wallets, or code across operations, which
+      blockchain clustering and infrastructure analysis connect.
+      Bragging and metadata: photos with geolocation, forum boasts that
+      establish timelines, and reused PGP keys that link personas.
+      Platform-level exploitation: once law enforcement controls a
+      platform, as Dutch police did with Hansa, they can modify code to
+      defeat its own protections — recording photo metadata before the
+      stripping tool ran, capturing PGP plaintext, sabotaging multisig
+      transactions to maximize seizure, and distributing a document that
+      phoned home with the opener's IP address. For defenders, the
+      lesson is twofold: adversary infrastructure is linkable through
+      reused artifacts (a defender-side argument for broad IOC sharing),
+      and criminal communications should be assumed to leak — threat
+      actors discussing your organization on forums or markets leave the
+      same forensic residue that convicted market operators.
+    variants:
+      - "Identity bleed: real emails, handles, or logins reused across criminal and legitimate contexts"
+      - "Infrastructure reuse: shared servers, wallets, and code linking supposedly separate operations"
+      - "Metadata and bragging leakage: geotagged photos, timeline-establishing boasts, reused PGP keys"
+      - "Platform capture: law enforcement modifying seized platforms to defeat their own anonymity protections"
+    indicators:
+      - "Threat-actor handles, emails, or PGP keys appearing across multiple forums, markets, or breach datasets — linkable personas"
+      - "Adversary infrastructure (IPs, domains, wallets) reused across campaigns, enabling clustering and attribution"
+      - "Criminals discussing your organization on forums or markets with operational details that reveal their access level"
+      - "Post-takedown court filings or press releases documenting the OPSEC failures — a template for what to hunt in current actors"
+    detection:
+      rule: detect_criminal_opsec_failure
+      patterns:
+        - '(?i)(opsec\s*fail|identity\s*bleed|handle\s*reuse).*(criminal|threat\s*actor|operator)'
+        - '(?i)(personal\s*email|real\s*identity).*(site\s*admin|operator|forum\s*post)'
+        - '(?i)(metadata|pgp\s*plaintext|ping\s*back).*(captur|record|unmask|seiz)'
+        - '(?i)(infrastructure\s*reuse|shared\s*(server|wallet|code)).*(link|cluster|attribut)'
+    severity: low
+    mitigations:
+      - "Invest in link analysis: correlate adversary handles, wallets, infrastructure, and PGP keys across incidents and threat-intel feeds"
+      - "Share sanitized indicators broadly (ISACs, law enforcement): one actor's reused artifact is everyone's detection opportunity"
+      - "Study takedown case studies as training: each documented OPSEC failure becomes a hunt hypothesis for current actors"
+      - "Apply the same discipline internally: the OPSEC failures that convict criminals (reuse, metadata, bragging) also expose defenders"
+    examples:
+      - summary: "Reporting on Operation Bayonet documents how AlphaBay's operator was partly identified through early site emails carrying a personal address, while Dutch police ran Hansa covertly for a month — modifying its code to capture photo metadata and PGP plaintext — and harvested around 10,000 buyer addresses from the AlphaBay migration wave."
+        reference: "https://reason.com/2017/07/20/doj-claims-responsibility-for-shutting-d/printer/"
+    references:
+      - "https://reason.com/2017/07/20/doj-claims-responsibility-for-shutting-d/printer/"
+      - "https://en.wikipedia.org/wiki/Operation_Bayonet_(darknet)"
+      - "https://www.databreaches.net/2017/07/20/alphabay-and-hansa-taken-down-in-coordinated-operations-by-fbi-and-dutch-national-police/"
+
+  - id: AEG-T343
+    name: "Fast-Flux Service Networks: DNS-Layer Concealment Mechanics"
+    category: cybercrime_economy
+    description: >-
+      Fast-flux DNS rotates a domain's IP addresses — and in double flux,
+      its name servers — every few minutes across botnet-compromised
+      hosts, rendering IP blocking futile. The April 2025 joint
+      NSA/CISA/FBI advisory (AA25-093A) flagged it as a national-security
+      threat used by Hive and Nefilim ransomware operators and
+      bulletproof hosts. Defenders detect flux with DNS analytics: low
+      TTLs, many diverse IPs, and name-server churn are the fingerprints.
+    how_it_works: >-
+      In single flux, one malicious domain rapidly cycles through many IP
+      addresses drawn from a botnet, with very low DNS TTLs (often
+      minutes) so resolvers constantly re-query and receive fresh
+      compromised hosts acting as proxies to the hidden back-end server.
+      In double flux, the domain's authoritative name servers also rotate,
+      adding redundancy and anonymity. The economics favor the attacker:
+      the botnet hosts are disposable and victim-owned, while the real
+      C2, phishing, or marketplace server stays hidden behind the
+      rotating proxies — takedowns must chase hundreds of shifting
+      endpoints instead of one server. The April 2025 joint advisory from
+      CISA, NSA, FBI, and international partners documents use by
+      Gamaredon, Hive and Nefilim ransomware, and bulletproof hosting
+      providers that layer flux over complaint-immune address space, plus
+      use in phishing and criminal-marketplace resilience. Detection is
+      a DNS-analytics problem, not an IP-blocklist problem: domains with
+      very low TTLs resolving to many IPs across diverse ASNs and
+      inconsistent geolocation, especially with churning name servers,
+      are the signature. The advisory urges ISPs and protective-DNS
+      providers to build flux-detection analytics and block the behavior
+      itself, since blocking individual flux IPs is futile by design.
+    variants:
+      - "Single flux: rapid IP rotation behind one domain, name servers static"
+      - "Double flux: IP and name-server rotation together for redundancy and anonymity"
+      - "Bulletproof-layered flux: fast-flux DNS over complaint-immune hosting for takedown-resistant marketplaces"
+      - "Phishing flux: short-lived phishing domains hiding behind fluxing botnet proxies"
+    indicators:
+      - "Domains with very low TTLs (minutes) resolving to dozens or hundreds of IPs across diverse ASNs and geographies"
+      - "Name-server (NS) records churning for a single domain — the double-flux signature"
+      - "Outbound connections to domains whose resolved IPs change between lookups minutes apart"
+      - "Threat-intel tags marking a domain or infrastructure as fast-flux affiliated"
+    detection:
+      rule: detect_fast_flux_network
+      patterns:
+        - '(?i)fast[\s-]?flux.*(ttl|rotat|ips?|name\s*server)'
+        - '(?i)(short\s*ttl|low\s*ttl).*(rotat|flux|chang).*(ip|address|record)'
+        - '(?i)(double\s*flux|name\s*server.*(churn|rotat|flux))'
+        - '(?i)(domain|host).*(resolv).*(dozens|hundreds).*(ip|address).*(asn|geograph|diverse)'
+    severity: medium
+    mitigations:
+      - "Deploy DNS-layer detection for flux behavior (TTL analysis, IP diversity, NS churn) rather than relying on IP blocklists"
+      - "Use protective DNS (PDNS) services that incorporate fast-flux analytics per the joint advisory's recommendations"
+      - "Sinkhole or block flux domains at the DNS layer and investigate any internal host resolving them"
+      - "Share flux-domain indicators with ISPs and industry peers; flux infrastructure is shared across many criminal customers"
+    examples:
+      - summary: "The April 2025 joint advisory 'Fast Flux: A National Security Threat' (AA25-093A) from CISA, NSA, FBI, and international partners documents fast flux as a defensive gap exploited by ransomware operators (Hive, Nefilim), Gamaredon, and bulletproof hosts, urging DNS-layer detection of the behavior itself."
+        reference: "https://www.doncio.navy.mil/CHIPS/ArticleDetails.aspx?id=18209"
+    references:
+      - "https://www.doncio.navy.mil/CHIPS/ArticleDetails.aspx?id=18209"
+      - "https://www.anvilogic.com/threat-reports/fast-flux-c2-advisory"
+      - "https://www.cpomagazine.com/cyber-security/cisa-warns-of-fast-flux-dns-evasion-technique-by-cybercriminals-and-state-actors-threatening-national-security/"
+
+  - id: AEG-T344
+    name: "Crypto Cash-Out Chokepoints: Nested Exchanges, OTC Brokers, and Sanctions Screening"
+    category: cybercrime_economy
+    description: >-
+      Laundering ends at the fiat exit, and that exit is where defenders
+      and law enforcement get leverage. Ransom proceeds cash out through
+      nested exchange accounts, over-the-counter brokers, and complicit
+      processors — the chokepoints where sanctions bite. The Tornado Cash
+      saga (OFAC designation in 2022, court reversal in 2024-2025, and a
+      founder conviction in 2025) shows how sanctions enforcement
+      reshapes laundering routes, and why screening counterparties
+      against OFAC's SDN crypto addresses is a defensive duty.
+    how_it_works: >-
+      After layering through mixers and chain-hopping, criminal funds must
+      become spendable fiat, and the conversion layer is far less
+      anonymous than the laundering layer. Nested services — accounts
+      operated inside compliant exchanges by third parties — let
+      criminals ride on a legitimate exchange's banking rails; OTC
+      brokers arrange large off-book conversions; complicit or
+      lightly-regulated processors complete the exit. These chokepoints
+      are where regulation concentrates: OFAC designated Tornado Cash in
+      August 2022 for laundering over $7 billion including Lazarus Group
+      proceeds, a Fifth Circuit court later ruled the sanctions overstepped
+      on immutable smart contracts, Treasury delisted the protocol in
+      2025 — and the criminal track continued anyway, with co-founder
+      Roman Storm convicted in August 2025 of conspiring to run an
+      unlicensed money-transmitting business while a retrial on money
+      laundering and sanctions charges was sought. Chainalysis' 2026
+      report shows the ecosystem adapting around enforcement: criminals
+      shifting from centralized exchanges (which can freeze assets) to
+      Telegram-based laundering networks, with Chinese-language networks
+      processing $16.1 billion in 2025. For defenders, the cash-out layer
+      is the reporting and screening layer: screen incident-related
+      addresses against OFAC's SDN crypto list before any interaction,
+      report ransom wallets to law enforcement and chain-analysis
+      providers, and treat counterparty exposure to nested or sanctioned
+      services as a compliance event, not just an intel note.
+    variants:
+      - "Nested exchange accounts: criminal-controlled accounts operating inside compliant exchanges"
+      - "OTC broker conversions: large off-book crypto-to-fiat deals arranged outside exchange order books"
+      - "Sanctions-evasion laundering: routing around OFAC designations through non-compliant services"
+      - "Telegram-based laundering desks: Chinese-language networks processing billions via messenger-coordinated services"
+    indicators:
+      - "Ransom or fraud wallets clustering with nested-service or OTC-broker addresses in chain-analysis"
+      - "Counterparties appearing on OFAC's SDN list or linked to designated mixers and laundering networks"
+      - "Incident payment chains routing through services known to be non-compliant or sanctions-adjacent"
+      - "Industry statistics showing laundering volume migrating to the network types touching your incident's funds"
+    detection:
+      rule: detect_cashout_chokepoint_exposure
+      patterns:
+        - '(?i)(nested\s*(service|exchange)|otc\s*broker).*(cash.?out|launder|ransom)'
+        - '(?i)(counterparty|wallet|address).*(sdn|sanctioned|ofac).*(list|designat)'
+        - '(?i)(tornado\s*cash|mixer).*(sanction|delist|convict|retrial|doj)'
+        - '(?i)(cash.?out|fiat\s*exit).*(nested|otc|complicit|non.compliant)'
+    severity: medium
+    mitigations:
+      - "Screen every cryptocurrency address encountered in incidents against OFAC's SDN list and commercial chain-analysis before any interaction"
+      - "Report ransom and fraud wallet addresses to law enforcement and chain-analysis providers to aid clustering and future sanctions"
+      - "Ensure finance and legal teams understand sanctions risk: transacting with flagged addresses creates liability even inadvertently"
+      - "Track enforcement-driven migration (e.g., toward Telegram-based networks) as a strategic indicator of where the next cash-out pressure will land"
+    examples:
+      - summary: "The Tornado Cash enforcement saga — OFAC's 2022 designation over $7B+ laundered including Lazarus Group funds, the Fifth Circuit's 2024 ruling that sanctioning immutable smart contracts overstepped, Treasury's 2025 delisting, and co-founder Roman Storm's August 2025 conviction — shows how sanctions reshape, but do not end, the laundering-services market."
+        reference: "https://startupfortune.com/fincen-withdraws-its-crypto-mixing-and-unhosted-wallet-rules-three-years-later/"
+    references:
+      - "https://startupfortune.com/fincen-withdraws-its-crypto-mixing-and-unhosted-wallet-rules-three-years-later/"
+      - "https://www.gate.com/news/detail/us-doj-seeks-october-retrial-for-tornado-cash-developer-roman-storm-on-19353057"
+      - "https://www.ainvest.com/news/delisted-cleared-tracks-tornado-cash-reversal-2610/"
+
+  - id: AEG-T345
+    name: "Leak-Site Business Operations: Exit Scams, Rebrands, and Payment Conversion"
+    category: cybercrime_economy
+    description: >-
+      Leak sites are conversion funnels, not just shame pages — and their
+      operators sometimes rob their own affiliates. After Change
+      Healthcare's roughly $22 million payment, BlackCat/ALPHV staged a
+      fake FBI seizure banner and exit-scammed the affiliate, then
+      announced a $5 million source-code sale. Rebrands, affiliate
+      defections to RansomHub, and the high-volume low-demand pivot all
+      follow the money: defenders who read leak-site operations as a
+      business read the next move correctly.
+    how_it_works: >-
+      A leak site converts stolen data into payment through staged
+      pressure: victim listing, countdown timer, sample publication,
+      press outreach, and full dump on deadline expiry — with data
+      auctions as a premium variant for the most valuable datasets.
+      The business layer above the funnel is where the intelligence
+      lives. Operators take a 20-30% cut of affiliate ransoms, so a
+      record payment tempts operator theft: in March 2024, after the
+      Change Healthcare affiliate's ~$22 million ransom landed,
+      BlackCat/ALPHV administrators suspended the affiliate's account,
+      drained the wallet (analysts traced ~1,401 bitcoins, over $92
+      million, through the associated address), posted a fake law
+      enforcement seizure notice, and shut down — the affiliate then
+      defected and re-extorted the victim under the RansomHub brand with
+      the same data. Rebrands recycle the business: suspected code
+      lineage connects ALPHV to Cicada3301, and affiliate networks
+      scatter rather than dissolve — Group-IB notes BlackCat affiliates
+      migrated to rival programs after the exit scam. Meanwhile the
+      market structure shifts with economics: Q3 2025 saw a record 81
+      leak sites as groups multiplied brands, while Akira and Qilin ran
+      the high-volume low-demand playbook against mid-market firms.
+      For defenders, leak-site business signals — fake seizure banners,
+      operator-affiliate disputes, rebrand code overlap, and victim
+      re-listings under new brands — predict re-extortion and tell
+      responders when a 'dead' group's data is about to resurface.
+    variants:
+      - "Operator exit scams: administrators seizing record ransoms and abandoning affiliates with fake takedown cover stories"
+      - "Rebrand recycling: collapsed operations resurfacing under new names with overlapping code and personnel"
+      - "Affiliate defection and re-extortion: spurned affiliates re-monetizing the same stolen data under rival brands"
+      - "Data auctions and premium listings: auctioning the most valuable datasets to the highest bidder"
+    indicators:
+      - "Fake seizure banners or contradictory shutdown claims on leak sites — possible exit-scam cover"
+      - "Public operator-affiliate disputes over ransom shares on forums, signaling an imminent split or re-extortion"
+      - "Your organization's data re-listed under a new ransomware brand after the original group 'shut down'"
+      - "Leak-site count growth in your sector (81 sites in Q3 2025) indicating brand multiplication rather than new capability"
+    detection:
+      rule: detect_leaksite_business_signal
+      patterns:
+        - '(?i)(leak\s*site|seizure\s*banner).*(fake|exit\s*scam|hoax|cover)'
+        - '(?i)(affiliate.*(defect|dispute|re.extort)|operator.*(exit\s*scam|shut\s*down))'
+        - '(?i)(rebrand|new\s*brand).*(code|lineage|affiliate|leak)'
+        - '(?i)(data\s*auction|victim.*re.list).*(leak|brand|ransom)'
+    severity: medium
+    mitigations:
+      - "Treat any leak-site 'shutdown' as a rebrand watch: monitor for your data resurfacing under new brands (re-extortion is the documented pattern)"
+      - "During incidents, monitor operator-affiliate disputes — a split often precedes decryptor loss, re-extortion, or data dumping"
+      - "Maintain continuous leak-site monitoring keyed to data fingerprints, not just brand names, since brands churn"
+      - "Factor exit-scam risk into any payment calculus: paying does not guarantee the affiliate holding your data was ever paid"
+    examples:
+      - summary: "After Change Healthcare's ~$22 million ransom payment in March 2024, BlackCat/ALPHV administrators kept the funds, staged a fake FBI seizure banner as cover, and shut down — the spurned affiliate then re-extorted the victim under the RansomHub brand, the canonical operator exit scam."
+        reference: "https://breached.company/blackcat-alphv-ransomware/"
+    references:
+      - "https://breached.company/blackcat-alphv-ransomware/"
+      - "https://www.group-ib.com/blog/blackcat/"
+      - "https://www.bleepingcomputer.com/news/security/the-week-in-ransomware-march-8th-2024-waiting-for-the-blackcat-rebrand/?traffic_source=Connatix"
+
+  - id: AEG-T346
+    name: "Insider-Access-as-a-Service: Employees Monetized as Initial Access"
+    category: cybercrime_economy
+    description: >-
+      When technical access gets expensive, groups buy humans. Coveware's
+      2025 reporting flags rising insider involvement — including Medusa's
+      reported attempt to bribe a BBC employee for internal access in
+      exchange for a ransom share. Insiders are recruited via messaging
+      apps and forums, paid per deployment or per access level.
+      Defenders answer with insider-threat programs: least privilege,
+      anomaly detection on privileged actions, and protected reporting
+      channels.
+    how_it_works: >-
+      Insider recruitment follows a simple market logic: as edge
+      exploitation gets patched and broker prices rise, a bribed employee
+      is the cheapest reliable foothold. Recruitment runs through
+      encrypted messaging apps and criminal forums where groups advertise
+      for insiders at target organizations, offering a share of the
+      ransom or flat fees per access milestone — credentials, VPN
+      enrollment, malware execution, or backup sabotage. The Medusa case
+      reported in 2025 illustrates the model: the group allegedly
+      approached a BBC employee offering a cut of the ransom for internal
+      access. Coveware's Q3 2025 analysis explicitly warns enterprises to
+      re-evaluate insider-threat programs, noting insider involvement in
+      both data theft and full ransomware staging. Variants range from
+      witting collaborators to coerced employees (threatened with
+      exposure) to 'accidental insiders' cultivated through social
+      engineering. For defenders, the detection surface is behavioral:
+      privileged actions outside role baselines, access at anomalous
+      hours, credential use inconsistent with the employee's normal
+      patterns, and — critically — the recruitment approach itself,
+      which sometimes surfaces through threat-intel monitoring of
+      solicitation chatter naming target organizations or sectors.
+    variants:
+      - "Bribed collaborators: employees paid a ransom share or flat fee for credentials or malware execution"
+      - "Coerced insiders: employees threatened with exposure or harm to compel access"
+      - "Cultivated accidental insiders: employees socially engineered over time into facilitating access"
+      - "Backup and recovery sabotage: insiders paid specifically to disable the victim's recovery capability"
+    indicators:
+      - "Threat-intel reporting of insider solicitations naming your organization, sector, or technology stack"
+      - "Privileged actions outside the employee's role baseline: unusual data access, off-hours admin activity, new persistence"
+      - "Employees reporting bribery or coercion approaches — the recruitment attempt is itself the early warning"
+      - "Backup or recovery sabotage with no corresponding external intrusion artifacts, suggesting internal action"
+    detection:
+      rule: detect_insider_access_market
+      patterns:
+        - '(?i)(insider.*(recruit|solicit|bribe)|bribe.*(employee|insider)).*(ransom|access|share)'
+        - '(?i)(employee|insider).*(paid|offered).*(ransom\s*share|flat\s*fee|access)'
+        - '(?i)(privileged\s*action|admin\s*activity).*(outside|anomalous).*(baseline|role|hours)'
+        - '(?i)(coerc|threaten).*(employee|insider).*(access|credential|malware)'
+    severity: high
+    mitigations:
+      - "Build a real insider-threat program: least privilege, separation of duties, and anomaly detection on privileged actions — Coveware's 2025 explicit recommendation"
+      - "Establish protected, retaliation-free reporting channels so approached employees report recruitment attempts instead of complying"
+      - "Monitor for insider solicitation chatter in threat-intel feeds naming your organization or sector"
+      - "Ensure no single employee can disable backups or recovery unilaterally: multi-person controls on backup infrastructure"
+    examples:
+      - summary: "2025 reporting on ransomware economics documents Medusa's reported attempt to bribe a BBC employee for internal access in exchange for a share of the ransom — the insider-access market model — alongside Coveware's warning that enterprises must re-evaluate insider-threat programs as groups adopt human-based initial access."
+        reference: "https://www.techloy.com/global-ransomware-activity-rises-36-in-q3-2035-but-average-payments-collapse/"
+    references:
+      - "https://www.techloy.com/global-ransomware-activity-rises-36-in-q3-2035-but-average-payments-collapse/"
+      - "http://coveware.com/2025/10/insider-threats-loom-while-ransom-payment-rates-plummet/"
+
+  - id: AEG-T347
+    name: "Phishing-as-a-Service (PhaaS) Subscription Tooling"
+    category: cybercrime_economy
+    description: >-
+      Phishing is now a subscription product: Barracuda found 60-70% of
+      2025 phishing used PhaaS, with the Tycoon 2FA kit driving 76% of
+      observed incidents. Kits sell for roughly $88/week to $1,588/year
+      (Netcraft on Lighthouse), bundle adversary-in-the-middle session
+      theft, dashboards, and customer support — and the FBI found 10,000
+      users and 42,000 domains on a single platform (LabHost). Defenders
+      fight templates, not pages: kit fingerprinting plus
+      phishing-resistant MFA.
+    how_it_works: >-
+      PhaaS platforms productize every stage of a phishing campaign:
+      brand-impersonation templates, hosting and domain rotation,
+      credential-harvesting backends, and operator dashboards, sold via
+      subscription or one-off payment through forums, markets, and
+      messaging channels. The commercial model includes tiered pricing,
+      regular kit updates, and technical support — Netcraft's 2025
+      research linked 17,500+ phishing domains to the Lucid/Lighthouse
+      platforms, with Lighthouse subscriptions from $88/week to
+      $1,588/year. The technical differentiator is adversary-in-the-middle
+      capability: kits like Tycoon 2FA relay the victim's login to the
+      real service in real time, capturing credentials and session
+      tokens even through MFA challenges — Microsoft attributed ~62% of
+      blocked phishing attempts to Tycoon 2FA at its mid-2025 peak, some
+      30 million emails in a single month, reaching 500,000+
+      organizations monthly. Scale is the defender's problem: when many
+      subscribers reuse one platform's templates and infrastructure,
+      takedowns of individual pages change nothing — the template
+      regenerates the campaign. The FBI's LabHost takedown revealed the
+      industrial footprint: 10,000 users operating 42,000 phishing
+      domains on one platform. Defense therefore shifts from page-level
+      takedown to kit-level fingerprinting (shared HTML, infrastructure,
+      and relay patterns identify the platform behind many campaigns)
+      and to phishing-resistant MFA (FIDO2/WebAuthn), which defeats
+      AiTM relays that harvest session tokens.
+    variants:
+      - "AiTM subscription kits: real-time credential and session-token relay defeating SMS and push MFA"
+      - "Brand-template marketplaces: selectable login-page templates for hundreds of impersonated brands"
+      - "Mobile and regional fraud kits: PhaaS specialized for toll, postal, and banking scams by country"
+      - "Card-fraud PhaaS: adversary-in-the-middle kits relaying payment-card and 3-D Secure OTP data"
+    indicators:
+      - "Phishing pages sharing HTML structure, relay infrastructure, or kit fingerprints across supposedly separate campaigns"
+      - "Credential-phishing with real-time MFA relay behavior (victim redirected post-authentication, session hijacked)"
+      - "Your brand appearing as a selectable template in PhaaS kit reporting — expect campaign regeneration after each takedown"
+      - "High volumes of lookalike domains from shared PhaaS hosting infrastructure targeting your customers"
+    detection:
+      rule: detect_phaas_platform
+      patterns:
+        - '(?i)(phaas|phishing.as.a.service).*(kit|subscription|template|platform)'
+        - '(?i)(tycoon|evilproxy|mamba|sneaky|labhost).*(phish|kit|campaign|domain)'
+        - '(?i)(adversary.in.the.middle|aitm).*(relay|session|token|mfa)'
+        - '(?i)(kit\s*fingerprint|shared\s*(template|infrastructure)).*(phish|campaign)'
+    severity: high
+    mitigations:
+      - "Deploy phishing-resistant MFA (FIDO2/WebAuthn/passkeys): the only reliable defense against AiTM session-token relay"
+      - "Shift from page takedowns to campaign-level response: fingerprint the kit, cluster its instances, and coordinate multi-domain takedowns"
+      - "Monitor for your brand in PhaaS template reporting and pre-stage takedown workflows — regeneration is guaranteed"
+      - "Train users specifically on AiTM lures: real-time relay phishing defeats code-based MFA, so suspicious-login verification must not rely on the phished channel"
+    examples:
+      - summary: "Barracuda's 2025 analysis found 60-70% of phishing attacks used PhaaS models, with Tycoon 2FA responsible for 76% of detected incidents, while the FBI's LabHost action exposed a single platform serving 10,000 users across 42,000 phishing domains — the industrial scale of subscription phishing."
+        reference: "https://securitybrief.in/story/phishing-as-a-service-drives-surge-in-cybercrime-for-2025"
+    references:
+      - "https://securitybrief.in/story/phishing-as-a-service-drives-surge-in-cybercrime-for-2025"
+      - "https://www.paubox.com/blog/what-is-phishing-as-a-service-phaas"
+      - "https://alluresecurity.com/blog/what-is-phishing-as-a-service/"
+
+  - id: AEG-T348
+    name: "Law-Enforcement Market Infiltration and Platform Takeovers"
+    category: cybercrime_economy
+    description: >-
+      The highest-leverage disruption of the criminal economy is seizing
+      its trust. In Operation Bayonet (2017), Dutch police covertly ran
+      the Hansa market for a month while the FBI took down AlphaBay,
+      harvesting roughly 10,000 buyer addresses from the migration wave.
+      In Operation Trojan Shield, the FBI covertly operated the ANOM
+      encrypted-phone platform for three years, reading 27 million
+      messages before 800+ arrests. Criminal trust is brittle, and every
+      takedown poisons the next market's escrow.
+    how_it_works: >-
+      Law enforcement attacks the criminal economy at its trust layer
+      rather than its technical layer. The Bayonet playbook is the
+      template: seize one major market (AlphaBay, July 2017) while
+      covertly operating its rival (Hansa, under Dutch judicial
+      authority from June 20), so the displaced user base migrates
+      directly into a monitored platform — an eight-fold surge in new
+      Hansa members followed AlphaBay's shutdown. During the covert
+      month, police modified Hansa's code to defeat its own protections
+      (capturing photo metadata, PGP plaintext, sabotaging multisig) and
+      collected delivery addresses for some 10,000 buyers outside the
+      Netherlands before the final shutdown. The Trojan Shield playbook
+      goes further: after taking down established encrypted-phone
+      providers, the FBI and Australian Federal Police covertly operated
+      the ANOM platform from 2018, distributing devices through criminal
+      informants until 12,000+ devices served 300+ syndicates in 100+
+      countries; on June 8, 2021, coordinated raids across 16 countries
+      produced 800+ arrests based on 27 million intercepted messages.
+      For defenders, the lesson is structural: criminal markets and
+      tools depend on trust that cannot be verified, so each infiltration
+      raises the 'trust tax' across the ecosystem — vendors demand more
+      proof, deals slow, and paranoia degrades operational tempo. The
+      defender's role is to amplify this: publicize takedowns, share
+      indicators from court filings, and treat every criminal-platform
+      collapse as a window when adversaries are disorganized and
+      reconstituting.
+    variants:
+      - "Covert market operation: law enforcement running a seized market to harvest user and transaction data"
+      - "Migration-wave harvesting: timing takedowns so displaced users flood into monitored infrastructure"
+      - "Honeypot criminal tooling: covertly operated encrypted platforms (ANOM) feeding years of intelligence"
+      - "Trust-poisoning: publicized infiltrations degrading trust in successor markets and tools"
+    indicators:
+      - "Sudden seizure banners on criminal markets or platforms your threat-intel tracks — the disruption window is open"
+      - "Migration waves to rival markets or new encrypted tools after a takedown, visible in forum chatter"
+      - "Court filings and press releases from takedowns naming infrastructure, wallets, or methods — convertible to detections"
+      - "Criminal-community paranoia spikes (vetting tightening, deal slowdowns) after a publicized infiltration"
+    detection:
+      rule: detect_le_infiltration_window
+      patterns:
+        - '(?i)(seizure\s*banner|market\s*(seized|taken\s*down|shut\s*down)).*(fbi|europol|doj|police)'
+        - '(?i)(covert.*(operat|ran|monitor)|honeypot).*(market|platform|app).*(law\s*enforcement|police|fbi)'
+        - '(?i)(anom|trojan\s*shield|bayonet).*(arrest|message|intercept|sting)'
+        - '(?i)(migration|users?\s*flood).*(rival|new)\s*(market|platform).*(takedown|seizure)'
+    severity: low
+    mitigations:
+      - "Treat every major takedown as an intelligence window: adversaries are disorganized, reconstituting, and making OPSEC mistakes during migration"
+      - "Convert takedown artifacts (court filings, indictments, press releases) into detections: named infrastructure, wallets, and methods"
+      - "Amplify disruption by sharing sanitized takedown intelligence through ISACs and with customers — trust-poisoning compounds across the ecosystem"
+      - "Maintain lawful posture: all market and platform intelligence comes through licensed feeds and law-enforcement liaison, never direct participation"
+    examples:
+      - summary: "In Operation Trojan Shield, the FBI and Australian Federal Police covertly operated the ANOM encrypted-messaging platform from 2018, growing it to 12,000+ devices across 300+ criminal syndicates in 100+ countries, then executed coordinated raids in June 2021 yielding 800+ arrests from 27 million intercepted messages."
+        reference: "https://www.bleepingcomputer.com/news/security/fbi-and-afp-created-a-fake-encrypted-chat-platform-to-catch-criminals/amp/"
+    references:
+      - "https://www.bleepingcomputer.com/news/security/fbi-and-afp-created-a-fake-encrypted-chat-platform-to-catch-criminals/amp/"
+      - "https://www.domain-b.com/infotech/e-business/dark-days-for-dark-web-after-alphabay-global-cops-kill-hansa"
+      - "https://en.wikipedia.org/wiki/ANOM_sting_operation"
+
+doctrine_notes:
+  - title: "Criminals are rational economic actors, not masterminds"
+    body: "Every criminal specialty in this pack — brokers, affiliates, herders, launderers — exists because specialization lowers the cost per attack. Target selection follows expected return: big-game hunting when payments flow, high-volume mid-market targeting when they collapse. When you see a tactic shift, ask what changed in the economics first; the answer predicts the next shift better than any malware analysis."
+  - title: "Trust is manufactured, and manufactured trust is fragile"
+    body: "Criminal markets run on escrow, reputation scores, and deposits because no court enforces their deals. That trust is the single most attackable surface in the underground economy: one exit scam, one covert takeover, one publicized infiltration poisons every successor market. Defenders should treat trust-destruction — takedowns, seizures, publicized arrests — as strategic wins with compounding effects, not one-off news."
+  - title: "Follow the money to the chokepoints"
+    body: "Laundering always ends where crime meets the regulated world: mule accounts, nested exchanges, OTC brokers, sanctioned mixers. These exits are finite, observable, and legally exposed — which is why sanctions, bank transaction monitoring, and wallet reporting work. When tracing an incident, the payment chain's fiat exit is where attribution, seizure, and disruption are cheapest."
+  - title: "Scale is the enemy of OPSEC"
+    body: "Every growing criminal operation accumulates forensic residue: reused handles, shared wallets, bragging, metadata, real emails in admin inboxes. Investigators do not need to be smarter than criminals; they need to be more patient. Assume adversary mistakes compound over time, hunt for the reused artifact, and treat each takedown's documented OPSEC failures as a template for catching the next actor."
+  - title: "A contracting ransom market re-specializes criminals, it does not retire them"
+    body: "Payment rates at record lows do not end cybercrime — they redirect it into cheaper leverage: data-theft-only extortion, insider recruitment, mid-market volume plays, and fraud supply chains. Celebrate the payment collapse as proof that collective defense works, then immediately re-aim detections at the adaptations, because the same actors with the same skills are still in business."
+
+canonical_probes:
+  - "broker listing advertising corporate VPN access priced at $800 with domain admin privileges"
+  - "leak site countdown timer started, sample archive posted, exit scam suspected"
+  - "money mule recruiter posting fake remote job ad for wire transfers"
+  - "fast-flux domain rotating IPs every 5 minutes with short TTL on bulletproof ranges"
+  - "escrow dispute on criminal market, multisig wallet drained, vendor exit scam"

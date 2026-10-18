@@ -54,6 +54,34 @@ against a real model, blocks a planted prompt-injection + exfiltration attempt
 LIVE inside the loop (test with a mock provider), and the audit log captures
 every tool call.
 
+## v0.4 scope — "Godfather Program" (founder order 2026-10-18)
+
+The real project begins: make Aegis the godfather of hacking — the supreme
+defensive authority on the hacking world. Four pillars:
+
+**Pillar 1 — Expert training team (ACTIVE ORDER):** a panel of specialist
+subagents, each incredibly good at hacking in their domain, hired to TRAIN
+the agent: deep new KB packs, sharper detection patterns, deeper
+hacker-mindset doctrine. All at TTP/detection level (defensive only). A
+coordinator validates schema, dedupes against the existing 252 techniques,
+integrates, keeps pytest green, commits.
+
+**Pillar 2 — Adversary emulation engine** (`aegis emulate`, next): chain KB
+techniques into full multi-stage campaign narratives against the user's OWN
+assets, then verify the guard/watch would catch each stage (purple-team
+loop). Plan-level campaigns + detection verification — NEVER payload
+generation or automated exploitation.
+
+**Pillar 3 — Attack graphs** (`aegis graph`, next): for a user-owned system,
+generate ranked attack paths an adversary would take, with the defenses that
+break each path.
+
+**Pillar 4 — MCP client** (unparked, later): connect the agent to external
+security tools via MCP, guard-screened.
+
+Hard boundary (all pillars): defensive only, own assets only — no exploit
+payloads, no offensive tooling, no attack guides; KB at TTP/detection level.
+
 ## v0.3 scope (founder prompt 2026-10-18) — "open-source AI coding-hacking assistant"
 
 GOAL (founder, non-negotiable): Aegis replaces an entire defensive cybersecurity

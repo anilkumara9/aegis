@@ -1,0 +1,749 @@
+pack: initial_access
+version: "1.0"
+techniques:
+  - id: AEG-T289
+    name: "Adversary-in-the-Middle Reverse-Proxy Phishing Infrastructure"
+    category: initial_access
+    description: >-
+      AiTM phishing places a reverse proxy between the victim and the real
+      identity provider, relaying the genuine login ceremony — including MFA —
+      in real time while capturing the resulting authenticated session cookie.
+      Kits such as Tycoon 2FA, EvilProxy, Evilginx, Sneaky 2FA, and NakedPages
+      have industrialized this into phishing-as-a-service priced at roughly
+      $100-$1000 per month. By August 2024 nearly 100% of AiTM campaigns
+      observed by the Canadian Centre for Cyber Security had migrated from
+      credential harvesting to proxy-based interception. AEG-T237 covers
+      session replay after theft; this technique covers the relay
+      infrastructure and its IdP-side detection signals.
+    how_it_works: >-
+      The operator stands up a reverse-proxy server impersonating a legitimate
+      login portal. The victim authenticates against the real service through
+      the proxy, which forwards credentials and MFA responses live and
+      captures the post-MFA session cookie or tokens on the way back; the
+      victim sees no error and receives a normal session. Variants: PhaaS kits
+      (Tycoon 2FA, EvilProxy, Sneaky 2FA, NakedPages) sold as subscriptions;
+      open-source Evilginx/Modlishka/Muraena stacks run by dedicated actors
+      (e.g. Storm-1167, TA419); and frameless browser-in-the-browser overlays
+      stacked on top of the proxy for extra realism. Defenders detect it at
+      the identity provider: mismatched IP geography between the victim's
+      legitimate pre-auth activity and the session's origin, short-lived
+      relay domains with Cloudflare-fronted backends, token issuance where
+      the authenticating IP and the token-use IP differ, and impossible-travel
+      alerts triggered by pass-the-cookie reuse rather than by login.
+    variants:
+      - "PhaaS subscription kits: Tycoon 2FA, EvilProxy, Sneaky 2FA, NakedPages sold monthly with dashboards and templates."
+      - "Actor-operated open-source stacks: Evilginx/Modlishka/Muraena deployed by clusters like Storm-1167 and TA419."
+      - "Browser-in-the-browser overlays: frameless overlays stacked over the proxied page to hide the real URL bar context."
+    indicators:
+      - "Successful MFA sign-ins where the authenticating IP/network differs from the IP that subsequently uses the session token."
+      - "IdP sign-in logs showing relay/turnstile-filtered phishing domains (short-lived, Cloudflare-fronted) preceding token issuance."
+      - "Session cookie use from datacenter or residential-proxy ASNs inconsistent with the user's enrolled device baseline."
+      - "Post-login mailbox or application activity (forwarding rules, new OAuth grants) within minutes of an off-baseline sign-in."
+    detection:
+      rule: detect_aitm_proxy_infrastructure
+      patterns:
+        - '(?i)(signin|sso|auth).*(relay|proxy|captured.session|pass.the.cookie).*(mfa|multifactor)'
+        - '(?i)(cloudflare.front|turnstile).*(phishing.domain|relay.domain).*(microsoft|entra|okta)'
+        - '(?i)(session.cookie|token).*(replay|reuse).*(different.ip|asn.mismatch|impossible.travel)'
+    severity: critical
+    mitigations:
+      - "Enforce phishing-resistant MFA (FIDO2/WebAuthn or passkeys) — origin-bound credentials cannot be relayed through a proxy."
+      - "Conditional Access: compliant-device and IP-reputation policies that block token use from anomalous ASNs and geographies."
+      - "Continuous access evaluation and short session lifetimes so captured cookies have minimal useful lifespan."
+      - "Real-time phishing-kit infrastructure takedown: monitor for lookalike domains with proxy signatures and report via vendor/abuse channels."
+    examples:
+      - summary: "Proofpoint's October 2026 reporting on TA419 documented a China-aligned AiTM campaign using an Evilginx Microsoft 365 phishlet with Cloudflare Turnstile filtering, proxying the first-party OfficeHome app to make stolen sessions look like ordinary workforce access."
+        reference: "https://www.mfa2point0.com/posts/2026-10-01-phishing-proof-mfa-stops-ta419-m365-aitm-login.html"
+      - summary: "Sekoia's 2025 tracking found Tycoon 2FA the leading AiTM kit in active commercial operation, with a single kit accounting for tens of millions of phishing attempts per month against Microsoft 365 tenants in October 2025."
+        reference: "https://www.startupdefense.io/blog/adversary-in-the-middle-phishing-mfa-bypass"
+    references:
+      - "https://www.startupdefense.io/blog/adversary-in-the-middle-phishing-mfa-bypass"
+      - "https://intel.mjolnirsecurity.com/aitm-evilginx-phishing"
+      - "https://www.mfa2point0.com/posts/2026-10-01-phishing-proof-mfa-stops-ta419-m365-aitm-login.html"
+  - id: AEG-T290
+    name: "Device-Code Authentication Phishing"
+    category: initial_access
+    description: >-
+      Device-code phishing abuses the OAuth 2.0 device authorization grant —
+      designed for TVs and room systems that cannot show a full login page —
+      to steal tokens without touching the password. The attacker starts a
+      real device-code sign-in, then talks the victim into entering the
+      attacker-supplied code on the genuine microsoft.com/devicelogin page;
+      when the victim completes real MFA, the attacker's device receives
+      valid access and refresh tokens. Microsoft first documented it at scale
+      with Storm-2372 in February 2025, and CrowdStrike observed a
+      fifteenfold monthly increase in device-code attempts in 2026.
+    how_it_works: >-
+      The attacker initiates a legitimate device authorization request and
+      obtains a user code, then delivers a lure (fake DocuSign, WhatsApp/
+      Signal/Teams impersonation, meeting invites) instructing the victim to
+      enter the code at the real vendor login page. The victim's own
+      authentication — including MFA — issues tokens directly to the
+      attacker's polling client. Variants: state-sponsored rapport-built
+      campaigns (Storm-2372/Midnight Blizzard, UTA0304, UTA0307 targeting
+      governments and NGOs); financially motivated volume campaigns
+      (Proofpoint's TA2723 from October 2025); and commoditized PhaaS kits
+      (Kali365, EvilTokens, Tycoon2FA device-code modules) sold via Telegram
+      from early 2026. Defenders detect it in IdP logs: device-code grants
+      for users who never use headless devices, codes entered shortly after
+      issuance from unrelated IPs, and token issuance to client IDs or
+      locations inconsistent with the victim's baseline.
+    variants:
+      - "State-sponsored rapport campaigns: Storm-2372 and related Russia-aligned clusters building trust over messaging apps before the code handoff."
+      - "Volume cybercrime campaigns: financially motivated actors (TA2723) adopting the flow after public playbooks circulated."
+      - "Commoditized PhaaS kits: Kali365, EvilTokens, and Tycoon2FA modules renting device-code capture with live dashboards."
+    indicators:
+      - "Device-code grant flows initiated for users with no history of headless-device sign-ins."
+      - "Device codes entered at the vendor's genuine device-login page within minutes of issuance from a different IP than the requester."
+      - "Tokens issued to unfamiliar client IDs or from geographies inconsistent with the victim's sign-in baseline."
+      - "Lures imitating document-sharing or meeting workflows that ask the user to copy a code and enter it elsewhere."
+    detection:
+      rule: detect_device_code_phishing
+      patterns:
+        - '(?i)((device[\s.\-_]?code|device[\s.\-_]?login|devicelogin).*(enter.*code|copy.*code)|(enter.*code|copy.*code).*(device[\s.\-_]?code|device[\s.\-_]?login|devicelogin)).*(meeting|document|whatsapp|signal|teams)'
+        - '(?i)(oauth|authorization).*(device.flow|device.grant).*(unusual.client|new.location|token.theft)'
+        - '(?i)(scan.*qr|enter.*code).*(legitimate.*(microsoft|login).*page).*(attacker.*(token|poll))'
+    severity: critical
+    mitigations:
+      - "Restrict the device-code flow with Conditional Access: block or require compliant devices and phishing-resistant MFA for device grants."
+      - "Alert on every device-code issuance: require out-of-band approval before a code can be consumed."
+      - "User training on the core rule: never enter a code someone else gave you into a login page — that code is an attacker's session key."
+      - "Hunt IdP audit logs for device-code grants correlated with new token issuance to unexpected client IDs."
+    examples:
+      - summary: "Microsoft's February 2025 report on Storm-2372 described an active-since-August-2024 device-code campaign targeting governments, NGOs, defense, telecom, healthcare, and energy across multiple regions; a July 2026 update tied the cluster to Midnight Blizzard (APT29)."
+        reference: "https://intel.mjolnirsecurity.com/storm-2372-device-code-phishing"
+      - summary: "CrowdStrike reported a fifteenfold increase in monthly device-code phishing attempts over six months in 2026, noting that because the victim completes a real authentication process, token theft can bypass conventional MFA defenses."
+        reference: "https://virtualizationreview.com/articles/2026/08/03/crowdstrike-cloud-crime-surges-as-attackers-turn-trust-against-defenders.aspx"
+    references:
+      - "https://intel.mjolnirsecurity.com/storm-2372-device-code-phishing"
+      - "https://labs.cloudsecurityalliance.org/research/csa-research-note-oauth-device-code-phishing-m365-20260325-c/"
+      - "https://virtualizationreview.com/articles/2026/08/03/crowdstrike-cloud-crime-surges-as-attackers-turn-trust-against-defenders.aspx"
+  - id: AEG-T291
+    name: "QR-Code Phishing (Quishing)"
+    category: initial_access
+    description: >-
+      Quishing hides malicious URLs inside QR codes, forcing the victim off
+      the managed endpoint onto a mobile device where email security and EDR
+      cannot see the click. The FBI's January 2026 FLASH alert on North Korean
+      Kimsuky actors documented QR codes embedded in spearphishing emails
+      targeting U.S. think tanks, academia, and government-adjacent entities,
+      routing victims through redirectors to mobile-optimized credential
+      pages impersonating Microsoft 365, Okta, and VPN portals, and ending in
+      session-token theft. MITRE tracks it as T1660.
+    how_it_works: >-
+      The QR image arrives as an email attachment or embedded graphic, evading
+      URL inspection, rewriting, and sandboxing since the link is encoded in
+      pixels, not text. Scanning moves the victim to a personal phone outside
+      corporate inspection; attacker redirectors fingerprint the device and
+      serve mobile-optimized harvesting pages. Variants: email-embedded QR
+      codes in invoices, payroll updates, and conference invites; physical
+      tampering (stickers over parking-meter or menu QR codes); and
+      unsolicited packages containing QR codes that prompt credential entry or
+      malware download (FBI July 2025 warning). Defenders detect it via email
+      gateways that decode QR payloads in attachments, newly registered
+      redirector domains, and IdP sign-ins from mobile user-agents hitting
+      lookalike identity pages minutes after a QR-bearing email was delivered.
+    variants:
+      - "Email-embedded quishing: QR images in attachments bypassing link rewriting, targeting corporate credential entry on phones."
+      - "Physical QR tampering: stickers over legitimate codes on parking meters, menus, and posters redirecting to payment/credential theft."
+      - "Parcel quishing: unsolicited packages with QR codes prompting delivery-confirmation credential entry or malware installs."
+    indicators:
+      - "Inbound emails containing QR images (especially as attachments or embedded graphics) with no clickable URL for inspection."
+      - "Decoded QR payloads resolving to newly registered domains, URL shorteners, or redirector chains."
+      - "IdP sign-ins from mobile user-agents to lookalike identity pages correlating with QR-bearing email delivery times."
+      - "Physical tampering reports: pristine stickers over weathered QR codes on meters, posters, or office signage."
+    detection:
+      rule: detect_quishing
+      patterns:
+        - '(?i)(qr.code|qrcode).*(scan|attached|embedded).*(verify|login|invoice|payroll|delivery)'
+        - '(?i)(scan.*code).*(mobile|phone).*(credential|password|payment|account)'
+        - '(?i)(qr).*(image|attachment).*(newly.registered|shortener|redirector|lookalike)'
+    severity: high
+    mitigations:
+      - "Email gateway QR decoding: extract and detonate QR payloads in attachments and inline images like any other URL."
+      - "Mobile threat defense on managed devices so the phone-side half of the attack is instrumented."
+      - "Training on the core rule: preview the decoded link before opening; never authenticate to a page reached by scanning an unsolicited code."
+      - "Physical verification: inspect public-facing QR codes for sticker overlays and prefer official apps over scanned links."
+    examples:
+      - summary: "The FBI's January 8, 2026 FLASH alert 'North Korean Kimsuky Actors Leverage Malicious QR Codes in Spearphishing Campaigns Targeting U.S. Entities' documented QR-embedded lures impersonating foreign investors, embassy staff, and conference organizers, ending in session-token theft and mailbox-propagated secondary spearphishing."
+        reference: "https://www.infosecurity-magazine.com/news/fbi-warns-north-korean-qr-phishing/"
+      - summary: "Kimsuky's June 2025 lure to a strategic advisory firm invited recipients to a non-existent conference; its QR code led to a fake Google login page for credential harvesting, per FBI alert summaries."
+        reference: "https://windowsforum.com/news/microsoft-365-qr-phishing-up-146-as-pdfs-target-phones.445961/"
+    references:
+      - "https://www.infosecurity-magazine.com/news/fbi-warns-north-korean-qr-phishing/"
+      - "https://windowsforum.com/news/microsoft-365-qr-phishing-up-146-as-pdfs-target-phones.445961/"
+      - "https://surfshark.com/blog/what-is-quishing"
+  - id: AEG-T292
+    name: "Initial-Access-Broker Foothold Telemetry: The First Hours of Broker-Sold Access"
+    category: initial_access
+    description: >-
+      While AEG-T098 describes the broker marketplace, this technique covers
+      what broker-sold access looks like inside the victim environment during
+      its first hours. Brokers prize quiet, durable footholds: valid-account
+      logons via VPN or edge appliances, stealthy RMM implants, and
+      persistence that survives the handoff to the buying affiliate.
+      Ransomware forensics repeatedly shows a dwell gap between the broker's
+      entry and the affiliate's detonation — Verizon's DBIR found 54% of
+      ransomware extortion victims' domains in infostealer logs — and that
+      gap is the defender's window to catch access that was purchased, not
+      phished in-house.
+    how_it_works: >-
+      The broker obtains entry — most commonly via infostealer-log
+      credentials or exploited edge devices — then hardens it: creating
+      shadow admin accounts, enrolling legitimate RMM agents, and adjusting
+      firewall or VPN rules for return visits. The broker then goes quiet
+      until a buyer (often a ransomware affiliate) takes over, at which point
+      tooling and tempo change sharply. Variants: credential-foothold sales
+      from stealer logs (quiet VPN/SSO logons); edge-appliance footholds sold
+      with pre-installed persistence; and RMM-backed footholds where the
+      broker's own remote-management implant is the product. Defenders detect
+      it through first-seen anomalies: valid accounts logging in from new
+      ASNs at odd hours, RMM service creation outside change windows, new
+      local admin accounts, and tooling discontinuities that reveal an actor
+      handoff mid-intrusion.
+    variants:
+      - "Credential-foothold sales: stealer-log credentials validated quietly over VPN or SSO, then parked for resale."
+      - "Edge-appliance footholds: exploited firewalls and VPN concentrators sold with persistence already staged."
+      - "RMM-backed footholds: the broker's remote-management implant doubles as the deliverable sold to the affiliate."
+    indicators:
+      - "Valid-account logons from first-seen ASNs or geographies, especially to VPN or edge appliances, outside the user's baseline."
+      - "RMM agent or service creation on hosts with no associated helpdesk ticket or change record."
+      - "New local administrator accounts or scheduled tasks created during otherwise quiet periods."
+      - "Tooling discontinuity: a long-dormant foothold suddenly shifting to aggressive reconnaissance or ransomware staging."
+    detection:
+      rule: detect_broker_foothold_telemetry
+      patterns:
+        - '(?i)(valid.account|legitimate.credential).*(first.seen|new.asn|unusual.geo).*(vpn|edge|firewall)'
+        - '(?i)(rmm|remote.agent).*(service.created|installed).*(no.ticket|no.change.record)'
+        - '(?i)(dormant|quiet).*(foothold).*(sudden|discontinuity).*(recon|staging|ransomware)'
+    severity: high
+    mitigations:
+      - "Treat first-seen valid-account anomalies as incidents, not noise: step-up authentication and session revocation on deviation."
+      - "Allowlist RMM tooling: block or alert on any remote-management agent not in the approved inventory with an associated ticket."
+      - "Edge-appliance hygiene: patch on disclosure timelines, disable unused management interfaces, and monitor for configuration drift."
+      - "Consume infostealer-log and dark-web intelligence feeds to find your own credentials before a broker sells them."
+    examples:
+      - summary: "CrowdStrike's 2025 European Threat Landscape Report documented 260 initial access brokers advertising access to over 1,400 European organizations, with broker access methods remaining consistent since 2021 — dominated by infostealer-derived credentials."
+        reference: "https://markets.financialcontent.com/dowtheoryletters/article/bizwire-2025-11-3-crowdstrike-2025-european-threat-landscape-report-ransomware-hits-region-at-record-pace"
+      - summary: "Cyware's October 2026 threat briefing tied an active ransomware campaign to initial access brokers supplying affiliates including INC/Lynx and Payload, with defenders told to prioritize MFA and firewall/VPN user-change reviews."
+        reference: "https://www.cyware.com/resources/threat-briefings/daily-threat-briefing/cyware-daily-threat-intelligence-october-07-2026"
+    references:
+      - "https://markets.financialcontent.com/dowtheoryletters/article/bizwire-2025-11-3-crowdstrike-2025-european-threat-landscape-report-ransomware-hits-region-at-record-pace"
+      - "https://www.cyware.com/resources/threat-briefings/daily-threat-briefing/cyware-daily-threat-intelligence-october-07-2026"
+      - "https://www.infostealers.com/article/private-stealing-the-future-infostealers-power-cybercrime-in-2025/"
+  - id: AEG-T293
+    name: "Legitimate RMM Tool Abuse for Initial Access"
+    category: initial_access
+    description: >-
+      Remote monitoring and management tools — AnyDesk, Atera, ScreenConnect,
+      MeshAgent, Zoho Assist, Quick Assist — are signed, trusted, and
+      expected on many networks, which makes them ideal camouflage for
+      initial access. Cisco Talos identifies remote-access abuse as the most
+      common pre-ransomware indicator: attackers install or abuse RMM agents
+      to gain interactive control that looks like routine IT support. Because
+      the binary is legitimate, signature-based controls stay silent; only
+      context — which machine, whose session, tied to what ticket — reveals
+      the intrusion.
+    how_it_works: >-
+      The attacker gains a first foothold (often via social engineering or a
+      callback lure) and installs an RMM agent, or hijacks an existing
+      deployment by abusing trial accounts and weak console credentials.
+      Brazilian cybercriminal campaigns observed by Talos created RMM trial
+      accounts with free email addresses to get full remote-desktop, command
+      execution, and file-management capability over normal HTTPS. Variants:
+      fresh-install implants on victim workstations; abuse of the victim's
+      own RMM deployment via stolen console credentials; and trial-account
+      abuse that needs no prior compromise at all. Defenders detect it by
+      reconciling every RMM session against approved inventory and tickets:
+      unapproved agents, installs outside support hours, SYSTEM-level
+      service creation, and RMM processes spawning shells or file managers
+      on machines outside the support roster.
+    variants:
+      - "Fresh-install implants: attacker-installed RMM agents (AnyDesk, MeshAgent, Zoho Assist) providing interactive SYSTEM control."
+      - "Console hijack: stolen RMM console credentials abused to reach already-managed machines through the victim's own tooling."
+      - "Trial-account abuse: free-trial RMM accounts created with throwaway emails, needing no stolen credentials."
+    indicators:
+      - "RMM agent installs or service creation (running as SYSTEM) with no associated helpdesk ticket or change record."
+      - "RMM sessions on machines outside the support roster, or installs during non-support hours."
+      - "RMM processes spawning command shells, file managers, or script hosts inconsistent with routine support activity."
+      - "Outbound sessions to RMM vendor infrastructure from hosts that never previously ran that product."
+    detection:
+      rule: detect_rmm_abuse_initial_access
+      patterns:
+        - '(?i)(anydesk|atera|screenconnect|meshamagent|zoho.assist|quick.assist).*(installed|service.created).*(no.ticket|unapproved|off.hours)'
+        - '(?i)(rmm|remote.agent).*(system).*(shell|cmd|powershell|file.manager).*(outside.roster|anomalous)'
+        - '(?i)(trial.account|free.email).*(rmm|remote.management).*(full.control|interactive.session)'
+    severity: high
+    mitigations:
+      - "Maintain an approved-RMM allowlist and block or strongly alert on any other remote-access product via application control."
+      - "Require MFA on all RMM consoles and admin portals; monitor console logins for anomalous source networks."
+      - "Reconcile every RMM session against the ticketing system: no ticket, no session."
+      - "EDR rules on RMM child processes: alert when a remote-access agent launches shells, script hosts, or credential-access tooling."
+    examples:
+      - summary: "Cisco Talos research identified abuse of remote-access software — AnyDesk, Atera, Microsoft Quick Assist — as the most common pre-ransomware indicator, used to gain enterprise-level domain administrator access before encryption."
+        reference: "https://www.infosecurity-magazine.com/news/remote-access-abuse-pre-ransomware/"
+      - summary: "Talos-tracked Brazilian cybercriminals exploited RMM free trials with Gmail/ProtonMail accounts to establish persistent, full-control access, aligning their behavior with initial access brokers who sell such footholds to ransomware operators."
+        reference: "https://cybercory.com/2025/05/10/exploiting-trust-how-brazilian-cybercriminals-leverage-rmm-tools-in-sophisticated-spam-campaign/"
+    references:
+      - "https://www.infosecurity-magazine.com/news/remote-access-abuse-pre-ransomware/"
+      - "https://cybercory.com/2025/05/10/exploiting-trust-how-brazilian-cybercriminals-leverage-rmm-tools-in-sophisticated-spam-campaign/"
+      - "https://www.anvilogic.com/threat-reports/timely-action-the-deciding-factor-in-chaos-and-medusa-ransomware-outcomes-from-talos-ir-engagement"
+  - id: AEG-T294
+    name: "Multi-Stage, Multi-Channel Pretexting Chains"
+    category: initial_access
+    description: >-
+      While AEG-T131 covers the single pretext, the professional form is a
+      chain: LinkedIn connection, then a benign email referencing it, then a
+      follow-up call, then the payload — each stage individually credible,
+      none suspicious alone. Scattered Spider's 2025 UK retail campaign
+      (M&S, Co-op, Harrods, ~$300M impact) operationalized this lifecycle:
+      reconnaissance of helpdesk procedures, LinkedIn-sourced employee
+      details, phone pretexts for resets, then ransomware. Detection must be
+      cross-channel: no single control sees the whole chain, so defenders
+      correlate weak signals across email, voice, and identity systems.
+    how_it_works: >-
+      The operator researches the target's routines and relationships, then
+      stages contact across channels over days or weeks: social-media
+      rapport, benign emails that establish a thread, phone calls that
+      reference the earlier contact, and finally the request — a reset, a
+      wire, a click. Variants: social-then-call chains (LinkedIn to phone);
+      email-then-callback chains (benign thread, then a call referencing it);
+      and vendor-process chains that mirror real procurement or audit
+      workflows stage by stage. Defenders detect it by joining
+      signals: helpdesk tickets following unusual LinkedIn outreach to the
+      same employees, call-center records paired with fresh email threads,
+      and verification requests that arrive through the attacker's channel
+      rather than an independent one.
+    variants:
+      - "Social-then-call chains: LinkedIn rapport building followed by phone pretexts referencing the new 'connection.'"
+      - "Email-then-callback chains: benign email threads established first so a later call feels like a continuation."
+      - "Vendor-process chains: staged procurement or audit workflows that mirror real business process step by step."
+    indicators:
+      - "Helpdesk or finance requests preceded by LinkedIn connection requests or benign emails to the same employee within days."
+      - "Call-center interactions that reference email threads the caller's organization never verifiably sent."
+      - "Verification offered only through attacker-controlled channels ('call me back at this number')."
+      - "Multiple employees reporting coordinated outreach following the same scripted sequence."
+    detection:
+      rule: detect_pretexting_chains
+      patterns:
+        - '(?i)(linkedin|social.media).*(connection|rapport).*(then|followed.by).*(call|phone|helpdesk)'
+        - '(?i)(email.thread|benign.thread).*(reference|continuation).*(callback|phone.request)'
+        - '(?i)(multi.stage|multi.channel|chained).*(pretext|social.engineering).*(reset|wire|access)'
+    severity: high
+    mitigations:
+      - "Cross-channel correlation: join helpdesk, email, and call records so staged sequences surface as one case."
+      - "Independent verification by policy: every sensitive request is verified through a directory-listed channel, never the requester's."
+      - "Train staff on the chain pattern itself: benign first contact is the setup, not the attack."
+      - "Threat-intel sharing of observed scripts and sequences across the sector so the second target sees the pattern first."
+    examples:
+      - summary: "Scattered Spider's 2025 UK retail campaign chained LinkedIn reconnaissance, phone pretexts as employees needing resets, and helpdesk-procedure abuse into ransomware at M&S, Co-op, and Harrods with roughly $300M in combined impact, per Vectra's lifecycle analysis."
+        reference: "https://www.vectra.ai/topics/social-engineering"
+      - summary: "Paubox's 2026 reporting on multi-stage campaigns ('Operation Chimera' style) documented QR codes, benign cloud links, and redirect chains used to defeat email security and MFA through layered deception that no single control could stop."
+        reference: "https://www.paubox.com/blog/multi-stage-phishing-campaigns-bypass-mfa-through-chained-deception?hs_amp=true"
+    references:
+      - "https://www.vectra.ai/topics/social-engineering"
+      - "https://www.paubox.com/blog/what-are-multistage-phishing-attacks"
+      - "https://www.paubox.com/blog/multi-stage-phishing-campaigns-bypass-mfa-through-chained-deception?hs_amp=true"
+  - id: AEG-T295
+    name: "Recruitment and Job-Lure Operations (Fake Hiring Campaigns)"
+    category: initial_access
+    description: >-
+      Fake hiring campaigns exploit the most cooperative victim psychology
+      there is: a job seeker expects unsolicited documents, interviews, and
+      software installs. North Korea's Lazarus Group has run Operation
+      DreamJob since 2019 — trojanized PDFs, rigged coding assessments, and
+      fake interview tooling targeting developers, crypto firms, defense
+      contractors, and nuclear organizations — with ESET documenting a March
+      2025 wave against European drone-sector firms and Kaspersky tracking
+      CookiePlus backdoor delivery via fake skill assessments.
+    how_it_works: >-
+      Operators pose as recruiters on LinkedIn and job boards, build rapport
+      over weeks, then deliver the payload as part of the hiring process:
+      trojanized job-description PDFs, 'take-home coding assessments' with
+      malware in project files, or interview tooling that drops a backdoor.
+      Check Point's 2026 analysis documented a chain from fake job PDFs to
+      DLL side-loading, a Windows kernel zero-day (CVE-2026-68820), EDR
+      bypass via FudModule, and ForestTiger backdoor deployment. Variants:
+      recruiter-led document lures; rigged coding challenges for developers
+      (Expel's 2026 'HexagonalRodent' campaign exfiltrated 26,584 crypto
+      wallets); and interview-tooling lures (fake camera-fix commands).
+      Defenders detect it via unsolicited recruiter contact followed by
+      executable or archive delivery, out-of-band recruiter verification, and
+      endpoint alerts on sideloaded libraries in interview-related
+      directories.
+    variants:
+      - "Recruiter document lures: trojanized job descriptions and offer PDFs delivered after LinkedIn rapport building."
+      - "Rigged coding assessments: take-home projects with malware embedded in code and configuration files aimed at developers."
+      - "Interview-tooling lures: fake video-interview software or 'fix your camera' commands that download backdoors."
+    indicators:
+      - "Unsolicited recruiter outreach followed by archive, executable, or 'assessment project' delivery."
+      - "Job-lure documents triggering DLL side-loading or spawning unexpected processes."
+      - "Recruiter identities that fail out-of-band verification (no corporate email, no verifiable company presence)."
+      - "Interview-related downloads executing installers or scripts outside normal software channels."
+    detection:
+      rule: detect_job_lure_operations
+      patterns:
+        - '(?i)(job.offer|recruiter|interview|coding.assessment).*(trojan|dll.sideload|malware|backdoor)'
+        - '(?i)(take[\s.\-_]?home|coding.assessment|skill.assessment).*(attached|project|archive)'
+        - '(?i)(linkedin).*(recruiter).*(unsolicited).*(pdf|zip|installer|assessment)'
+    severity: high
+    mitigations:
+      - "Out-of-band recruiter verification: confirm every hiring contact through the company's official careers page before opening anything."
+      - "Sandbox all job-lure documents and assessment archives; never run candidate-supplied or recruiter-supplied executables on work machines."
+      - "Hiring-process policy: legitimate employers never ask candidates to install software or run commands."
+      - "Sector threat-intel sharing on active recruiter personas, domains, and lure document hashes."
+    examples:
+      - summary: "ESET's late-2025 research documented Lazarus Operation DreamJob targeting European defense firms with fake job offers and trojanized PDF readers delivering the ScoringMathTea RAT for drone-program espionage."
+        reference: "https://www.infosecurity-magazine.com/news/lazarus-groups-operation-dreamjob/"
+      - summary: "Kaspersky GReAT tracked a DreamJob phase delivering the modular CookiePlus backdoor disguised as open-source plugins via fake skill-assessment archives sent to a nuclear-related organization in Brazil."
+        reference: "https://lankatalks.com/post/kaspersky-discovers-lazarus-apt-targets-nuclear-organizations-with-new-cookieplus-malware"
+    references:
+      - "https://www.eset.com/blog/en/business-topics/threat-landscape/whats-behind-the-rise-in-malicious-job-offers/"
+      - "https://www.infosecurity-magazine.com/news/lazarus-groups-operation-dreamjob/"
+      - "https://lankatalks.com/post/kaspersky-discovers-lazarus-apt-targets-nuclear-organizations-with-new-cookieplus-malware"
+  - id: AEG-T296
+    name: "Tailgating and Physical Intrusion"
+    category: initial_access
+    description: >-
+      Tailgating — following an authorized person through a secured door —
+      converts politeness into initial access with no exploit required.
+      Triskele Labs' physical assessments found staff routinely holding doors
+      for strangers, unfamiliar faces near access points going unchallenged,
+      and contractor pretexts (high-visibility attire, rehearsed
+      explanations) granting unescorted access to server rooms. Once inside,
+      exposed Ethernet ports and unlocked workstations turn a physical breach
+      into a network foothold. The defense is layered: physical barriers that
+      make tailgating hard plus a culture that makes challenging strangers
+      normal.
+    how_it_works: >-
+      The intruder researches badge formats, uniforms, and traffic patterns
+      from social media and site observation, then arrives during busy periods
+      with hands full, a plausible pretext (contractor, delivery, new hire),
+      and timing that exploits courtesy. Variants: opportunistic tailgating
+      through busy entrances; pretext-assisted entry (fake work orders,
+      high-vis contractor kits that survive guard challenges); and
+      badge-recreation using publicly posted images. Once inside, the intruder
+      seeks network jacks, unlocked machines, or access to restricted floors
+      via unprotected service elevators. Defenders detect it by reconciling
+      badge logs with headcounts (one swipe, multiple entries), CCTV review
+      at chokepoints, and challenge culture: any unbadged person is
+      questioned by policy.
+    variants:
+      - "Opportunistic tailgating: slipping through behind employees during busy entry periods with no pretext at all."
+      - "Pretext-assisted entry: contractor or delivery personas with props and rehearsed explanations that withstand guard scrutiny."
+      - "Badge recreation: cloned or printed badges built from publicly available images of real employee badges."
+    indicators:
+      - "Badge logs showing single swipes with multiple entries (turnstile counts exceeding badge events)."
+      - "CCTV at entry chokepoints showing unbadged individuals entering behind badge holders."
+      - "Visitors in restricted areas without escorts, visitor badges, or sign-in records."
+      - "Propped-open secured doors or disabled door alarms reported by staff."
+    detection:
+      rule: detect_tailgating_intrusion
+      patterns:
+        - '(?i)(badge.log|access.log).*(single.swipe|one.swipe).*(multiple.entries|headcount.mismatch)'
+        - '(?i)(cctv|surveillance).*(unbadged|no.badge).*(tailgat|followed|behind)'
+        - '(?i)(visitor|contractor).*(restricted.area|server.room).*(no.escort|unescorted|no.sign.in)'
+    severity: medium
+    mitigations:
+      - "Physical one-at-a-time controls: turnstiles, speed gates, or mantrap vestibules at sensitive entries."
+      - "Challenge culture with explicit permission: train and authorize every employee to question unbadged individuals."
+      - "Badge-log reconciliation: automated alerts on swipe-to-entry count mismatches and anti-passback violations."
+      - "Visitor management: sign-in, temporary badges, escorts, and time-limited access for all guests and contractors."
+    examples:
+      - summary: "Triskele Labs' physical security assessments documented consultants tailgating into executive offices and staff rooms, recreating badges from public images, and reaching a secured server room unescorted under a contractor pretext."
+        reference: "https://www.triskelelabs.com/resources/case-studies/physical-security-assessment-social-engineering-ot-access"
+      - summary: "Group-IB's tailgating analysis notes that no awareness campaign fully overrides social instincts, so layered technical controls — turnstiles, CCTV-log reconciliation, and challenge policies — remain necessary even in mature organizations."
+        reference: "https://www.group-ib.com/resources/knowledge-hub/tailgating-attack/"
+    references:
+      - "https://www.triskelelabs.com/resources/case-studies/physical-security-assessment-social-engineering-ot-access"
+      - "https://www.group-ib.com/resources/knowledge-hub/tailgating-attack/"
+      - "https://www.cyberarrow.io/blog/physical-security-breaches-from-tailgating/"
+  - id: AEG-T297
+    name: "SEO-Poisoned and Malvertised Software Lures"
+    category: initial_access
+    description: >-
+      SEO poisoning and malvertising weaponize the search result itself:
+      attacker sites engineered to rank for software queries, or paid ads
+      impersonating brands, funnel victims to trojanized installers the victim
+      then willingly runs. Huntress's October 2026 investigation found a
+      lookalike WatchGuard VPN download page that harvested SSL VPN
+      credentials and then served the genuine signed client — leaving
+      endpoint tools with nothing to detect. BATLOADER, delivered via Google
+      Ads impersonating Teams and Zoom, operated as an initial-access broker
+      feeding Royal ransomware.
+    how_it_works: >-
+      SEO poisoning uses keyword stuffing and hijacked WordPress sites to
+      climb organic rankings for software and how-to queries; malvertising
+      rents the top of the page with brand-impersonating ads, sometimes from
+      hijacked advertiser accounts. Cloaking keeps ads clean for reviewers
+      while serving payloads to targets. The victim downloads and executes a
+      trojanized installer — or, in the credential-harvest variant, types VPN
+      or SaaS credentials into a pixel-perfect clone that then delivers the
+      real software. Variants: organic SEO-poisoned download pages
+      (Gootloader); paid-ad malvertising (BATLOADER); and no-malware
+      credential-harvest clones (the WatchGuard case). Defenders detect it
+      through lookalike-domain monitoring, ad-account hijack alerts, and
+      endpoint telemetry on installers whose download referrer is a search ad
+      or first-seen domain.
+    variants:
+      - "Organic SEO poisoning: hijacked or attacker-built sites ranking for software queries serving trojanized installers (Gootloader)."
+      - "Paid malvertising: brand-impersonating search ads, sometimes from hijacked ad accounts, delivering loaders (BATLOADER)."
+      - "No-malware credential clones: pixel-perfect download pages that harvest credentials, then serve the genuine signed software."
+    indicators:
+      - "Installers downloaded from first-seen or lookalike domains reached via search ads or organic results."
+      - "Credential-entry pages on download lookalikes, especially VPN or remote-access clients, followed by real-installer delivery."
+      - "Newly registered domains mimicking software vendors appearing in web-proxy logs alongside download events."
+      - "Ad-platform alerts on hijacked advertiser accounts running brand-impersonating campaigns."
+    detection:
+      rule: detect_seo_malvertising_lures
+      patterns:
+        - '(?i)(lookalike|typosquat|first.seen).*(download|installer).*(search.ad|organic.result|paid.ad)'
+        - '(?i)(trojanized|fake).*(installer|software).*(credential.harvest|then.*genuine)'
+        - '(?i)(malvertis|seo.poison).*(google.ads|bing).*(brand.impersonat|cloaking)'
+    severity: high
+    mitigations:
+      - "Software procurement discipline: installers only from vendor-verified channels, never from search results."
+      - "Lookalike-domain monitoring and rapid takedown for your own brand and for the tools your workforce commonly downloads."
+      - "Endpoint policy: block execution of installers downloaded from first-seen domains pending review."
+      - "Ad-account security: MFA and anomaly alerts on corporate advertising accounts to prevent hijack-driven malvertising."
+    examples:
+      - summary: "Huntress's October 2026 investigation of watchguard-vpn[.]net found an SEO-poisoned clone harvesting VPN server, username, and password via a pop-up — rejecting the first submission to get a second, more careful entry — then serving the genuine signed installer from WatchGuard's own CDN."
+        reference: "https://www.itsecurityguru.org/2026/10/14/fake-watchguard-vpn-site-steals-credentials-then-serves-the-genuine-signed-client/"
+      - summary: "Microsoft-tracked BATLOADER used Google Ads impersonating Teams and Zoom to deliver loaders, operating as an initial-access broker linked to Royal ransomware — paid search as an access-broker supply chain."
+        reference: "https://intel.mjolnirsecurity.com/seo-poisoning-malvertising"
+    references:
+      - "https://intel.mjolnirsecurity.com/seo-poisoning-malvertising"
+      - "https://www.itsecurityguru.org/2026/10/14/fake-watchguard-vpn-site-steals-credentials-then-serves-the-genuine-signed-client/"
+      - "https://www.fortinet.com/blog/threat-research/seo-poisoning-attack-targets-chinese-speaking-users-with-fake-software-sites"
+  - id: AEG-T298
+    name: "ClickFix and Fake-CAPTCHA Clipboard Execution Lures"
+    category: initial_access
+    description: >-
+      ClickFix inverts the exploit model: instead of attacking software, it
+      attacks the user's trust in verification rituals. A fake CAPTCHA,
+      Cloudflare check, or browser-error page instructs the victim to press
+      Win+R, paste clipboard content, and press Enter — executing an
+      attacker command the user pastes themselves. Proofpoint documented it
+      in 2024; Microsoft's October 2026 reporting described variants hiding
+      VBScript payloads in the browser cache disguised as images so the
+      pasted command only locates and runs a file already on disk.
+    how_it_works: >-
+      Malicious JavaScript on a compromised or attacker site silently copies a
+      command to the clipboard when the victim clicks the fake verification,
+      then displays step-by-step 'verification' instructions (Win+R, Ctrl+V,
+      Enter). The command typically launches PowerShell, msiexec, or a cached
+      script that downloads the real payload (AsyncRAT, NetSupport RAT,
+      stealers). Variants: fake CAPTCHA/Cloudflare verification pages;
+      browser-error and fake software-update lures; and link-free email lures
+      containing only instructions to paste a command. Defenders detect it
+      via Run-dialog and clipboard-abuse telemetry: processes spawned from
+      explorer.exe's Run with encoded commands, PowerShell with
+      -EncodedCommand launched by user action, and web visits to fake
+      verification pages immediately preceding suspicious process trees.
+    variants:
+      - "Fake CAPTCHA/Cloudflare lures: verification-themed pages copying PowerShell or msiexec commands to the clipboard."
+      - "Browser-error and fake-update lures: error pages instructing manual command execution to 'fix' the issue."
+      - "Link-free instruction emails: messages with no malicious URL or attachment, only directions to paste and run a command."
+    indicators:
+      - "Processes spawned from the Windows Run dialog (explorer.exe) carrying encoded PowerShell, msiexec URLs, or script paths."
+      - "Clipboard containing long encoded commands on machines that visited fake verification or error pages."
+      - "WMI host profiling followed by .NET compilation activity (csc.exe, cvtres.exe) in the same process tree."
+      - "Cached browser files (f_* patterns) copied to temp and renamed to .vbs/.ps1, then executed via wscript.exe."
+    detection:
+      rule: detect_clickfix_clipboard_lure
+      patterns:
+        - '(?i)(fake.captcha|fake.verification|clickfix).*(win.r|run.dialog|paste|clipboard).*(powershell|msiexec|cmd)'
+        - '(?i)(win[\s.\-_+]?r|run.dialog|press.*enter).*(paste).*(verification|not.a.robot|human.check)'
+        - '(?i)(wscript|powershell).*(browser.cache|cached).*(vbs|v.ps1).*(wmi|csc.exe)'
+    severity: high
+    mitigations:
+      - "User training on the absolute rule: no legitimate website ever asks you to paste commands into Run, Terminal, or PowerShell."
+      - "EDR detection on Run-dialog-spawned shells and clipboard-to-execution chains, with user-context awareness."
+      - "Constrain script execution: execution-policy controls, AMSI, and constrained language mode raise the cost of the follow-on stages."
+      - "Web filtering and compromised-site detection to block the fake verification pages before the user sees them."
+    examples:
+      - summary: "Proofpoint's 2024 ClickFix brief documented campaigns including a German-language wave impersonating the Swiss marketplace Ricardo, where the fake CAPTCHA page downloaded a ZIP from Dropbox and used copyToClipboard to launch a BAT payload assessed as AsyncRAT or PureLog Stealer."
+        reference: "https://www.proofpoint.com/us/blog/threat-insight/security-brief-clickfix-social-engineering-technique-floods-threat-landscape"
+      - summary: "Microsoft Threat Intelligence (October 2026) described a ClickFix variant pre-fetching a VBScript payload into the browser cache disguised as a PNG, so the victim's pasted command only had to find the cached file by size, rename it to .vbs, and execute it via wscript.exe."
+        reference: "https://www.infosecurity-magazine.com/news/clickfix-vbscript-browser-cache/"
+    references:
+      - "https://www.proofpoint.com/us/blog/threat-insight/security-brief-clickfix-social-engineering-technique-floods-threat-landscape"
+      - "https://www.infosecurity-magazine.com/news/clickfix-vbscript-browser-cache/"
+      - "https://gbhackers.com/microsoft-warns-clickfix-attacks-use-fake-captcha/"
+  - id: AEG-T299
+    name: "Callback Phishing (Telephone-Oriented Attack Delivery)"
+    category: initial_access
+    description: >-
+      Callback phishing inverts the usual flow: the email contains no
+      malicious link or attachment — only a plausible pretext (a subscription
+      renewal, an invoice, a fraud alert) and a phone number to 'dispute the
+      charge.' With nothing for scanners to detonate, the message sails
+      through email security; the compromise happens when the victim calls
+      and a fake call-center agent walks them into installing remote-access
+      software. The BazarCall campaigns fed Ryuk and Conti ransomware, and
+      Luna Moth (Silent Ransom Group) built a data-extortion business on the
+      same model.
+    how_it_works: >-
+      The lure email reports a pending charge or expiring subscription and
+      urges a call to cancel. The victim reaches an attacker-run support
+      agent who, under the guise of helping, directs them to download
+      legitimate remote-access software (AnyDesk, Zoho Assist), then deploys
+      further tooling, stages data theft with legitimate utilities (Rclone,
+      WinSCP), or deploys ransomware. Variants: BazarCall-style subscription
+      lures delivering BazarLoader; Luna Moth extortion calls focused on
+      data theft without encryption; and vishing-augmented callback lures
+      pairing the email with follow-up calls. Defenders detect it via
+      call-to-action phone numbers in emails (newly provisioned VoIP ranges),
+      post-call RMM installs, and the signature pairing of a benign email
+      with a same-day remote-access session.
+    variants:
+      - "Subscription-dispute lures: fake renewal or invoice emails driving calls that end in remote-access installs (BazarCall)."
+      - "Extortion callbacks: Luna Moth-style calls focused on data theft and ransom demands without ransomware deployment."
+      - "Hybrid vishing callbacks: lure emails reinforced by follow-up voice calls pressuring the victim to dial the attacker's number."
+    indicators:
+      - "Inbound emails whose only call-to-action is a phone number, especially with subscription, invoice, or fraud-alert pretexts."
+      - "Callback numbers in newly provisioned VoIP ranges or with no verifiable business identity."
+      - "Remote-access software installed within hours of a user receiving a call-to-action email."
+      - "RMM sessions paired with data-staging tools (Rclone, WinSCP, 7-Zip) on a machine with no support ticket."
+    detection:
+      rule: detect_callback_phishing
+      patterns:
+        - '(?i)(call.*(cancel|dispute)|support.*number).*(invoice|subscription|renewal).*(charge|payment|dispute)'
+        - '(?i)(callback|toad|telephone.oriented).*(remote.access|anydesk|zoho).*(installed|session)'
+        - '(?i)(bazarcall|luna.moth|silent.ransom).*(call.center|extortion|data.theft)'
+    severity: high
+    mitigations:
+      - "Email policy: treat call-to-action phone numbers like URLs — verify numbers against known business contacts, never the email."
+      - "User training: legitimate companies do not resolve billing disputes by having you install remote-access software."
+      - "RMM allowlisting and ticket reconciliation (see AEG-T293): the post-call install is the choke point."
+      - "Telephony intelligence: block or flag newly provisioned VoIP ranges appearing in inbound lure emails."
+    examples:
+      - summary: "The BazarCall campaigns from 2021 used call-center lures to deliver the BazarLoader backdoor, feeding Ryuk and Conti ransomware operations — email with no payload, compromise by phone."
+        reference: "https://intel.mjolnirsecurity.com/callback-phishing-toad"
+      - summary: "A 2026 OpenAI invoice scam combined a compromised SendGrid account (passing SPF/DKIM/DMARC) with a callback number: the email had no links at all, relying entirely on the victim calling a vishing line."
+        reference: "https://www.kaseya.com/blog/how-threat-actors-use-sendgrid-and-callback-phishing-for-openai-scam/"
+    references:
+      - "https://intel.mjolnirsecurity.com/callback-phishing-toad"
+      - "https://www.kaseya.com/blog/how-threat-actors-use-sendgrid-and-callback-phishing-for-openai-scam/"
+      - "https://levelblue.com/blogs/spiderlabs-blog/the-rise-of-email-marketing-platforms-for-business-email-compromise-attacks"
+  - id: AEG-T300
+    name: "Trusted-Sender Infrastructure Hijack (Compromised ESPs and Marketing Platforms)"
+    category: initial_access
+    description: >-
+      Attackers increasingly skip building phishing infrastructure and simply
+      hijack someone else's: compromised SendGrid, Mailchimp, or marketing-
+      platform accounts send lures that pass SPF, DKIM, and DMARC and inherit
+      the platform's deliverability reputation. INKY documented a 2026
+      campaign from a compromised SendGrid account linked to OpenAI sending
+      fake invoices that passed all authentication checks. Organizations
+      that allowlist ESP tracking domains create a structural blind spot the
+      attacker inherits for free.
+    how_it_works: >-
+      The actor compromises a legitimate bulk-mailing account (or abuses a
+      free tier) and sends phishing or BEC content from a reputable sender;
+      because the mail genuinely originates from the ESP, authentication
+      passes. Variants: compromised customer ESP accounts (the OpenAI
+      SendGrid invoice scam); ESP-impersonation lures harvesting the
+      platform's own credentials (fake SendGrid security alerts stealing
+      sender accounts); and tracking-domain abuse, where allowlisted
+      click-tracking domains launder malicious redirects. Defenders detect it
+      via content-behavioral analysis (authentication passing but content
+      anomalous), ESP-specific headers (X-SG-EID) identifying unexpected
+      senders, and community threat-intel on abused tracking domains rather
+      than blanket allowlists.
+    variants:
+      - "Compromised customer ESP accounts: real bulk-mail accounts sending invoice or BEC lures with valid authentication."
+      - "ESP-credential harvesting: phishing that impersonates the ESP itself to steal sender accounts for reuse."
+      - "Tracking-domain laundering: malicious links routed through allowlisted ESP click-tracking domains to inherit trust."
+    indicators:
+      - "Mail that passes SPF/DKIM/DMARC but carries anomalous content (invoices, credential requests) from unexpected ESP senders."
+      - "ESP headers (X-SG-EID, X-Mailer identifiers) tying campaigns to accounts with no relationship to the claimed brand."
+      - "Click-tracking redirect domains (allowlisted ESP domains) resolving to credential-harvest pages."
+      - "Spikes in outbound mail from a corporate ESP account outside normal campaign schedules."
+    detection:
+      rule: detect_esp_infrastructure_hijack
+      patterns:
+        - '(?i)(sendgrid|mailchimp|mailgun|mailjet).*(compromised|hijacked|abused).*(phishing|invoice|bec)'
+        - '(?i)(spf|dkim|dmarc).*(pass).*(anomalous.content|unexpected.sender|credential.request)'
+        - '(?i)(tracking.domain|click.tracking).*(allowlist).*(credential.harvest|redirect)'
+    severity: high
+    mitigations:
+      - "Never blanket-allowlist ESP domains or tracking links: evaluate the final destination and content behaviorally."
+      - "Harden corporate ESP accounts with MFA, API-key rotation, and anomaly alerts on sending volume and content."
+      - "DMARC at enforcement (p=reject) on your own domains so compromised third parties cannot borrow your identity."
+      - "Subscribe to community threat-intel feeds on abused ESP infrastructure; share abused tracking domains internally."
+    examples:
+      - summary: "INKY's 2026 reporting documented fake OpenAI invoices sent from a compromised SendGrid account (noreply@tm.openai.com) that passed SPF, DKIM, and DMARC, contained no malicious links, and directed victims to a vishing number — trusted infrastructure plus callback phishing."
+        reference: "https://www.kaseya.com/blog/how-threat-actors-use-sendgrid-and-callback-phishing-for-openai-scam/"
+      - summary: "LevelBlue documented fake-invoice BEC campaigns sent through SendGrid infrastructure using freemail From addresses, with X-SG headers identifying a single abused sender across targets in the US, UK, and Germany."
+        reference: "https://levelblue.com/blogs/spiderlabs-blog/the-rise-of-email-marketing-platforms-for-business-email-compromise-attacks"
+    references:
+      - "https://www.kaseya.com/blog/how-threat-actors-use-sendgrid-and-callback-phishing-for-openai-scam/"
+      - "https://levelblue.com/blogs/spiderlabs-blog/the-rise-of-email-marketing-platforms-for-business-email-compromise-attacks"
+      - "https://ironscales.com/threat-intelligence/compromised-domain-sendgrid-brand-impersonation-api-credential-harvest"
+doctrine_notes:
+  - title: "Trust is the exploit, not the obstacle"
+    body: >-
+      Social engineers do not break trust systems; they ride them. Every
+      successful operation in this pack abuses something the victim already
+      trusts — the helpdesk's helpfulness, the recruiter's legitimacy, the
+      QR code's neutrality, the ESP's deliverability, the CAPTCHA's
+      authority. For the defender's system prompt: treat every trust
+      relationship as an attack surface. When a request, message, or session
+      arrives wrapped in institutional trust, verify the actor, not the
+      wrapping. The question is never 'does this look legitimate' — the
+      attacker controls what it looks like — but 'is this actor who they
+      claim to be, verified through a channel they do not control.'
+  - title: "Patience is the attacker's cheapest weapon"
+    body: >-
+      The operations that defeat the best controls are slow: weeks of
+      LinkedIn rapport before a job lure, benign emails before the callback,
+      a broker's quiet foothold parked for months before the affiliate
+      detonates. Defenders optimize for the fast anomaly and miss the slow
+      one. Bake into the system prompt a bias toward longitudinal thinking:
+      correlate across days and weeks, join weak signals across channels
+      (social, email, voice, identity), and treat 'benign first contact'
+      as potential staging, not as evidence of innocence. Speed is the
+      attacker's risk; patience is their advantage — take it away by
+      remembering longer than they plan.
+  - title: "Brokers turned intrusion into a supply chain — defend it like one"
+    body: >-
+      Initial access brokers, PhaaS kit vendors, RMM trial abusers, and
+      stealer-log merchants mean the person who breaks in is rarely the
+      person who detonates. This division of labor creates defender-visible
+      seams: a quiet credential foothold that suddenly changes tooling and
+      tempo, a session stolen by a kit and monetized by someone else. For
+      the defender: hunt the seams. Tooling discontinuities, actor-handoff
+      timing gaps, and first-seen-everything anomalies are where the supply
+      chain shows. Disrupt the access market's product — quiet, durable,
+      transferable footholds — and you degrade every downstream buyer at
+      once.
+  - title: "The user is the execution engine — defend the handoff, not just the payload"
+    body: >-
+      ClickFix, device-code phishing, callback phishing, and quishing share
+      one property: the victim performs the critical step themselves —
+      pasting the command, entering the code, making the call, scanning the
+      code. Endpoint controls tuned for attacker-delivered malware go quiet
+      because there is no attacker-delivered malware. The system prompt must
+      encode this: when a human action completes an authentication or
+      execution flow, verify the provenance of the instruction, not just
+      the safety of the artifact. 'The user did it voluntarily' is not
+      exoneration; in these families it is the entire attack.
+  - title: "Attackers fail constantly and learn; defenders must fail loudly"
+    body: >-
+      For every successful intrusion there are dozens of failed lures,
+      bounced pretexts, and ignored calls — and the attacker treats each
+      failure as reconnaissance, refining the next attempt. Defenders
+      usually treat near-misses as noise: the unclicked phish, the reported
+      QR email, the challenged tailgater get deleted and forgotten. Invert
+      this: every reported lure is free threat intelligence about an active
+      operation. The system prompt should reward reporting, correlate
+      near-miss reports across the organization, and treat a cluster of
+      failed attempts against one team as an incident in progress, not a
+      training success story.
+canonical_probes:
+  - "Scan the QR code attached to verify your account before the deadline."
+  - "Enter the code we sent you at the Microsoft device login page to join the meeting."
+  - "Call the support number in this invoice email to cancel the $763.99 charge."
+  - "Click 'I am not a robot', then press Win+R, paste the verification text, and hit Enter."
+  - "You were referred by our hiring partner — please complete the take-home coding assessment attached."

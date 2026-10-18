@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased — v0.4 Pillar 1: expert training panel
+
+"Godfather Program, Pillar 1: a panel of 8 specialist trainers hired to train
+the agent's knowledge."
+
+- **8 new KB packs, 96 techniques (AEG-T253–T348)**: `apt_campaigns`
+  (named-actor campaign TTPs from public reporting), `web_attack_flows`
+  (exploitation workflows & detection), `c2_operations` (C2 operations at
+  detection level), `initial_access` (social engineering & initial access),
+  `cloud_attacks` (cloud / container / CI-CD attack paths), `agent_attacks`
+  (AI-agent attack techniques), `lateral_movement` (network intrusion &
+  lateral movement), `cybercrime_economy` (dark-web threat intel & cybercrime
+  economy). Every technique: condensed threat-intel note with variants,
+  public-report examples, indicators, executable detection patterns,
+  mitigations. Defensive-only boundary held (no payloads, no how-tos).
+- **38 hacker-mindset doctrine notes folded into `hacker_mindset` as
+  AEG-T349–T386**: how APT operators, web attackers, malware operators,
+  social engineers, cloud attackers, agent attackers, intruders, and
+  cybercriminals think — written for the defender's system prompt.
+- **KB now 31 packs / 386 techniques.** New `tests/test_kb_v04.py` extends
+  the authoring contract (frozen v0.1 file untouched): ID-range registration,
+  depth bar, per-technique positive/negative fixtures, pack-level canonical
+  probes, boundary re-check.
+
 ## v0.3.0 (2026-10-18)
 
 "Claude-Code-class CLI: model-agnostic, modes, polished TUI, one-command install."

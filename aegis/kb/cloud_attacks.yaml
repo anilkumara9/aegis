@@ -1,0 +1,740 @@
+pack: cloud_attacks
+version: "1.0"
+techniques:
+  - id: AEG-T301
+    name: "IAM Policy Self-Modification Escalation Paths"
+    category: cloud_attacks
+    description: >-
+      A cloud identity with modest-looking IAM write permissions can rewrite
+      the policies that govern it and become an administrator. Permissions
+      like iam:CreatePolicyVersion, iam:AttachUserPolicy, iam:PutRolePolicy,
+      iam:UpdateAssumeRolePolicy, and iam:CreateAccessKey each look
+      operational in isolation, but every one is a documented one-step path
+      to full account control when unconstrained by resource scope.
+    how_it_works: >-
+      Cloud IAM separates identity management from resource access, and the
+      identity APIs are the master keys: iam:CreatePolicyVersion lets a
+      principal publish a new default version of a managed policy attached
+      to itself with broad actions; iam:AttachUserPolicy or
+      iam:PutRolePolicy lets it attach AdministratorAccess to its own
+      identity; iam:UpdateAssumeRolePolicy lets it rewrite a privileged
+      role's trust policy to trust itself; iam:CreateAccessKey mints durable
+      keys for a more privileged user. The Rhino Security Labs catalog and
+      Datadog's Pathfinding project document dozens of these paths, and the
+      detection signature is always the same shape: an IAM identity
+      management API called by an identity whose normal workload never
+      touches IAM, followed by expanded cloud activity. CloudTrail records
+      every one of these calls with the caller identity, source IP, and
+      user agent, so the telemetry is rich — defenders just have to watch
+      the IAM control plane as closely as the data plane.
+    variants:
+      - "CreatePolicyVersion: publishing a permissive new default version of an attached managed policy"
+      - "AttachUserPolicy/AttachRolePolicy: stapling AdministratorAccess onto your own identity"
+      - "PutRolePolicy/PutUserPolicy: writing an inline admin policy directly onto the identity"
+      - "UpdateAssumeRolePolicy: rewriting a privileged role's trust to include the attacker"
+      - "CreateAccessKey/CreateLoginProfile: minting durable credentials for a stronger user"
+    indicators:
+      - "CloudTrail events for iam:CreatePolicyVersion, iam:AttachUserPolicy, iam:PutRolePolicy, iam:UpdateAssumeRolePolicy, or iam:CreateAccessKey from identities outside the platform/IAM-admin role set"
+      - "A managed policy's default version changing outside a change window, especially when the new version broadens actions or resources"
+      - "IAM write calls followed within hours by new service usage (EC2, S3, Secrets Manager) the identity never touched before"
+      - "Trust-policy documents of privileged roles changing to add new principals, especially external accounts or wildcard principals"
+    detection:
+      rule: detect_iam_policy_self_modification
+      patterns:
+        - '(?i)(CreatePolicyVersion|AttachUserPolicy|AttachRolePolicy|PutRolePolicy|PutUserPolicy|UpdateAssumeRolePolicy|CreateAccessKey)\b.*(cloudtrail|eventName)'
+        - '(?i)iam:(CreatePolicyVersion|Attach\w+Policy|Put\w+Policy|UpdateAssumeRolePolicy|CreateAccessKey)\s+by\s+non-?admin'
+        - '(?i)policy\s+default\s+version\s+(changed|set).*broadens?\s+(actions|permissions)'
+        - '(?i)trust\s+policy\s+(modified|updated).*new\s+principal'
+    severity: critical
+    mitigations:
+      - "Scope every IAM write permission to specific resources and require permissions boundaries on all human and workload roles so no identity can grant itself more than the boundary allows"
+      - "Alert in near-real time on all IAM identity-management API calls from identities outside the designated admin change pipeline, and require tickets or approvals for trust-policy changes"
+      - "Continuously analyze the IAM privilege graph (PMapper-style) for effective admin reachability from every workload identity and prune paths that exceed the task's needs"
+      - "Enforce MFA and short-lived credentials for human IAM administration, and block long-lived access keys where federation or instance roles suffice"
+    examples:
+      - summary: "Spencer Gietzen's Rhino Security Labs research (2018, continuously extended) cataloged 21+ distinct AWS IAM privilege-escalation paths from write-level IAM permissions to administrator; Datadog's Pathfinding.cloud project later productized the catalog as machine-readable detection data, including the iam:PassRole + ec2:RunInstances pattern."
+        reference: "https://securitylabs.datadoghq.com/articles/introducing-pathfinding.cloud/"
+    references:
+      - "https://securitylabs.datadoghq.com/articles/introducing-pathfinding.cloud/"
+      - "https://dev.to/jeff_shieldly/aws-iam-privilege-escalation-common-paths-and-how-to-catch-them-15an"
+
+  - id: AEG-T302
+    name: "Cross-Account Confused Deputy via Trust-Policy Gaps"
+    category: cloud_attacks
+    description: >-
+      When a role's trust policy names a vendor's whole AWS account as the
+      trusted principal without an sts:ExternalId condition, any customer of
+      that vendor who learns the role ARN can trick the vendor's systems
+      into assuming the role into your account. The vendor becomes a confused
+      deputy: privileged, well-meaning, and acting on the attacker's behalf.
+    how_it_works: >-
+      Cross-account roles are how SaaS vendors and managed providers reach
+      customer accounts, and the trust policy is the only gate. A policy
+      that trusts arn:aws:iam::VENDOR:root for sts:AssumeRole with no
+      condition lets any identity in the vendor account assume it — and the
+      vendor serves many tenants from that one account. A hostile tenant
+      registers the victim's role ARN in the vendor's console, the vendor's
+      automation issues a routine AssumeRole, and the tenant lands in the
+      victim's account with the role's permissions. AWS's own documentation
+      prescribes the fix: a unique, vendor-generated sts:ExternalId per
+      customer embedded in the trust policy condition, so the vendor can
+      only assume the role for the customer that triggered the request. In
+      telemetry the giveaway is an AssumeRole from the vendor account where
+      the external ID is absent, or where the same vendor session fans out
+      to role ARNs belonging to different customers.
+    variants:
+      - "Missing ExternalId: trust policy names the vendor account with no condition at all"
+      - "Customer-chosen ExternalId: attacker simply supplies the known value, defeating the purpose"
+      - "Vendor-side ID swap: vendor automation passes tenant A's ID for tenant B's request"
+      - "aws:SourceAccount / aws:SourceArn confusion in service-linked integrations"
+    indicators:
+      - "Cross-account roles whose trust policies lack an sts:ExternalId condition, or whose condition is not vendor-generated and unique per customer"
+      - "CloudTrail sts:AssumeRole calls from a vendor account where the external ID field is missing or mismatched against onboarding records"
+      - "One vendor principal assuming roles across multiple customer accounts within a short window (tenant-hopping signature)"
+      - "Role ARNs for your account appearing in another tenant's vendor console configuration or API calls"
+    detection:
+      rule: detect_confused_deputy_trust_gap
+      patterns:
+        - '(?i)trust\s+policy.*(missing|without|no)\s+.*external.?id'
+        - '(?i)sts:AssumeRole.*external.?id\s+(absent|missing|mismatch)'
+        - '(?i)assume.?role.*same\s+vendor\s+principal.*multiple\s+(customer|tenant)\s+accounts?'
+        - '(?i)(confused.?deputy|cross.?account).*role.*arn.*vendor'
+    severity: critical
+    mitigations:
+      - "Require a vendor-generated, unique-per-customer sts:ExternalId condition on every cross-account trust policy, and reject vendor onboarding that does not supply one"
+      - "Continuously audit trust policies for missing or customer-chosen external IDs and for overbroad principals; treat a vendor-account trust without an external ID as a design defect"
+      - "Monitor CloudTrail for AssumeRole calls where the external ID is absent or mismatched, and for single vendor principals touching multiple customer accounts"
+      - "Add aws:SourceAccount / aws:SourceArn conditions on service-linked roles so even a confused service cannot be aimed at the wrong account"
+    examples:
+      - summary: "AWS's official confused-deputy documentation walks through the canonical scenario: Example Corp serves two customers from one AWS account, the second customer learns the first customer's role name, and tricks Example Corp's automation into assuming the role — fixed only by requiring a unique vendor-generated ExternalId in the trust policy."
+        reference: "https://docs.aws.amazon.com/IAM/latest/UserGuide/confused-deputy.html"
+    references:
+      - "https://docs.aws.amazon.com/IAM/latest/UserGuide/confused-deputy.html"
+      - "https://dev.to/rafagross/the-confused-deputy-problem-in-aws-externalid-awssource-keys-and-rcps-47nk"
+
+  - id: AEG-T303
+    name: "Kubernetes RBAC Escalation and Service-Account Token Theft"
+    category: cloud_attacks
+    description: >-
+      Kubernetes RBAC is the cloud control plane inside the cluster: whoever
+      can create ClusterRoleBindings or read service-account tokens can
+      walk to cluster-admin. Over-permissive bindings, automounted tokens
+      in compromised pods, and default service accounts with broad roles
+      are the recurring misconfigurations, and API-server audit logs record
+      every step of the climb.
+    how_it_works: >-
+      The API server is authoritative for identity and authorization, and
+      RBAC mistakes there are total: a ClusterRoleBinding to cluster-admin
+      for a service account used by an application, a role with wildcard
+      verbs on secrets, or the legacy default of automounting a
+      service-account token into every pod. Once an attacker holds a token
+      (read from a compromised pod's filesystem or the API), they query the
+      API with that identity; if the bound role allows creating bindings,
+      they bind themselves cluster-admin and the game is over. Wiz's threat
+      research shows attackers routinely abuse anonymous or weakly
+      authenticated API access to deploy DaemonSets of malicious images
+      across every node. In telemetry the pattern is API-server audit events
+      for create/bind of ClusterRoles and ClusterRoleBindings from
+      unexpected identities, pods listing secrets cluster-wide, and
+      service-account tokens used from IPs outside the cluster.
+    variants:
+      - "ClusterRoleBinding to cluster-admin granted to an application service account"
+      - "Token exfiltration from /var/run/secrets in a compromised pod, replayed externally"
+      - "Wildcard-verb roles on secrets or pods abused to read credentials and move laterally"
+      - "Aggregation-layer or impersonation-header abuse to pose as privileged users"
+    indicators:
+      - "API-server audit events creating ClusterRoleBindings or Roles with cluster-admin, '*', or secrets-read verbs by identities outside the platform team"
+      - "Service-account tokens observed in network traffic or used from source IPs outside the cluster/pod CIDR"
+      - "Pods or service accounts issuing LIST/WATCH on secrets across all namespaces, or reading kube-system secrets"
+      - "RBAC bindings referencing the default service account in namespaces running untrusted workloads"
+    detection:
+      rule: detect_k8s_rbac_escalation
+      patterns:
+        - '(?i)(create|bind).*(ClusterRoleBinding|cluster-admin).*(serviceaccount|unexpected)'
+        - '(?i)service.?account\s+token\s+(exfiltrat|replay|external\s+ip)'
+        - '(?i)(list|watch)\s+secrets\s+(all\s+namespaces|cluster.?wide)'
+        - '(?i)rolebinding.*default\s+service.?account.*(cluster-admin|\*)'
+    severity: critical
+    mitigations:
+      - "Apply least privilege to every Role/ClusterRole, never bind cluster-admin to workload service accounts, and disable token automounting for pods that do not need API access"
+      - "Ship API-server audit logs to the SIEM and alert on ClusterRoleBinding creation, secrets LIST/WATCH, and token use from outside the cluster"
+      - "Use short-lived, audience-bound projected service-account tokens and rotate aggressively; enable anonymous-auth=false on the API server"
+      - "Gate RBAC changes behind the same change-control as cloud IAM, with drift detection on bindings in production clusters"
+    examples:
+      - summary: "Wiz's June 2024 cryptojacking research showed attackers abusing anonymous access to internet-facing Kubernetes API servers to deploy malicious Docker Hub images as DaemonSets across all nodes, disguising the miner container as the legitimate 'pause' container — RBAC/API misconfiguration as the entry point."
+        reference: "https://thehackernews.com/2024/06/cryptojacking-campaign-targets.html?m=1&version=meter%2Bat%2Bnull"
+      - summary: "Wiz's 2023 Kubernetes security report found only 9% of clusters use network policies and that newly created clusters start receiving malicious scans within minutes (EKS: 22 minutes), making RBAC hardening urgent from the moment of creation."
+        reference: "https://www.wiz.io/blog/key-takeaways-from-the-wiz-2023-kubernetes-security-report?ref=blog.gitguardian.com"
+    references:
+      - "https://thehackernews.com/2024/06/cryptojacking-campaign-targets.html?m=1&version=meter%2Bat%2Bnull"
+      - "https://www.wiz.io/blog/key-takeaways-from-the-wiz-2023-kubernetes-security-report?ref=blog.gitguardian.com"
+
+  - id: AEG-T304
+    name: "Exposed Kubernetes Control-Plane Endpoints"
+    category: cloud_attacks
+    description: >-
+      Kubernetes dashboards, admission controllers, and API servers that are
+      reachable from the internet without authentication are a standing
+      invitation to cluster takeover. Attackers scan for them continuously,
+      and a single exposed console can hand over cloud credentials stored
+      inside the cluster — as the Tesla 2018 incident proved.
+    how_it_works: >-
+      Several control-plane components are network-accessible by default and
+      historically shipped without authentication: the Kubernetes dashboard,
+      the API server with anonymous auth enabled, kubelet read-only ports,
+      and — as Wiz's IngressNightmare research showed — admission
+      controllers exposed to the internet. Attackers find them with
+      internet-wide scanning (Wiz found 6,500+ exposed ingress admission
+      controllers, 43% of cloud environments at risk) and walk in:
+      anonymous API access permits workload creation, the dashboard exposes
+      pod credentials, and the ingress admission controller flaws allowed
+      remote code execution leading to full cluster takeover. The Tesla 2018
+      case is the archetype: RedLock found an unprotected Kubernetes
+      console, attackers pulled AWS credentials from a pod, and ran
+      cryptominers on Tesla's cloud bill. Detection is network-first:
+      unexpected inbound connections to 6443/10250/dashboard ports, and
+      API-server audit entries with the anonymous or system:unauthenticated
+      user creating workloads.
+    variants:
+      - "Unauthenticated Kubernetes dashboard exposed to the internet with cluster credentials visible"
+      - "API server with anonymous authentication enabled accepting workload creation"
+      - "Admission controllers (ingress-nginx) reachable externally, vulnerable to RCE (IngressNightmare CVEs)"
+      - "Kubelet API exposed, allowing pod exec and log/credential access without auth"
+    indicators:
+      - "Inbound connections to Kubernetes control-plane ports (6443, 10250, 10255, dashboard ports) from internet source IPs"
+      - "API-server audit entries with user system:anonymous or system:unauthenticated performing creates, execs, or secret reads"
+      - "Unexpected pods, DaemonSets, or jobs created by anonymous or low-privilege identities"
+      - "Cloud credentials (AWS keys, service-account tokens) found in pods scheduled on clusters with internet-exposed consoles"
+    detection:
+      rule: detect_exposed_k8s_control_plane
+      patterns:
+        - '(?i)(6443|10250|10255|dashboard).*(internet|external|public)\s+(ip|source)'
+        - '(?i)system:(anonymous|unauthenticated).*(create|exec|secrets)'
+        - '(?i)admission\s+controller.*(exposed|unauthenticated|internet)'
+        - '(?i)(daemonset|deployment)\s+created\s+by\s+anonymous'
+    severity: critical
+    mitigations:
+      - "Never expose the Kubernetes dashboard, API server, kubelet, or admission controllers to the internet; front the API with private endpoints and VPN/identity-aware access"
+      - "Disable anonymous authentication on the API server and require authentication on every control-plane component"
+      - "Patch ingress controllers aggressively (IngressNightmare: CVE-2025-1097/1098/24514/1974) and scan continuously for internet-exposed control-plane services"
+      - "Alert on any workload creation or secret access by anonymous/unauthenticated identities — there is no legitimate case for it"
+    examples:
+      - summary: "Wiz's March 2025 IngressNightmare disclosure found four critical RCE flaws (CVE-2025-1097, CVE-2025-1098, CVE-2025-24514, CVE-2025-1974) in the Ingress-NGINX admission controller, with 6,500+ clusters publicly exposing the unauthenticated admission endpoint — roughly 43% of cloud environments at risk of full cluster takeover."
+        reference: "https://www.cybersecuritydive.com/news/critical-vulnerabilities-kubernetes-jeopardy/743448/"
+      - summary: "RedLock's February 2018 report: Tesla's unprotected Kubernetes console exposed AWS credentials stored in a pod; attackers mined cryptocurrency on Tesla's cloud account while hiding behind Cloudflare, with Tesla remediating within hours of the bug-bounty report."
+        reference: "https://www.computerweekly.com/news/252435544/Unprotected-Kubernetes-consoles-expose-firms-to-cryptojacking"
+    references:
+      - "https://www.cybersecuritydive.com/news/critical-vulnerabilities-kubernetes-jeopardy/743448/"
+      - "https://www.computerweekly.com/news/252435544/Unprotected-Kubernetes-consoles-expose-firms-to-cryptojacking"
+      - "https://www.theregister.com/security/2025/03/25/public-facing-kubernetes-clusters-at-risk-of-total-takeover/573211"
+
+  - id: AEG-T305
+    name: "Registry-Level Container Image Poisoning and Tag Mutability"
+    category: cloud_attacks
+    description: >-
+      Beyond typosquatted public images, attackers poison the image supply
+      at the registry layer: mutating tags that pipelines pull by name,
+      compromising private registries, and slipping unsigned images past
+      admission controllers that never verify signatures. A pipeline that
+      pulls nginx:latest is trusting every future push to that tag.
+    how_it_works: >-
+      Most pipelines resolve images by mutable tag, not by digest, so
+      whoever can push to the registry can replace what the next deployment
+      runs: a compromised registry credential, a hijacked CI job with push
+      rights, or a maintainer account takeover all let the attacker
+      overwrite a trusted tag with a trojanized image. Private registries
+      are not exempt — stolen push credentials have the same effect
+      internally. The second failure is verification: clusters without
+      admission-time signature enforcement (cosign/Sigstore policy
+      controllers) will happily schedule the replaced image. Wiz's Dero
+      cryptojacking campaign showed the endpoint of this chain at scale:
+      malicious images with 10,000+ pulls deployed as DaemonSets. In
+      telemetry the signatures are image digests changing under a stable
+      tag, pulls from unexpected registries or publisher namespaces, and
+      admission events for unsigned images in namespaces that should
+      require signatures.
+    variants:
+      - "Tag overwrite: trusted tag repointed at a trojanized image via compromised push credentials"
+      - "Private-registry compromise: internal registry serving poisoned base images to all pipelines"
+      - "Signature-bypass: unsigned or self-signed images scheduled where policy should require Sigstore verification"
+      - "Digest drift: deployment manifests pinning digests that silently change between environments"
+    indicators:
+      - "A stable tag resolving to a new digest without a corresponding approved build in CI"
+      - "Image pulls from registries or namespaces outside the approved list, or publisher identity differing from the baseline for that image name"
+      - "Admission-controller events allowing unsigned images in namespaces with signature policies"
+      - "Container entrypoint or layer hashes diverging from the signed manifest for the same tag"
+    detection:
+      rule: detect_image_registry_poisoning
+      patterns:
+        - '(?i)tag\s+.*digest\s+(changed|mismatch|drift).*no\s+approved\s+build'
+        - '(?i)image\s+pull\s+from\s+(unapproved|unknown)\s+registry'
+        - '(?i)unsigned\s+image\s+(admitted|scheduled).*signature\s+policy'
+        - '(?i)entrypoint\s+hash\s+mismatch\s+vs\s+signed\s+manifest'
+    severity: high
+    mitigations:
+      - "Pin all production image references by digest, never by mutable tag, and make tag immutability a registry-level setting"
+      - "Enforce signature verification at admission (Sigstore/cosign policy controller) and reject unsigned images in production namespaces"
+      - "Restrict registry push credentials to the CI system with short-lived tokens, and alert on pushes from any other identity"
+      - "Continuously reconcile running image digests against approved build attestations (SLSA provenance) and kill drifted workloads"
+    examples:
+      - summary: "Wiz's 2024 campaign analysis: attackers used anonymous Kubernetes API access to deploy malicious Docker Hub images (some with 10,000+ pulls) as DaemonSets named 'k8s-device-plugin' and 'pytorch-container', with a UPX-packed Dero miner disguised as the legitimate 'pause' container — image-layer trust exploited at fleet scale."
+        reference: "https://thehackernews.com/2024/06/cryptojacking-campaign-targets.html?m=1&version=meter%2Bat%2Bnull"
+    references:
+      - "https://thehackernews.com/2024/06/cryptojacking-campaign-targets.html?m=1&version=meter%2Bat%2Bnull"
+      - "https://www.wiz.io/blog/key-takeaways-from-the-wiz-2023-kubernetes-security-report?ref=blog.gitguardian.com"
+
+  - id: AEG-T306
+    name: "CI/CD Workflow Injection for Secret Theft"
+    category: cloud_attacks
+    description: >-
+      CI/CD pipelines are credential-rich automation: a single malicious
+      workflow file committed with a maintainer's stolen credentials turns
+      the build system into a secret harvester. The GhostAction campaign
+      showed the industrial form — thousands of repositories, thousands of
+      secrets — exploiting nothing but the pipeline's own trust model.
+    how_it_works: >-
+      The attack needs no platform vulnerability, only a compromised
+      maintainer account or token. The attacker commits a workflow file
+      (often named like routine security hygiene, e.g. security-audit.yml)
+      that runs on push; the workflow reads the repository's configured
+      secrets — cloud keys, tokens, API credentials — and exfiltrates them
+      to attacker infrastructure. GhostAction's later waves went further,
+      mining full git history for credentials deleted in earlier commits.
+      The 2026 Mini Shai-Hulud resurgence added a supply-chain twist:
+      compromised third-party Actions re-enabled after cleanup reactivated
+      malicious code in 15,000 dependent repositories via mutable tags.
+      Detection lives in version control and the pipeline: workflow files
+      appearing from unusual committers, workflows referencing secrets they
+      never used before, and runner egress to unknown hosts during builds.
+    variants:
+      - "Malicious workflow committed with stolen maintainer credentials, exfiltrating configured secrets"
+      - "Git-history mining workflows recovering rotated credentials from old commits"
+      - "Trojanized third-party Actions reactivated via mutable tags after takedown"
+      - "Workflow targeting CI secrets of downstream consumers through reusable-workflow confusion"
+    indicators:
+      - "New or modified files under .github/workflows/ (or equivalent) committed by accounts with recent anomalous logins, or with commit messages mimicking routine automation"
+      - "Workflow runs that reference secrets (AWS keys, tokens) the repository's legitimate workflows never used"
+      - "Runner network egress to unknown external hosts during build steps, especially plain-HTTP POSTs"
+      - "Third-party Actions resolved by mutable tag whose upstream repository was recently disabled, re-enabled, or ownership-changed"
+    detection:
+      rule: detect_cicd_workflow_injection
+      patterns:
+        - '(?i)(new|modified)\s+workflow\s+file.*(unusual|anomalous)\s+(committer|login)'
+        - '(?i)workflow\s+references\s+secrets?\s+never\s+used\s+before'
+        - '(?i)runner\s+egress\s+to\s+unknown\s+host\s+during\s+build'
+        - '(?i)third.?party\s+action.*mutable\s+tag.*(re-?enabled|ownership)'
+    severity: critical
+    mitigations:
+      - "Pin all third-party Actions and reusable workflows to immutable commit SHAs, never to mutable tags, and require review for any workflow-file change"
+      - "Scope CI secrets minimally per environment, mask them in logs, and rotate aggressively; prefer OIDC federation over stored cloud credentials"
+      - "Monitor runner egress with an allowlist and alert on any build-step connection outside the approved set"
+      - "Audit workflow files continuously for new files, new secret references, and commits from anomalous sessions, and treat workflow changes as security-sensitive"
+    examples:
+      - summary: "GhostAction (GitGuardian, waves from Sept 2025 through Oct 2026): attackers used stolen maintainer credentials to push credential-stealing workflows (security-audit.yml) to 30,000+ repositories across 1,900 hijacked accounts, attempting to extract 3,174 secrets including cloud keys and AI API tokens, with no GitHub vulnerability involved."
+        reference: "https://www.zerohack.org/blog/ghostaction-github-actions-supply-chain-2026"
+      - summary: "Mini Shai-Hulud resurgence (Sept 2026): compromised actions-cool GitHub Actions were re-enabled without cleanup, reactivating malicious code in ~15,000 dependent repositories via mutable tags — restoring the compromise automatically on the next scheduled run."
+        reference: "https://www.scworld.com/brief/compromised-github-actions-re-enabled-posing-supply-chain-risks"
+    references:
+      - "https://www.zerohack.org/blog/ghostaction-github-actions-supply-chain-2026"
+      - "https://www.scworld.com/brief/compromised-github-actions-re-enabled-posing-supply-chain-risks"
+
+  - id: AEG-T307
+    name: "Terraform State File and IaC Secret Exposure"
+    category: cloud_attacks
+    description: >-
+      Terraform state files silently collect every secret the configuration
+      touches — database passwords, API keys, private keys — in plaintext,
+      and teams routinely leave them in git, in unencrypted buckets, or
+      readable by the whole engineering org. HashiCorp's own guidance is
+      blunt: sensitive = true only hides values from terminal output; the
+      secret still lands in state. State is a credential vault that nobody
+      treats like one.
+    how_it_works: >-
+      Terraform persists all managed resource attributes to track
+      infrastructure, including values marked sensitive, generated
+      passwords, and TLS keys; plan files carry the same data. The exposure
+      paths are mundane: a tfstate committed to a repository (or left in a
+      backup), state stored in an S3 backend without encryption or with
+      broad IAM read access, CI artifacts archiving plan files, and overly
+      broad pipeline roles that let any job read state. Anyone who can read
+      state owns the credentials inside it — and can also learn the full
+      infrastructure layout for targeted follow-on attacks. Terraform 1.10+
+      added ephemeral values that never persist, but adoption is partial.
+      Detection is file- and access-shaped: secret patterns inside .tfstate
+      or .tfvars in version control, GetObject calls on state buckets from
+      unexpected identities, and state files reachable without encryption.
+    variants:
+      - "State committed to git: plaintext secrets in repository history, surviving even after the file is 'removed'"
+      - "Unencrypted or broadly readable remote state backend leaking credentials to any reader"
+      - "Plan/apply artifacts archived in CI with secrets embedded, readable by all pipeline users"
+      - "Hardcoded secrets in .tf/.tfvars files feeding both code and state exposure"
+    indicators:
+      - "Secret-shaped strings (keys, passwords, tokens) inside *.tfstate, *.tfstate.backup, *.tfvars, or plan files in version control or CI artifacts"
+      - "GetObject or download events on Terraform state buckets from identities outside the deployment pipeline"
+      - "State backend buckets without server-side encryption, without access logging, or with public/overly broad bucket policies"
+      - "Provider credentials or generated secrets appearing in Terraform plan output stored outside the pipeline"
+    detection:
+      rule: detect_terraform_state_secret_exposure
+      patterns:
+        - '(?i)(secret|password|token|private.?key).*(\.tfstate|\.tfvars|plan\s+file)'
+        - '(?i)state\s+bucket.*(getobject|download).*outside\s+(pipeline|deployment)'
+        - '(?i)terraform\s+state.*(unencrypted|public|broad).*(bucket|backend)'
+        - '(?i)sensitive\s*=\s*true.*still\s+in\s+state'
+    severity: high
+    mitigations:
+      - "Store state only in encrypted remote backends with locking, versioning, access logging, and IAM scoped to the deployment pipeline plus named break-glass roles"
+      - "Never commit state, tfvars, or plan files to version control; enforce with .gitignore, pre-commit hooks, and secret scanning on every push"
+      - "Reference secrets from a secrets manager (Vault, Secrets Manager) instead of variables, and adopt ephemeral values where the provider supports them so secrets never persist in state"
+      - "Split plan and apply into separate least-privilege roles and scan state contents for secret patterns on a schedule"
+    examples:
+      - summary: "HashiCorp's official Terraform security guidance warns that the state file contains resource metadata and potentially sensitive information, that overly broad access can leak credentials and enable destructive drift, and that only the CI framework or HCP Terraform should read or update state."
+        reference: "https://hashicorp.com/fr/blog/terraform-security-5-foundational-practices"
+      - summary: "GitGuardian's Terraform secrets research documents the core trap: sensitive = true only hides values from CLI output while the secret remains in state in plaintext, requiring encrypted backends, Vault/Secrets Manager integration, and the newer ephemeral values to keep secrets out of state entirely."
+        reference: "https://blog.gitguardian.com/how-to-handle-secrets-in-terraform/"
+    references:
+      - "https://hashicorp.com/fr/blog/terraform-security-5-foundational-practices"
+      - "https://blog.gitguardian.com/how-to-handle-secrets-in-terraform/"
+      - "https://www.sechb.com/terraform-security-checklist.html"
+
+  - id: AEG-T308
+    name: "Serverless Function Over-Privilege and Event-Source Abuse"
+    category: cloud_attacks
+    description: >-
+      Serverless functions inherit their execution role's permissions and
+      are triggered by events attackers can often craft: S3 uploads, queue
+      messages, API calls. An over-permissive execution role turns any
+      reachable function into a privileged cloud API client, and
+      event-source mappings that accept untrusted input turn the trigger
+      itself into the attack vector.
+    how_it_works: >-
+      The failure pattern is consistent: a Lambda or Cloud Function created
+      for a narrow job (thumbnail resizing, log processing) gets an
+      execution role with wildcard or cross-service permissions, and its
+      trigger — an S3 bucket, an SQS queue, an HTTP endpoint — accepts
+      input from untrusted parties. Whoever can invoke the function or
+      drop an event into its source gets the role's permissions for the
+      price of one request; the classic escalation pairs iam:PassRole with
+      lambda:CreateFunction to mint a function running as a privileged
+      role. In telemetry the signature is a serverless identity calling
+      cloud APIs its workload never needed (iam:*, secretsmanager:Get*,
+      s3:ListAllMyBuckets from a thumbnail function), or function
+      invocations sourced from unexpected principals and event payloads
+      carrying credential-shaped data.
+    variants:
+      - "Over-permissive execution role: function code or its invoker exercising wildcard permissions"
+      - "PassRole + CreateFunction: minting a function that runs as a privileged role"
+      - "Event injection: crafted S3 object keys, queue messages, or HTTP payloads driving function logic"
+      - "Cross-account event sources: another account's bucket or topic triggering your privileged function"
+    indicators:
+      - "Serverless execution roles with wildcard actions or cross-service permissions far beyond the function's workload"
+      - "CloudTrail events showing a function identity calling IAM, Secrets Manager, or broad S3 APIs unrelated to its purpose"
+      - "Function invocations from unexpected principals, or event sources (buckets, queues, topics) owned by other accounts"
+      - "Environment variables of functions containing long-lived credentials instead of role-based access"
+    detection:
+      rule: detect_serverless_overprivilege
+      patterns:
+        - '(?i)(lambda|function)\s+execution\s+role.*(wildcard|"\*")'
+        - '(?i)function\s+identity\s+calling\s+(iam:|secretsmanager:|s3:).*unrelated'
+        - '(?i)lambda:CreateFunction.*iam:PassRole'
+        - '(?i)invocation\s+from\s+unexpected\s+principal.*serverless'
+    severity: high
+    mitigations:
+      - "Scope every function execution role to the exact APIs and resources the function needs; use IAM Access Analyzer and regular reviews to prune serverless roles"
+      - "Validate and sanitize all event input before the function acts on it, and restrict event sources to owned, expected resources"
+      - "Alert on serverless identities calling privilege-relevant APIs (IAM, STS, Secrets Manager, KMS) outside their declared workload profile"
+      - "Prefer short-lived role credentials via the execution role; never bake long-lived keys into function environment variables"
+    examples:
+      - summary: "Security research on AWS IAM escalation chains documents the Lambda path explicitly: iam:PassRole combined with lambda:CreateFunction lets a low-privilege principal create a function that executes as a privileged role — the serverless variant of the classic PassRole escalation."
+        reference: "https://dev.to/jeff_shieldly/aws-iam-privilege-escalation-common-paths-and-how-to-catch-them-15an"
+      - summary: "Datadog's Pathfinding.cloud catalog structures the PassRole escalation family (including Lambda-based paths) as machine-readable detection data, so defenders can check CSPM coverage per path rather than per permission."
+        reference: "https://securitylabs.datadoghq.com/articles/introducing-pathfinding.cloud/"
+    references:
+      - "https://dev.to/jeff_shieldly/aws-iam-privilege-escalation-common-paths-and-how-to-catch-them-15an"
+      - "https://securitylabs.datadoghq.com/articles/introducing-pathfinding.cloud/"
+
+  - id: AEG-T309
+    name: "Metadata-Service Downgrade and Hop-Limit Relay in Containers"
+    category: cloud_attacks
+    description: >-
+      IMDSv2's PUT-token flow and hop limit are the defenses that keep
+      SSRF from becoming credential theft — and both are routinely
+      misconfigured. Instances left with IMDSv1 available, hop limits
+      above 1 that let container-network traffic relay token requests, and
+      metadata proxies without authentication each reopen the path that
+      IMDSv2 was meant to close.
+    how_it_works: >-
+      IMDSv1 answers a plain GET to 169.254.169.254 with role credentials,
+      which is why a single SSRF could equal account takeover (the Capital
+      One shape). IMDSv2 requires a PUT for a session token first, with a
+      hop limit that stops the token response crossing a network boundary —
+      but only if HttpTokens is required and HttpPutResponseHopLimit is 1.
+      Fleet reality lags: long-lived instances still run IMDSv1, container
+      hosts run hop limit 2+ so pods can reach metadata (which also lets a
+      compromised pod relay for the host's credentials), and some setups
+      expose metadata through proxies. Unlike generic metadata-credential
+      theft, this technique is about the downgrade and relay mechanics:
+      detection keys on MetadataOptions audits (HttpTokens optional, hop
+      limit > 1), PUT token requests from pod network namespaces, and
+      metadata-credential use from identities that should never hold them.
+    variants:
+      - "IMDSv1 left enabled: HttpTokens optional on long-lived instances, plain GET still yields credentials"
+      - "Hop-limit relay: limit 2+ lets container-network traffic obtain host role credentials"
+      - "Metadata proxy exposure: unauthenticated proxy forwarding metadata to untrusted workloads"
+      - "Credential replay: stolen metadata credentials used from outside the instance"
+    indicators:
+      - "EC2 fleet inventory showing HttpTokens=optional or HttpPutResponseHopLimit > 1, especially on container hosts"
+      - "IMDS PUT token requests originating from pod/container network namespaces rather than the host"
+      - "Role credentials obtained via metadata being used from IPs or identities inconsistent with the instance they belong to"
+      - "SSRF-shaped outbound requests to 169.254.169.254 from application workloads that should never touch metadata"
+    detection:
+      rule: detect_imds_downgrade_relay
+      patterns:
+        - '(?i)(HttpTokens\s*=\s*optional|IMDSv1\s+(enabled|available))'
+        - '(?i)hop.?limit\s*>\s*1.*container'
+        - '(?i)PUT\s+.*api/token.*(pod|container)\s+network'
+        - '(?i)169\.254\.169\.254.*(ssrf|unexpected\s+workload)'
+    severity: high
+    mitigations:
+      - "Enforce IMDSv2 fleet-wide: HttpTokens=required and HttpPutResponseHopLimit=1 at launch via SCPs and IaC, and remediate brownfield instances"
+      - "Block 169.254.169.254 egress from application security groups and Kubernetes network policies for pods that do not need metadata"
+      - "Prefer workload identity federation (IRSA, workload identity) over metadata-derived credentials for pods"
+      - "Continuously audit MetadataOptions across the fleet and alert on any drift back to optional tokens or raised hop limits"
+    examples:
+      - summary: "Cloud metadata SSRF research (2026) documents the downgrade reality: IMDSv2 is opt-in, long-running pre-2020 instances remain IMDSv1-only and one GET away from compromise, and a hop limit above 1 lets container-network traffic relay token requests to read host credentials."
+        reference: "https://techearl.com/cloud-metadata-ssrf"
+      - summary: "SSRF defense analysis shows the layered fix: enforce IMDSv2 with hop limit 1, apply it at the account level via SCP, and add pod-level egress policy denying the metadata IP — with GKE's metadata-concealment as the model for workload isolation."
+        reference: "https://bitsfolio.com/ssrf-cloud-metadata-endpoint-abuse/"
+    references:
+      - "https://techearl.com/cloud-metadata-ssrf"
+      - "https://bitsfolio.com/ssrf-cloud-metadata-endpoint-abuse/"
+      - "https://aquilax.ai/blog/ssrf-cloud-metadata-credential-theft"
+
+  - id: AEG-T310
+    name: "Overly Permissive Cloud Storage as the Blast Radius"
+    category: cloud_attacks
+    description: >-
+      Cloud attackers think in blast radius, and misconfigured storage is
+      where blast radius lives: a single over-permissive bucket, snapshot,
+      or share can expose the data of an entire account. Public S3 buckets,
+      shared EBS snapshots and AMIs, and world-readable file shares are
+      found by automated scanners within hours of appearing.
+    how_it_works: >-
+      Storage misconfiguration is the most scanned-for cloud weakness
+      because it is trivially enumerable: bucket names are guessable,
+      snapshot and AMI sharing flags are one API call, and scanners
+      continuously probe for public read. Once found, the attacker simply
+      reads — no exploitation needed — and the contents (backups with
+      credentials, telemetry, customer data, Terraform state) fund the
+      next stage. The Tesla 2018 incident illustrates the compound effect:
+      attackers who entered through the Kubernetes console found an S3
+      bucket holding sensitive vehicle telemetry and mapping data in the
+      same environment. Detection is configuration-shaped: public or
+      cross-account storage policies, snapshot/AMI sharing outside the
+      organization, and GetObject/ListBucket calls from external IPs or
+      unexpected identities.
+    variants:
+      - "Public S3 buckets or prefixes readable (or writable) by anyone"
+      - "EBS snapshots and AMIs shared publicly or with arbitrary external accounts"
+      - "Storage access granted to 'authenticated users' (any cloud customer) instead of specific principals"
+      - "Backup buckets holding credentials, keys, or state files with broad read access"
+    indicators:
+      - "Bucket policies or ACLs granting access to '*', all users, or all authenticated users"
+      - "EBS snapshots, AMIs, or RDS snapshots shared outside the organization or marked public"
+      - "Data-plane access (GetObject, ListBucket) to sensitive buckets from external IPs or identities with no business need"
+      - "Backup or state buckets whose contents include credential-shaped material readable beyond the pipeline"
+    detection:
+      rule: detect_permissive_cloud_storage
+      patterns:
+        - '(?i)bucket\s+policy.*(public|\*|"Principal"\s*:\s*"\*")'
+        - '(?i)(snapshot|ami)\s+shared\s+(publicly|outside\s+org)'
+        - '(?i)(GetObject|ListBucket).*external\s+ip.*sensitive\s+bucket'
+        - '(?i)authenticated.?users.*instead\s+of\s+specific\s+principal'
+    severity: high
+    mitigations:
+      - "Default-deny public access at the account level (S3 Block Public Access, org policies) and require explicit exception workflows for any public or cross-account storage"
+      - "Continuously scan for public buckets, shared snapshots/AMIs, and wildcard principals, and auto-remediate or alert within minutes"
+      - "Keep backups, state files, and credential-bearing objects in dedicated buckets with pipeline-only access and encryption"
+      - "Alert on data-plane access to sensitive storage from external IPs or unexpected identities — legitimate access patterns are highly stable"
+    examples:
+      - summary: "In the Tesla 2018 cloud intrusion, attackers who entered via the unprotected Kubernetes console found an S3 bucket containing sensitive vehicle telemetry and mapping data in the same AWS environment — misconfigured-access storage sitting adjacent to the entry point, per RedLock's investigation."
+        reference: "https://www.techtarget.com/cybersecurity/news/252435506/Cryptojacking-attacks-hit-enterprises-cloud-servers"
+    references:
+      - "https://www.techtarget.com/cybersecurity/news/252435506/Cryptojacking-attacks-hit-enterprises-cloud-servers"
+      - "https://www.csidb.net/csidb/incidents/4cacc7ee-f23f-4ec9-9633-6fcf58b5283d/"
+
+  - id: AEG-T311
+    name: "CloudTrail Suppression and Control-Plane Log Evasion"
+    category: cloud_attacks
+    description: >-
+      Attackers who reach the cloud control plane attack the evidence
+      first: stopping CloudTrail logging, deleting log buckets, or
+      disabling GuardDuty-style detectors before doing anything loud.
+      MITRE tracks this as T1562.008, and it deserves the highest
+      detection priority — every other cloud technique is evidenced by
+      logs, while this one destroys the evidence.
+    how_it_works: >-
+      With sufficient IAM permissions, an attacker calls StopLogging,
+      DeleteTrail, or PutEventSelectors to narrow what is recorded, deletes
+      or shortens retention on the log bucket, or disables detective
+      services — then operates in the dark. GuardDuty itself flags this
+      shape (Stealth:IAMUser/CloudTrailLoggingDisabled). The telemetry
+      paradox is that the last reliable record is the suppression event
+      itself, which is why it must page immediately: a StopLogging or
+      trail-deletion event from any unexpected identity is a five-alarm
+      signal. Defenders also watch for subtler variants — event-selector
+      narrowing that keeps the trail 'on' while blinding it to the
+      attacker's services, and log-bucket policy changes that cut off the
+      SIEM's read path.
+    variants:
+      - "StopLogging/DeleteTrail: outright disabling of the audit trail"
+      - "Event-selector narrowing: trail stays on but stops recording the attacker's services or regions"
+      - "Log-bucket tampering: deleting objects, shortening retention, or cutting SIEM read access"
+      - "Detector disablement: turning off GuardDuty, Security Hub, or org-level detective controls"
+    indicators:
+      - "CloudTrail StopLogging, DeleteTrail, or UpdateTrail events from identities outside the security-operations change process"
+      - "PutEventSelectors calls that narrow recorded events, especially excluding IAM, STS, or S3 data events"
+      - "S3 lifecycle or bucket-policy changes on log-archive buckets shortening retention or removing SIEM access"
+      - "GuardDuty or Security Hub disablement events, or detector findings ceasing abruptly for an account"
+    detection:
+      rule: detect_cloudtrail_suppression
+      patterns:
+        - '(?i)(StopLogging|DeleteTrail|DeleteLogGroup)\s+.*unexpected\s+identity'
+        - '(?i)PutEventSelectors.*(narrow|exclude).*(iam|sts|s3)'
+        - '(?i)(guardduty|security.?hub)\s+(disabl|delet|suspend)'
+        - '(?i)log\s+(bucket|archive).*(retention\s+shorten|policy\s+change)'
+    severity: critical
+    mitigations:
+      - "Protect logging with organizational controls: org-level trails, immutable log buckets (Object Lock), and SCPs denying StopLogging/DeleteTrail to everyone except break-glass"
+      - "Page immediately on any trail stop/delete, event-selector change, or detector disablement — treat it as an active intrusion until proven otherwise"
+      - "Replicate logs to a separate security account in near-real time so suppression in the workload account does not blind the SOC"
+      - "Monitor for the subtle variants too: selector narrowing and SIEM read-path cuts, not just full trail deletion"
+    examples:
+      - summary: "MITRE ATT&CK T1562.008 (Impair Defenses: Disable or Modify Cloud Logs) defines exactly this behavior — adversaries disabling cloud logging to avoid detection — and maps it to data sources including CloudTrail logs and API monitoring, with Elastic publishing a dedicated CloudTrail log-evasion detection rule."
+        reference: "https://www.elastic.co/guide/en/security/current/aws-cloudtrail-log-evasion.html"
+      - summary: "The Center for Threat-Informed Defense's AWS mappings note that GuardDuty flags this pattern natively (Stealth:IAMUser/CloudTrailLoggingDisabled), alongside related finding types for flow-log and access-log disablement."
+        reference: "https://center-for-threat-informed-defense.github.io/security-stack-mappings/AWS/README.html"
+    references:
+      - "https://www.elastic.co/guide/en/security/current/aws-cloudtrail-log-evasion.html"
+      - "https://center-for-threat-informed-defense.github.io/security-stack-mappings/AWS/README.html"
+      - "https://attack.mitre.org/versions/v8/techniques/T1562/"
+
+  - id: AEG-T312
+    name: "etcd and Kubernetes Secret-Object Exfiltration"
+    category: cloud_attacks
+    description: >-
+      etcd is the cluster's crown jewel: it stores every Secret object in
+      the cluster, and Kubernetes Secrets are only base64-encoded, not
+      encrypted, by default. Anyone who can read etcd — or list Secrets
+      through an over-permissive RBAC role — walks away with every
+      credential the cluster holds: cloud keys, registry passwords, TLS
+      private keys.
+    how_it_works: >-
+      There are two roads to the same vault. The API road: a service
+      account or user with secrets get/list across namespaces (often
+      granted by wildcard roles or a debugging ClusterRole) simply reads
+      them through the API server, and the audit log records it. The etcd
+      road: etcd listens on 2379, and clusters with unauthenticated or
+      weakly authenticated etcd, exposed etcd ports, or stolen etcd client
+      certificates give direct key-value access to the entire cluster
+      state — no RBAC involved, no audit log. Encryption at rest for
+      secrets is opt-in on many distributions, so etcd contents are
+      frequently plaintext-adjacent. Detection splits accordingly:
+      API-server audit for bulk secret reads, and network/host monitoring
+      for unexpected etcd connections, certificate use, or etcd snapshot
+      operations outside backup windows.
+    variants:
+      - "API bulk read: wildcard or debug roles listing secrets across all namespaces"
+      - "Direct etcd access: exposed 2379 or stolen client certs bypassing the API server entirely"
+      - "etcd snapshot theft: snapshot files copied off backup hosts containing all secrets"
+      - "Encryption-at-rest gaps: secrets stored unencrypted in etcd on distributions without the feature enabled"
+    indicators:
+      - "API-server audit showing bulk GET/LIST/WATCH of secrets across namespaces by non-platform identities"
+      - "Network connections to etcd (2379/2380) from hosts outside the control-plane node set"
+      - "etcd snapshot operations or snapshot files appearing outside scheduled backup windows and locations"
+      - "Secret values from the cluster (registry passwords, cloud keys) appearing in use outside the cluster"
+    detection:
+      rule: detect_etcd_secret_exfiltration
+      patterns:
+        - '(?i)(get|list|watch)\s+secrets\s+.*(all\s+namespaces|bulk)'
+        - '(?i)etcd.*(2379|2380).*outside\s+control.?plane'
+        - '(?i)etcd\s+snapshot.*outside\s+(backup|schedul)'
+        - '(?i)cluster\s+secret\s+value.*used\s+outside\s+cluster'
+    severity: critical
+    mitigations:
+      - "Enable encryption at rest for Kubernetes Secrets (KMS-backed) on every cluster, and treat unencrypted etcd as a finding"
+      - "Never expose etcd ports beyond control-plane nodes; require mutual TLS with tightly scoped client certificates and rotate them"
+      - "Restrict secrets RBAC to per-namespace, per-secret granularity; alert on any cross-namespace secret read as an incident"
+      - "Back up etcd to encrypted, access-controlled storage only, and monitor snapshot operations as privileged events"
+    examples:
+      - summary: "RedLock's 2018 Kubernetes research found exposed admin consoles where attackers could reach pod-held cloud credentials directly — the same 'secrets reachable from a misconfigured control plane' dynamic that makes etcd and Secret-object access the cluster's highest-value target."
+        reference: "https://www.computerweekly.com/news/252435544/Unprotected-Kubernetes-consoles-expose-firms-to-cryptojacking"
+      - summary: "Wiz's 2023 Kubernetes security report documents how quickly exposed clusters attract malicious scanning (EKS clusters probed within 22 minutes of creation), underscoring why etcd and secret access must be locked down from the moment a cluster exists."
+        reference: "https://www.wiz.io/blog/key-takeaways-from-the-wiz-2023-kubernetes-security-report?ref=blog.gitguardian.com"
+    references:
+      - "https://www.computerweekly.com/news/252435544/Unprotected-Kubernetes-consoles-expose-firms-to-cryptojacking"
+      - "https://www.wiz.io/blog/key-takeaways-from-the-wiz-2023-kubernetes-security-report?ref=blog.gitguardian.com"
+
+doctrine_notes:
+  - title: "Attack the control plane, not the workload"
+    body: >-
+      Cloud attackers think one layer up from defenders. They rarely start
+      by exploiting application code; they start with the control plane —
+      IAM, the Kubernetes API, the CI system, the registry — because one
+      control-plane win converts into every workload beneath it. A single
+      ClusterRoleBinding, one CreatePolicyVersion call, or one malicious
+      workflow file is worth more than a hundred application bugs. For the
+      defender this inverts the priority list: the audit log of the control
+      plane (CloudTrail, API-server audit, CI audit logs) is the highest
+      value telemetry in the estate, and any change there from an
+      unexpected identity is suspicious by default.
+  - title: "Misconfiguration is the vulnerability; hunt it like one"
+    body: >-
+      In cloud estates the attacker does not need zero-days — they need
+      your mistakes, and mistakes are enumerable. Public buckets, wildcard
+      IAM, anonymous API auth, IMDSv1 left on, mutable image tags: each is
+      a standing misconfiguration that scanners find within hours. The
+      attacker mindset is inventory-first: enumerate everything, sort by
+      privilege yield, exploit the richest target. Defenders must run the
+      same inventory continuously (CSPM, RBAC audits, MetadataOptions
+      sweeps, trust-policy reviews) and treat every finding as an open
+      door, because from the attacker's side that is exactly what it is.
+  - title: "Do blast-radius math on every identity"
+    body: >-
+      An experienced cloud attacker evaluates every credential by one
+      question: what is the blast radius if I hold this? A CI job token
+      that can read production state, a Lambda role with s3:*, a service
+      account bound to cluster-admin — each is a blast radius waiting to
+      be spent. Defenders should adopt the same arithmetic proactively:
+      for every identity, compute effective permissions including role
+      chains, PassRole targets, policy-version write paths, and group
+      memberships, then shrink the radius until it matches the task.
+      Anything whose blast radius exceeds its job description is not a
+      misconfiguration to schedule — it is an incident in waiting.
+  - title: "Logs are the first target, so protect them like production"
+    body: >-
+      Sophisticated cloud intruders suppress CloudTrail, narrow event
+      selectors, or cut the SIEM's read path before doing anything noisy —
+      because they know defenders detect through logs. This means the
+      logging pipeline itself is a production system under attack: org-level
+      trails, immutable buckets, SCPs denying log tampering, and immediate
+      paging on any suppression event. A defender who treats 'trail
+      stopped' as a routine config change has already lost; the correct
+      reflex is to treat it as an active intrusion until proven otherwise.
+  - title: "Trust boundaries are drawn in policy, not in intent"
+    body: >-
+      Cross-account roles, OIDC federation, vendor integrations, and
+      service-account bindings all express trust — but the trust that
+      matters is the one written in the policy document, not the one in the
+      architecture diagram. A trust policy naming a vendor's whole account
+      without an external ID, a CI federation trusting any branch, a
+      ClusterRoleBinding to a broad group: each silently extends the trust
+      boundary far beyond what anyone intended. Attackers read the actual
+      policy; defenders must too, continuously and mechanically, because
+      intent does not appear in CloudTrail — only the policy does.
+
+canonical_probes:
+  - "CloudTrail shows iam:CreatePolicyVersion from a developer role that never touches IAM — is this privilege escalation?"
+  - "Our trust policy lets the vendor account assume the role but has no external ID condition; can another tenant pivot into us?"
+  - "A pod's service account just listed secrets across all namespaces — what RBAC misconfiguration allows this?"
+  - "The ingress admission controller is reachable from the internet — are we exposed to cluster takeover?"
+  - "A new .github/workflows/security-audit.yml appeared from an unusual committer and references our AWS secrets — what do we do?"

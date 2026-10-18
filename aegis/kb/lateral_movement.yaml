@@ -1,0 +1,759 @@
+pack: lateral_movement
+version: "1.0"
+techniques:
+  - id: AEG-T325
+    name: "AD Attack Path Analysis: Shortest Paths to Domain Admin"
+    category: lateral_movement
+    description: >-
+      Attackers inside a network do not guess at privilege chains — they
+      model Active Directory as a graph and compute the shortest path from
+      their foothold to Domain Admin, following ACLs, group nesting, admin
+      sessions, and delegation edges. Defenders who run the same graph
+      analysis proactively (BloodHound-style pathfinding, or Defender for
+      Identity lateral-movement paths) see exactly which chains the attacker
+      will find, and can break them at the choke point — the one intermediate
+      node most paths share — instead of chasing individual findings.
+    how_it_works: >-
+      The directory is ingested into a graph: users, computers, groups, and
+      trusts become nodes, and every privilege relationship (GenericWrite,
+      WriteDacl, ForceChangePassword, group membership, local-admin rights,
+      admin sessions on hosts, delegation configuration) becomes a directed
+      edge. Pathfinding queries then compute shortest paths from a
+      compromised low-privilege account to the Domain Admins group or other
+      Tier-0 assets. BloodHound Community Edition exposes this as a
+      Pathfinding search between any two nodes, and Defender for Identity
+      computes lateral movement paths (LMPs) continuously, flagging the
+      riskiest paths in Secure Score when three or more non-sensitive
+      accounts can expose a sensitive one. For defenders, the operational
+      move is choke-point remediation: query which intermediate nodes appear
+      in the most shortest paths (often one over-privileged helpdesk group
+      or legacy service account bridges 80 percent of paths) and cut that
+      edge first. Telemetry tells: schedule the collection quarterly and
+      alert when any new shortest path to Domain Admins appears after an AD
+      change, group-nesting edit, or admin-session event.
+    variants:
+      - "Shortest-path queries from a specific user to Domain Admins for incident scoping"
+      - "Choke-point analysis: high indegree intermediates bridging populations to Tier-0"
+      - "Continuous LMP monitoring in Defender for Identity with Secure Score risk ranking"
+      - "Attack-path diffing after AD changes to catch newly opened chains"
+    indicators:
+      - "A shortest path to Domain Admins appearing or shrinking after a group-membership or ACL change"
+      - "Defender for Identity Secure Score flagging sensitive accounts with the riskiest lateral movement paths"
+      - "One intermediate group or service account appearing as a bridge in a large majority of computed paths"
+      - "Multi-hop chains combining an ACL edge, a session edge, and a delegation edge that no single tool's audit flagged"
+    detection:
+      rule: detect_ad_attack_paths
+      patterns:
+        - '(?i)shortest\s+path.*domain\s+admins'
+        - '(?i)lateral\s+movement\s+paths?'
+        - '(?i)choke\s*point.*attack\s+path'
+        - '(?i)riskiest.*lateral\s+movement'
+    severity: critical
+    mitigations:
+      - "Run graph-based attack-path analysis quarterly and remediate choke points first: one edge cut can collapse most paths"
+      - "Enforce tiered administration so workstation and server admins never hold paths into Tier-0"
+      - "Require change-review on group nesting and ACL edits that create new shortest paths to Domain Admins"
+      - "Enable Defender for Identity LMP detection (SAM-R remote calls) and work its riskiest-path recommendations to zero"
+    examples:
+      - summary: "Practitioner remediation write-ups of BloodHound data show that one over-privileged intermediate — typically an IT helpdesk group or a legacy service account with broad rights — bridges most shortest paths to Domain Admins, so cutting that single edge collapses the attack graph instead of fixing hundreds of findings one by one."
+        reference: "https://samithota.com/blog/breaking-active-directory-attack-paths-from-sharphound-data-to-choke-point-remediation/"
+    references:
+      - "https://bloodhound.specterops.io/analyze-data/explore/search"
+      - "https://samithota.com/blog/breaking-active-directory-attack-paths-from-sharphound-data-to-choke-point-remediation/"
+      - "https://www.netspi.com/blog/technical-blog/network-pentesting/microsoft-defender-for-identity-spoofing-cve-2025-26685/"
+
+  - id: AEG-T326
+    name: "Authentication-Log Forensics for Credential-Reuse Lateral Movement"
+    category: lateral_movement
+    description: >-
+      Pass-the-hash and pass-the-ticket (covered conceptually in AEG-T156)
+      leave their fingerprints in the Windows authentication log stream, and
+      this technique is the log decoder defenders use to read them. Network
+      logons (Event 4624, Logon Type 3) with the NTLM package and a zero or
+      missing key length, explicit-credential logons (Event 4648), and
+      Kerberos service-ticket requests (Event 4769) without matching
+      TGT-issuance events (Event 4768) are the forensic signature of reused
+      credential material moving host to host. Knowing which logon type
+      means what is what separates real credential reuse from benign admin
+      activity.
+    how_it_works: >-
+      When stolen hash or ticket material is replayed, the target host logs
+      a network logon (type 3), not an interactive one: the user never typed
+      a password on that machine. Pass-the-hash shows as NTLM (LmPackageName
+      NTLM V1/V2) with LogonProcessName often NtLmSsp and a characteristic
+      KeyLength of zero, authenticating to many hosts from one source in a
+      short window. Pass-the-ticket shows as Kerberos (Event 4769) service
+      tickets with no preceding 4768 TGT request on the domain controller,
+      sometimes with anomalous encryption types or lifetimes. Event 4648
+      (explicit credentials used) is the precursor: it records a process
+      presenting alternate credentials, which is how the hop is launched.
+      Over-pass-the-hash converts to Kerberos and then looks like 4769
+      anomalies. Defenders baseline per-account logon-type profiles (service
+      accounts should never generate type 10 interactive logons; users
+      rarely generate dozens of type 3 logons per hour) and alert on the
+      mismatches: type 3 storms from a single source, NTLM logons for
+      accounts that normally use Kerberos, and 4769 without 4768.
+    variants:
+      - "NTLM pass-the-hash: Logon Type 3 storms with NTLM package and anomalous key lengths"
+      - "Pass-the-ticket: 4769 service-ticket use with no matching 4768 on the KDC"
+      - "Over-pass-the-hash: NTLM material converted to Kerberos, surfacing as 4769 anomalies"
+      - "Explicit-credential hops: 4648 precursor events naming the launching process"
+    indicators:
+      - "Event 4624 Logon Type 3 with NTLM authentication package from one source to many hosts within minutes"
+      - "Event 4769 Kerberos service-ticket requests with no corresponding Event 4768 TGT issuance on the domain controller"
+      - "Event 4648 explicit-credential logons from processes that do not normally present alternate credentials"
+      - "Kerberos or NTLM logon types that do not match the account's historical profile (e.g., type 3 for a user who only logs on interactively)"
+    detection:
+      rule: detect_credential_reuse_log_forensics
+      patterns:
+        - '(?i)4624.*logon\s*type\s*3.*ntlm'
+        - '(?i)4648.*explicit\s+credential'
+        - '(?i)4769\s+without\s+4768|no\s+matching\s+4768'
+        - '(?i)pass[\s_-]*the[\s_-]*(hash|ticket)'
+    severity: high
+    mitigations:
+      - "Centralize and retain Security logs from every host so cross-host logon-type correlation is possible"
+      - "Baseline per-account logon-type profiles and alert on deviations (type 3 storms, NTLM where Kerberos is expected)"
+      - "Correlate 4648 explicit-credential events to the follow-on 4624 network logons they launch"
+      - "Reduce the attack surface with Credential Guard, LAPS, and tiered administration so fewer hops are reachable at all"
+    examples:
+      - summary: "SOC playbooks for lateral movement detection standardize on this exact log sequence — 4624 Type 3 for network logons, 4648 for explicit-credential use, 4672 for special-privilege assignment — and flag multiple Type 3 logons from the same account to many hosts in a short window as a primary credential-reuse signal."
+        reference: "https://CyberDefenders.org/blog/soc-playbook-lateral-movement-detection-and-response-guide"
+    references:
+      - "https://CyberDefenders.org/blog/soc-playbook-lateral-movement-detection-and-response-guide"
+      - "https://expel.com/blog/mdr-insights-tracking-lateral-movement-of-bad-actors-in-a-windows-environment-part-i/"
+
+  - id: AEG-T327
+    name: "RDP Session Hijacking and Shadow Session Abuse"
+    category: lateral_movement
+    description: >-
+      Instead of authenticating with stolen credentials, an attacker with
+      local SYSTEM on a host can hijack someone else's live RDP session —
+      taking over a domain admin's disconnected or active session without
+      any new logon event. This session hijacking (MITRE T1563.002) uses
+      the native tscon mechanism or the RDP shadowing feature, and it is
+      nearly invisible to authentication monitoring because no credential is
+      presented: the attacker simply inherits the victim's identity,
+      privileges, and open resources.
+    how_it_works: >-
+      RDP session hijacking reassigns an existing logon session to the
+      attacker: tscon.exe run as SYSTEM can attach the attacker's console
+      to another user's disconnected RDP session, and the shadowing feature
+      (mstsc /shadow, or the RdpSaUacHelper/RdpSaProxy helpers spawned by
+      svchost) lets one session view and control another. Defenders can
+      force the Shadow policy registry value to require user consent, but
+      attackers with admin rights change it. MITRE's DET0079 detection
+      strategy keys on the core anomaly: session reassignments without
+      matching successful logons — credentials used do not match the
+      session owner, processes spawn in the context of the hijacked session,
+      and RDP traffic flows deviate from baseline. Observable telemetry:
+      tscon.exe executing with SYSTEM integrity (Azure/Defender for Cloud
+      flags this explicitly), mstsc with /shadow arguments, RdpSa*
+      processes under svchost, and writes to the Terminal Services Shadow
+      registry key that remove the consent requirement.
+    variants:
+      - "tscon session takeover: SYSTEM process attaching to a disconnected RDP session"
+      - "RDP shadowing: mstsc /shadow or RdpSa helpers used to spy on or control a live session"
+      - "Shadow policy tampering: registry change removing the user-consent requirement"
+      - "Session takeover via tscon installed as a service for repeated reuse"
+    indicators:
+      - "tscon.exe executing with SYSTEM privileges on a host (flagged by Defender for Cloud as RDP hijacking)"
+      - "mstsc.exe launched with /shadow arguments or RdpSaUacHelper.exe/RdpSaProxy.exe spawned by svchost.exe"
+      - "Modification of the HKLM Software Policies Microsoft Windows NT Terminal Services Shadow registry value to remove consent"
+      - "Processes running in a user's session context with no corresponding new logon event for that user"
+    detection:
+      rule: detect_rdp_session_hijacking
+      patterns:
+        - '(?i)\btscon\b'
+        - '(?i)mstsc.*\/shadow|RdpSa(UacHelper|Proxy)'
+        - '(?i)shadow.*registry.*terminal\s+services'
+        - '(?i)rdp\s+session\s+hijack'
+    severity: critical
+    mitigations:
+      - "Set short disconnected-session timeouts and logoff policies via GPO so abandoned sessions do not linger for hijacking"
+      - "Enforce shadowing consent and restrict Remote Desktop Users membership; remove local Administrators from RDP access"
+      - "Alert on any tscon.exe execution with SYSTEM integrity and on RDP shadowing process activity"
+      - "Monitor session-reassignment telemetry: processes in a user context without a matching logon event are hijack candidates"
+    examples:
+      - summary: "Splunk's security research content documents the canonical detection for this technique — a Windows service installation wrapping tscon so the attacker can repeatedly attach to any logged-on session — with the detection keyed on the service-install and process-creation telemetry rather than on authentication logs, which stay silent."
+        reference: "https://research.splunk.com/endpoint/c13b3d74-6b63-4db5-a841-4206f0370077/"
+    references:
+      - "https://attack.mitre.org/techniques/T1563/002/"
+      - "https://attack.mitre.org/detectionstrategies/DET0079/"
+      - "https://www.elastic.co/guide/en/security/8.19/potential-remote-desktop-shadowing-activity.html"
+      - "https://research.splunk.com/endpoint/c13b3d74-6b63-4db5-a841-4206f0370077/"
+
+  - id: AEG-T328
+    name: "SSH Lateral Movement and Key/Agent Abuse on Linux"
+    category: lateral_movement
+    description: >-
+      On Linux fleets, lateral movement rides SSH: stolen private keys,
+      planted authorized_keys entries, and hijacked ssh-agent sockets let an
+      attacker hop between hosts with successful, legitimate-looking
+      authentications. Because key-based SSH logins generate no failures,
+      the classic brute-force signals are absent — detection must read
+      auth.log the way Windows defenders read 4624: who connected where,
+      with which key, and whether that host pair has any business
+      relationship.
+    how_it_works: >-
+      The hop patterns defenders hunt: (1) authorized_keys planting — a new
+      public key appears in a user's .ssh directory, logged by file-integrity
+      or auditd telemetry, granting passwordless re-entry that survives
+      password rotation; (2) key reuse across hosts — the same key
+      fingerprint authenticating to unrelated systems, especially from a
+      workstation into production, or a dormant account suddenly active;
+      (3) agent-forwarding and socket hijack — an attacker on a jump host
+      reuses the victim's unlocked ssh-agent socket (SSH_AUTH_SOCK) to
+      authenticate onward with no key or passphrase of their own, leaving
+      only process-environment and socket-access traces; (4) worm-style
+      automation — malware like Kinsing harvests hosts, ports, users, and
+      keys from known_hosts, bash_history, ssh config, and private key
+      files, then loops SSH logins paired with curl or wget fetch-and-execute
+      payloads. Red Canary's field guidance: legitimate enterprises rarely
+      run ssh with -oBatchMode/-oStrictHostKeyChecking=no flags, so those
+      command-line shapes are high-fidelity, and ssh piped to curl/wget or
+      base64 decode is an immediate lateral-movement tell.
+    variants:
+      - "authorized_keys planting for passwordless re-entry after compromise"
+      - "ssh-agent socket hijack: onward authentication using the victim's unlocked agent"
+      - "Worm-style SSH propagation harvesting known_hosts, bash_history, and key files (Kinsing pattern)"
+      - "SSH command execution with evasion flags (-oBatchMode, disabled host-key checking, base64 payloads)"
+    indicators:
+      - "New or modified authorized_keys files, especially for root or service accounts, outside change windows"
+      - "The same SSH key fingerprint authenticating to unrelated hosts or a dormant account suddenly logging in"
+      - "ssh processes with -oBatchMode/-oStrictHostKeyChecking=no, or ssh command lines containing curl, wget, or base64 decode"
+      - "Processes reading key files and known_hosts in bulk followed by outbound SSH to many hosts (propagation harvesting)"
+    detection:
+      rule: detect_ssh_lateral_movement
+      patterns:
+        - '(?i)authorized_keys.*(modif|new\s+key|added)'
+        - '(?i)\bssh\b.*-o(BatchMode|StrictHostKeyChecking)'
+        - '(?i)ssh.*(curl|wget|base64\s+-d)'
+        - '(?i)ssh[\s_-]*agent.*(hijack|forward)'
+    severity: high
+    mitigations:
+      - "Inventory every authorized key centrally with owners and expiry; alert on any new key, especially for privileged accounts"
+      - "Disable agent forwarding by default (ForwardAgent no) and AllowAgentForwarding no on servers that do not need it"
+      - "Alert on SSH sessions between hosts with no administrative relationship and on first-seen host pairs"
+      - "Segment SSH access with jump hosts and short-lived certificates instead of long-lived static keys where possible"
+    examples:
+      - summary: "AhnLab's analysis of Kinsing malware propagation documents the SSH lateral-movement pattern in the wild: the malware harvests hosts, ports, users, and keys from known_hosts, bash_history, ssh configs, and private key files, then loops logins and uses curl/wget to pull and execute its downloader on each newly reached host."
+        reference: "https://static.obstracts.com/feed/629e5a81-266d-5029-8677-4ac64033e0c9/posts/6d10df52-4927-50a5-a5a4-7db63324b8fb/6d10df52-4927-50a5-a5a4-7db63324b8fb_attacks-against-linux-ssh-servic.pdf"
+    references:
+      - "https://redcanary.com/blog/lateral-movement-with-secure-shell/"
+      - "https://www.elastic.co/guide/en/security/8.14/ssh-authorized-keys-file-modification.html"
+      - "https://linuxsecurity.com/howtos/secure-my-network/unauthorized-ssh-keys-lateral-movement"
+
+  - id: AEG-T329
+    name: "Remote Service and Management-Protocol Abuse in Telemetry"
+    category: lateral_movement
+    description: >-
+      Beyond the general lateral-movement picture (AEG-T151), defenders need
+      per-channel telemetry for the three remote-execution workhorses:
+      PsExec-style SMB service creation, WMI/DCOM remote method invocation,
+      and WinRM remote shells. Each leaves a distinct artifact cluster —
+      service-install events, named-pipe accesses, WinRM operational events,
+      and WMI activity logs — and attackers who rename the obvious service
+      (PsExec's -r flag) still trip the behavioral cluster. Catching the
+      cluster, not the name, is what survives evasion.
+    how_it_works: >-
+      PsExec-style movement: an SMB logon to ADMIN$ (Event 5145 share
+      access), a service created on the target (System Event 7045, and
+      Security Event 4697 where audit policy enables it), named pipes like
+      psexesvc with per-session stdin/stdout/stderr pipes, and the classic
+      ImagePath of cmd.exe or PowerShell. WMI movement: DCOM activation
+      (Event 10028/10036), wmiprvse.exe spawning the payload process as its
+      child — a parent-child anomaly since wmiprvse should rarely spawn
+      shells — and WMI-Activity operational events 5857-5861. WinRM movement:
+      WinRM operational log events (91 for new shell sessions, 168 for
+      authentication anomalies), winrshost.exe or wsmprovhost.exe process
+      creation, and HTTP/5985-5986 traffic between hosts that are not
+      management servers. Praetorian's threat-hunting guidance stresses the
+      correlation cluster: SMB authentication (4624) plus service creation
+      (7045) plus named-pipe activity within a short window is high
+      confidence even when the service name is randomized. Sysmon Event 1
+      with command-line logging ties it together: wmic process call create,
+      winrs, or sc.exe invoked from a non-admin source host.
+    variants:
+      - "PsExec-style: SMB ADMIN$ upload, 7045 service creation, named-pipe session channels"
+      - "WMI: DCOM activation with wmiprvse.exe spawning payload processes"
+      - "WinRM: wsmprovhost/winrshost shells over HTTP/S management ports"
+      - "Renamed-service evasion: randomized service and pipe names caught by the behavioral cluster"
+    indicators:
+      - "Event 7045/4697 service creation with ImagePath of cmd.exe, PowerShell, or a binary outside Program Files/System32"
+      - "Event 5145 accesses to ADMIN$/C$/IPC$ shares correlated with named-pipe creation on the same host"
+      - "wmiprvse.exe, wsmprovhost.exe, or winrshost.exe spawning shells or downloading content"
+      - "WinRM operational 91/168 events or DCOM 10028 activations between hosts with no management relationship"
+    detection:
+      rule: detect_remote_service_abuse_telemetry
+      patterns:
+        - '(?i)\b7045\b'
+        - '(?i)(wmiprvse|wsmprovhost|winrshost|psexesvc)'
+        - '(?i)winrm.*(operational|91|168)'
+        - '(?i)admin\$.*share.*access'
+    severity: high
+    mitigations:
+      - "Enable command-line process logging (4688) and Sysmon; the cluster needs process lineage, not just event counts"
+      - "Deploy the ASR rule blocking process creation from PsExec and WMI commands on endpoints that do not need them"
+      - "Restrict remote service creation rights and WinRM to management hosts; alert on any 7045 from non-admin sources"
+      - "Baseline which hosts legitimately use WMI/WinRM and treat new management-protocol pairs as lateral-movement candidates"
+    examples:
+      - summary: "Praetorian's PsExec threat-hunting write-up documents the full artifact cluster defenders should chase — 7045 remote service creation, the EULA-acceptance registry key on the source host, and the distinctive named-pipe pattern — and notes ransomware operations like NetWalker used PsExec to push payloads across entire domains within an hour."
+        reference: "https://www.praetorian.com/blog/threat-hunting-how-to-detect-psexec/"
+    references:
+      - "https://www.praetorian.com/blog/threat-hunting-how-to-detect-psexec/"
+      - "https://www.synacktiv.com/en/publications/traces-of-windows-remote-command-execution.html"
+      - "https://attack.mitre.org/techniques/T1021/"
+
+  - id: AEG-T330
+    name: "Internal Reconnaissance Tradecraft: AD Enumeration and Share Discovery"
+    category: lateral_movement
+    description: >-
+      Before moving laterally, attackers map the interior: which users are
+      domain admins, which computers hold admin sessions, which shares are
+      reachable, and where trusts lead. This discovery phase is the
+      noisiest part of an intrusion — LDAP query bursts, session and share
+      enumeration, and account-discovery commands — and it is the defender's
+      best early-warning window, because it happens before any credential
+      theft or lateral hop. Recon tradecraft has also evolved: skilled
+      actors avoid known tools and query LDAP directly, so defenders must
+      detect the behavior, not the binary.
+    how_it_works: >-
+      The recon ladder: (1) domain enumeration — net user /domain, net
+      group Domain Admins /domain, nltest /domain_trusts, dsquery, adfind,
+      or PowerShell DirectorySearcher queries producing Event 4688 process
+      creations and 5156 network-connection events to DCs; (2) BloodHound-
+      style collection — SharpHound or manual LDAP pulls causing spikes of
+      Event 4662 directory-service access and 4769 TGS requests, plus SMB
+      session enumeration (NetSessionEnum) against many hosts; (3) share
+      and system discovery — 5140/5145 network-share accesses sweeping
+      ADMIN$/C$/IPC$ across subnets, and WMI or remote-registry queries for
+      logged-on users (1033/4624 type 10 patterns). Microsoft Defender for
+      Identity ships dedicated reconnaissance alerts for account
+      enumeration and directory-service queries. The modern twist defenders
+      must internalize: predefined collector queries have predictable
+      signatures, so advanced actors hand-craft LDAP filters to stay quiet
+      — which is why the behavioral signals (one account querying hundreds
+      of objects in minutes, session enumeration from a workstation that
+      never did it before) matter more than tool-name matches like
+      SharpHound.exe.
+    variants:
+      - "LDAP enumeration bursts: hundreds of directory queries from one account in minutes"
+      - "Session enumeration: NetSessionEnum sweeps hunting admin sessions on hosts"
+      - "Share discovery: 5140/5145 sweeps of ADMIN$/C$/IPC$ across subnets"
+      - "Living-off-the-land recon: net.exe, nltest, dsquery, PowerShell DirectorySearcher instead of known tools"
+    indicators:
+      - "Event 4688 process creations for net.exe, nltest, dsquery, adfind, or PowerShell with DirectorySearcher in a tight time window"
+      - "Spikes of Event 4662 directory-service access or 4769 TGS requests from a single account far above its baseline"
+      - "Event 5140/5145 share accesses sweeping many hosts, especially ADMIN$/C$/IPC$ from a workstation"
+      - "Defender for Identity reconnaissance alerts (account enumeration, directory-service queries, DNS reconnaissance)"
+    detection:
+      rule: detect_internal_recon_tradecraft
+      patterns:
+        - '(?i)(net\s+group|nltest|dsquery|adfind).*\/domain'
+        - '(?i)ldap.*(enumeration|query).*spike'
+        - '(?i)4662.*directory\s+service.*access'
+        - '(?i)session\s+enumeration|share\s+discovery'
+    severity: medium
+    mitigations:
+      - "Forward DC Security logs centrally and baseline per-account LDAP query volumes before writing alert thresholds"
+      - "Deploy honey users and honey SPNs so enumeration touches canary objects first"
+      - "Alert on recon-tool process names AND on the behavioral pattern (enumeration commands in 60-second windows)"
+      - "Treat internal recon as an incident trigger: quarantine the endpoint and pull memory for credential-theft analysis"
+    examples:
+      - summary: "CyberDefenders' SOC lateral-movement playbook treats Stage 1 reconnaissance as the highest-value detection point: repeated enumeration commands within 60 seconds, net group Domain Admins queries, nltest trust discovery, and SMB scans to port 445 across internal IPs are all defined as quarantine-worthy behavioral indicators before any lateral hop occurs."
+        reference: "https://CyberDefenders.org/blog/soc-playbook-lateral-movement-detection-and-response-guide"
+    references:
+      - "https://CyberDefenders.org/blog/soc-playbook-lateral-movement-detection-and-response-guide"
+      - "https://thereviewhive.blog/bloodhound-active-directory/"
+
+  - id: AEG-T331
+    name: "Forged Kerberos Ticket Forensics: Golden, Silver, and Diamond Indicators"
+    category: lateral_movement
+    description: >-
+      Golden and silver tickets are conceptually covered in AEG-T240; this
+      technique is the forensic companion — the exact log anomalies that
+      betray a forged ticket in use. Forged tickets are created offline, so
+      the domain controller never logs their birth; defenders must catch
+      them at use time: impossible ticket lifetimes, TGTs with no matching
+      authentication request, the wrong encryption type, and event-log
+      fields that forging tools populate incorrectly. Silver tickets never
+      touch the KDC at all, so their detection lives entirely on the target
+      host's logs.
+    how_it_works: >-
+      The forgery tells: (1) lifetime — forged tickets routinely carry
+      lifetimes of years against a domain policy of 10 hours; any ticket
+      valid far beyond policy is forged by definition; (2) orphaned TGTs —
+      a service ticket (4769) or TGT use with no preceding 4768
+      authentication request on a DC means the ticket was minted elsewhere;
+      (3) encryption mismatch — RC4 (0x17) tickets in an AES-enforced
+      environment; (4) malformed log fields — Sean Metcalf's original
+      research found forged tickets leave the domain field blank or with
+      the FQDN instead of the NetBIOS name in Windows events; (5) silver
+      ticket stealth — because the KDC is never contacted, the only
+      signals are host-side: a 4624 network logon for a service with no
+      corresponding 4769 on any DC, or a user accessing a service they
+      never authenticated to; (6) diamond tickets — the newer variant that
+      modifies a legitimate TGT request, designed to defeat lifetime and
+      orphan checks, so defenders layer PAC-validation and
+      ticket-attribute baselining. Canary defenses: honey service accounts
+      and monitored krbtgt password age — a double krbtgt rotation
+      invalidates every golden ticket at once.
+    variants:
+      - "Golden tickets: multi-year lifetimes and orphaned TGTs with no 4768"
+      - "Silver tickets: host-side 4624 logons with no matching 4769 on any DC"
+      - "Diamond tickets: legitimate-TGT modification defeating lifetime and orphan checks"
+      - "Canary tickets: honey accounts whose forged use trips immediate alerts"
+    indicators:
+      - "Kerberos tickets with lifetimes far beyond domain policy (years instead of 10 hours)"
+      - "Event 4769 service-ticket use with no preceding Event 4768, or RC4 (0x17) tickets in AES-only environments"
+      - "Event-log domain fields blank or containing FQDN instead of the NetBIOS name on ticket-authenticated logons"
+      - "Service logons (4624) on hosts with no corresponding ticket-granting activity on any domain controller"
+    detection:
+      rule: detect_forged_ticket_forensics
+      patterns:
+        - '(?i)(golden|silver|diamond)\s+ticket'
+        - '(?i)ticket\s+lifetime\s+anomaly'
+        - '(?i)4769.*0x17|rc4.*ticket.*anomal'
+        - '(?i)krbtgt.*(rotation|age)'
+    severity: critical
+    mitigations:
+      - "Rotate the krbtgt password twice (with replication between) after any suspected compromise — invalidates all golden tickets"
+      - "Enforce AES Kerberos, alert on RC4 tickets and on any ticket lifetime exceeding policy"
+      - "Correlate 4769 to 4768 on DCs and 4624 to 4769 on hosts; orphans on either side are forgery evidence"
+      - "Deploy honey service accounts and ticket canaries; forged use of a canary is a critical alert, not a tune-out"
+    examples:
+      - summary: "ADSecurity's forged-ticket research series (Sean Metcalf) established the forensic indicators defenders still use: anomalous ticket lifetimes, encryption-type mismatches, and the blank-or-FQDN domain-field anomaly in Windows event logs — discovered by generating forged tickets in a lab and diffing the resulting logs against legitimate Kerberos traffic."
+        reference: "https://adsecurity.org/?tag=forgedkerberosticket"
+    references:
+      - "https://adsecurity.org/?tag=forgedkerberosticket"
+      - "https://cyberboo.substack.com/p/microsoft-defender-for-identity-deep"
+
+  - id: AEG-T332
+    name: "Network Segmentation Bypass via Dual-Homed Hosts and Alternate Paths"
+    category: lateral_movement
+    description: >-
+      Segmentation fails at the seams attackers find: dual-homed hosts
+      bridging zones, management interfaces reachable from the wrong
+      network, IPv6 paths bypassing IPv4 firewall rules, jump hosts used
+      as stepping stones, and cloud peering or split-tunnel VPNs creating
+      unmapped routes. This is the architectural counterpart to VLAN
+      hopping (AEG-T157, a Layer-2 trick): here the attacker walks through
+      legitimate but unintended network paths the firewall policy never
+      modeled, and each hop looks authorized because the path itself was
+      authorized — just not for this purpose.
+    how_it_works: >-
+      The bypass families defenders audit: (1) dual-homed bridges — servers
+      or appliances with NICs in two zones (e.g., a backup server touching
+      both server VLAN and management VLAN) let traffic cross without ever
+      hitting the firewall; (2) management-plane backdoors — iLO/iDRAC/IPMI
+      interfaces, hypervisor consoles, and storage management reachable
+      from user networks give console-equivalent access around segmentation;
+      (3) protocol alternates — IPv6 enabled where only IPv4 is filtered,
+      or alternate management protocols the policy forgot; (4) jump-host
+      and VPN seam abuse — a compromised jump host becomes a proxy into
+      the protected zone, and split-tunnel VPNs route the attacker's
+      traffic around inspection; (5) cloud and peering seams — VPC peering,
+      transit gateways, and site-to-site tunnels that the on-prem firewall
+      model never saw. Detection is topological: flow analysis showing a
+      host with connections in two zones acting as a bridge, new inter-zone
+      paths appearing without change tickets, and management-interface
+      logins from unexpected source networks.
+    variants:
+      - "Dual-homed hosts bridging two security zones without a firewall in path"
+      - "Management interfaces (iLO/iDRAC/IPMI, hypervisor consoles) reachable from user networks"
+      - "IPv6 or alternate-protocol paths bypassing IPv4-only firewall policy"
+      - "Jump-host and split-tunnel VPN seams creating unmodeled routes into protected zones"
+    indicators:
+      - "A single host with concurrent sessions in two different security zones acting as a traffic bridge"
+      - "Logins to management interfaces (iLO, iDRAC, hypervisor consoles) from user or untrusted networks"
+      - "Inter-zone traffic on IPv6 where firewall policy is IPv4-only, or on unmodeled ports and protocols"
+      - "New network paths between zones appearing without corresponding firewall change records"
+    detection:
+      rule: detect_segmentation_bypass_paths
+      patterns:
+        - '(?i)dual[\s_-]*homed.*bridge'
+        - '(?i)management\s+interface.*(unauthorized|unexpected)'
+        - '(?i)segmentation\s+bypass'
+        - '(?i)inter[\s_-]*zone.*(unmodeled|unauthorized)'
+    severity: high
+    mitigations:
+      - "Inventory every multi-homed host and management interface; each is a segmentation exception that must be justified and monitored"
+      - "Apply firewall policy to IPv6 identically to IPv4, or disable IPv6 where it is not needed"
+      - "Put management interfaces on isolated management networks with no route from user segments"
+      - "Continuously map actual inter-zone flows against the intended policy and alert on drift"
+    examples:
+      - summary: "MITRE ATT&CK's proxy technique documents how attackers ride existing trusted paths between victims — including Sandworm's BCS-server creating an internal proxy to reach internal servers not directly connected to the internet — which is exactly the segmentation-bypass pattern: the path was legitimate, the purpose was not."
+        reference: "https://attack.mitre.org/techniques/T1090/"
+    references:
+      - "https://attack.mitre.org/techniques/T1090/"
+      - "https://securelayer7.net/learn-pdf/lateral-movement/what-is-socks-proxies-proxychains.pdf"
+
+  - id: AEG-T333
+    name: "Pivoting and Internal Proxying Detection"
+    category: lateral_movement
+    description: >-
+      Once an attacker owns one internal host, they turn it into a pivot:
+      a SOCKS proxy, a port-forward, or a reverse tunnel that lets their
+      tools reach the rest of the internal network through the compromised
+      machine. The pivot host becomes a router for the attacker's toolkit
+      — scanners, credential tools, and exploit frameworks all ride the
+      tunnel — so detecting the proxy is detecting the entire follow-on
+      campaign before it fans out. Reverse-proxy tooling (FRP, rsocx,
+      reGeorg-class) and native forwards (SSH dynamic forwards, netsh
+      portproxy) are the mechanisms to watch.
+    how_it_works: >-
+      The pivot mechanics at detection level: (1) SOCKS proxies on the
+      pivot — a listening port (commonly high ports) accepting the
+      attacker's connections and relaying them internally; the SecureLayer7
+      defender's guide notes the giveaway is one internal host suddenly
+      scanning or connecting to many others, since the pivot now does the
+      attacker's scanning for them; (2) SSH port forwarding — -D dynamic
+      (SOCKS), -L local, and -R remote forwards visible in process
+      command lines and as persistent SSH sessions with no interactive
+      activity; (3) reverse tunnels — tools like FRP and rsocx that call
+      outbound to attacker infrastructure and expose internal services
+      back through it, defeating inbound firewall rules (ATT&CK documents
+      Scattered Spider installing rsocx on ESXi appliances and Volt
+      Typhoon using FRP); (4) native Windows forwarding — netsh interface
+      portproxy rules redirecting ports, which ATT&CK's HARDRAIN example
+      shows used to turn a victim into a proxy server. NDR detection keys
+      on the flow signature: a host with abnormal fan-out (connections to
+      many internal targets it never touched), long-lived sessions with
+      multiplexed internal traffic, and a workstation or server acting as
+      a connector between networks rather than an endpoint.
+    variants:
+      - "SOCKS proxies on pivot hosts relaying attacker tooling into the subnet"
+      - "SSH dynamic/local/remote port forwarding with no interactive session activity"
+      - "Reverse tunnels (FRP/rsocx class) calling outbound to expose internal services"
+      - "Native OS forwarding: netsh portproxy and equivalent rules turning hosts into relays"
+    indicators:
+      - "One internal host suddenly initiating connections or scans to many other internal hosts it never contacted before"
+      - "Listening ports on non-server hosts (SOCKS-style) with persistent connections to external infrastructure"
+      - "SSH sessions with forwarding flags (-D/-L/-R) and no interactive activity, or netsh portproxy rule additions"
+      - "Long-lived outbound tunnels from a host multiplexing traffic to many internal destinations"
+    detection:
+      rule: detect_pivoting_internal_proxy
+      patterns:
+        - '(?i)socks\s*(4|5)?\s*proxy.*internal'
+        - '(?i)\bssh\b.*-[DLR]\b'
+        - '(?i)port\s*forward.*(tunnel|pivot)'
+        - '(?i)(frp|rsocx|reGeorg|chisel|ligolo)'
+    severity: high
+    mitigations:
+      - "Egress-filter aggressively: a pivot cannot phone home for its reverse tunnel if outbound is denied by default"
+      - "Alert on new listening ports on workstations and on hosts with sudden internal fan-out"
+      - "Monitor netsh portproxy and SSH-forwarding configurations as security-relevant changes"
+      - "Deploy NDR with east-west visibility; pivots are visible in flow data long before they are visible on the endpoint"
+    examples:
+      - summary: "MITRE ATT&CK documents the real-world pivot pattern repeatedly: Scattered Spider installed the rsocx reverse proxy on targeted ESXi appliances, Volt Typhoon used FRP to proxy internal traffic, and the 2025 Poland wiper attacks tunneled inside infrastructure with reverse SOCKS — each case showing the pivot host as the campaign's router."
+        reference: "https://attack.mitre.org/techniques/T1090/"
+    references:
+      - "https://attack.mitre.org/techniques/T1090/"
+      - "https://securelayer7.net/learn-pdf/lateral-movement/what-is-socks-proxies-proxychains.pdf"
+
+  - id: AEG-T334
+    name: "Credential-Access-to-Lateral-Movement Chaining: Correlating the Kill Chain"
+    category: lateral_movement
+    description: >-
+      Credential theft and lateral movement are usually detected as
+      separate alerts — an LSASS access here, a network logon there — but
+      the attack is the sequence: steal credentials on host A, then use
+      them to authenticate to hosts B, C, and D. Defenders who correlate
+      the two halves catch the intrusion at the moment of expansion, when
+      it is still containable. Each half alone is often benign-looking
+      (admins touch LSASS-adjacent processes; network logons are normal);
+      the chain is what convicts.
+    how_it_works: >-
+      The canonical chain defenders encode as one rule: (1) credential
+      access on the source host — Sysmon Event 10 (process access to
+      lsass.exe), Event 4663/4656 object access on SAM/LSA secrets, SAM-R
+      remote queries (which Defender for Identity's LMP feature uses), or
+      EDR credential-dumping alerts; (2) within a short window (minutes),
+      network authentications originating from that same host — Event 4624
+      Logon Type 3 (or 8/9/10/11 for other channels) to multiple new
+      targets, Event 4648 explicit-credential use naming the launching
+      process, or 4776 NTLM validations. The CyberDefenders SOC playbook
+      makes this the standard response flow: extract process memory for
+      credential-theft analysis at the recon stage, then review the
+      48-hour process tree and network logs for the pivot attempts that
+      follow. False-positive control comes from the pairing: LSASS access
+      by a known backup or EDR agent is baseline; LSASS access by an
+      unknown process followed by first-seen host-to-host logons is the
+      chain firing. Time-bounding the correlation (credential access, then
+      lateral hops within N minutes) is what keeps the rule surgical.
+    variants:
+      - "LSASS access followed by type-3 logon storms from the same host"
+      - "SAM-R remote queries preceding first-seen host-to-host authentications"
+      - "Credential-dumping EDR alert followed by 4648 explicit-credential launches"
+      - "NTLM validation bursts (4776) on a DC following a dumping event on a member host"
+    indicators:
+      - "Sysmon Event 10 targeting lsass.exe (or EDR credential-dumping alert) on a host"
+      - "Within minutes, Event 4624 network logons originating from that host to multiple new targets"
+      - "Event 4648 explicit-credential events naming processes that launched right after credential access"
+      - "First-seen host-to-host authentication pairs appearing in the same window as the dumping event"
+    detection:
+      rule: detect_credential_access_lateral_chain
+      patterns:
+        - '(?i)lsass.*access.*followed.*logon'
+        - '(?i)credential\s+(dump|theft|access).*lateral'
+        - '(?i)4624.*logon\s*type\s*3.*multiple\s+hosts'
+        - '(?i)kill\s*chain.*correlat'
+    severity: critical
+    mitigations:
+      - "Build the chained detection as one rule: credential-access event on host A plus first-seen outbound authentications within N minutes"
+      - "Protect LSASS as PPL and deploy Credential Guard so the first half of the chain usually fails"
+      - "On a chain alert, isolate the source host first (the stolen material radiates from it), then hunt the target hosts"
+      - "Retain process-creation and network-logon telemetry for at least 30 days so the chain is reconstructable after the fact"
+    examples:
+      - summary: "The CyberDefenders SOC lateral-movement playbook operationalizes this exact chain: at the reconnaissance stage it directs analysts to extract process memory and search for LSASS access, then review 48 hours of process-tree and network logs for the pivot attempts that follow — treating the sequence as one incident, not two alerts."
+        reference: "https://CyberDefenders.org/blog/soc-playbook-lateral-movement-detection-and-response-guide"
+    references:
+      - "https://CyberDefenders.org/blog/soc-playbook-lateral-movement-detection-and-response-guide"
+      - "https://expel.com/blog/mdr-insights-tracking-lateral-movement-of-bad-actors-in-a-windows-environment-part-i/"
+
+  - id: AEG-T335
+    name: "Kerberos Delegation Abuse for Lateral Movement"
+    category: lateral_movement
+    description: >-
+      Kerberos delegation lets a service act on behalf of users — and each
+      delegation flavor is a lateral-movement primitive when misconfigured.
+      Unconstrained delegation caches users' full TGTs on the service host;
+      constrained delegation lets a service request tickets to specific
+      services as any user (S4U); resource-based constrained delegation
+      (RBCD) lets whoever can write one attribute on a computer object
+      configure that computer to trust an attacker-controlled machine.
+      Defenders detect the abuse in 4769 ticket traffic and in directory
+      writes to the delegation attributes, not by watching the protocol
+      succeed.
+    how_it_works: >-
+      The three flavors and their tells: (1) unconstrained — a server
+      trusted for delegation receives forwardable TGTs from every
+      authenticating user, including domain admins; the tell is 4769
+      traffic and, after compromise, TGT reuse from an unexpected host
+      (SpecterOps' CoerceToTGT edge documents coercing a Tier-0 computer
+      to authenticate and harvesting its TGT for DCSync); (2) constrained
+      with protocol transition — S4U2Self/S4U2Proxy requests appear as 4769
+      events with the s4u2self service name and impersonation of users who
+      never authenticated to that service; (3) RBCD — the attacker writes
+      msDS-AllowedToActOnBehalfOfOtherIdentity on a target computer
+      (directory Event 5136/5137 showing the attribute change), typically
+      right after creating a new computer account they control (4741/4742),
+      then performs S4U to impersonate any non-protected user to that
+      host. The Elad Shamir "Wagging the Dog" research and SpecterOps'
+      case study established the pattern: generic write on a computer
+      object plus default MachineAccountQuota equals full takeover of that
+      computer, then DCSync when the target is a DC. Defensive posture:
+      inventory every delegation setting, mark privileged users sensitive
+      for delegation or in Protected Users, and alert on any write to the
+      RBCD attribute outside approved change windows.
+    variants:
+      - "Unconstrained delegation: TGT caching on compromised service hosts, CoerceToTGT harvesting"
+      - "Constrained delegation with protocol transition: S4U2Self/S4U2Proxy impersonation in 4769 traffic"
+      - "RBCD: msDS-AllowedToActOnBehalfOfOtherIdentity writes followed by S4U impersonation"
+      - "Reflective RBCD and cross-service S4U variants reaching DCSync on domain controllers"
+    indicators:
+      - "Event 5136/5137 writes to msDS-AllowedToActOnBehalfOfOtherIdentity, especially after a new computer-account creation"
+      - "Event 4769 with s4u2self/s4u2proxy service names impersonating users who never authenticated to that service"
+      - "Servers configured for unconstrained delegation, or authentications to them by privileged accounts"
+      - "TGTs for privileged users appearing on hosts other than the ones those users logged on to"
+    detection:
+      rule: detect_kerberos_delegation_abuse
+      patterns:
+        - '(?i)msDS-AllowedToActOnBehalfOfOtherIdentity'
+        - '(?i)s4u2(self|proxy)'
+        - '(?i)unconstrained\s+delegation'
+        - '(?i)resource[\s_-]*based\s+constrained\s+delegation|\bRBCD\b'
+    severity: critical
+    mitigations:
+      - "Eliminate unconstrained delegation everywhere except domain controllers; add privileged users to Protected Users"
+      - "Alert on any write to msDS-AllowedToActOnBehalfOfOtherIdentity and review all existing RBCD configurations"
+      - "Audit S4U traffic (4769) for impersonation of users outside their normal service patterns"
+      - "Lower MachineAccountQuota from the default and alert on computer-account creations from non-admin users"
+    examples:
+      - summary: "SpecterOps' 'Wagging the Dog' case study demonstrated the full RBCD chain defenders now watch for: abusing default MachineAccountQuota to create a computer account, writing its SID into the target's msDS-AllowedToActOnBehalfOfOtherIdentity attribute, then using S4U to impersonate any domain user to that computer — escalating to DCSync when the target is a domain controller."
+        reference: "https://specterops.io/blog/2019/02/28/a-case-study-in-wagging-the-dog-computer-takeover/"
+    references:
+      - "https://specterops.io/blog/2019/02/28/a-case-study-in-wagging-the-dog-computer-takeover/"
+      - "https://shenaniganslabs.io/2019/01/28/Wagging-the-Dog.html"
+      - "https://bloodhound.specterops.io/resources/edges/coerce-to-tgt"
+
+  - id: AEG-T336
+    name: "Remote Scheduled-Task and DCOM Lateral Execution"
+    category: lateral_movement
+    description: >-
+      Scheduled tasks and DCOM are the quieter remote-execution channels:
+      no service install, no named pipe, just a task registered on the
+      target that runs the payload as SYSTEM on a timer — or a DCOM object
+      activated remotely to launch a process. Attackers favor them because
+      they blend into legitimate administrative automation and because the
+      artifacts (4698 task creation, DCOM 10028) are rarely baselined.
+      Defenders who correlate remote task creation with the network logon
+      that delivered it turn an invisible hop into a high-confidence alert.
+    how_it_works: >-
+      The remote-task chain: a type-3 network logon (4624) to the target,
+      then a scheduled-task registration — Security Event 4698 (created),
+      4702 (updated), 4699 (deleted), mirrored in the Task Scheduler
+      Operational log as 106/140/141, with 200/201 marking execution and
+      completion. Expel's lateral-movement tracking guide uses exactly this
+      cluster to confirm schtasks-based movement, including the remote
+      variants of schtasks.exe and the legacy at.exe. The tell is context:
+      tasks created by a remote logon session, tasks whose actions point
+      at cmd.exe/PowerShell/one-liners in user-writable paths, and
+      create-then-execute-then-delete lifecycles (4698 followed quickly by
+      4699) that legitimate automation rarely shows. DCOM movement:
+      remote activation of COM objects (notably MMC20.Application and
+      ShellWindows/ShellBrowserWindow classes) generating DCOM 10028
+      events with the payload launching as a child of svchost/dllhost —
+      a parent-child anomaly worth a dedicated rule. Both channels are
+      covered by Sigma and Elastic prebuilt rules, so the fastest win is
+      enabling the existing rule packs and tuning them to the environment's
+      automation baseline.
+    variants:
+      - "Remote schtasks/at task creation with system-level execution and quick deletion"
+      - "Task Scheduler operational log sequence: 106 create, 200 execute, 141 delete"
+      - "DCOM lateral activation via MMC and shell COM objects (10028 events)"
+      - "GPO-deployed scheduled tasks as a domain-wide execution channel"
+    indicators:
+      - "Event 4698/4702 task creation correlated with a preceding 4624 Logon Type 3 from another host"
+      - "Task Scheduler Operational 106/200/141 sequences for tasks running cmd.exe, PowerShell, or binaries in user-writable paths"
+      - "Create-execute-delete lifecycles (4698 then 4699 within minutes) that legitimate automation rarely shows"
+      - "DCOM 10028 remote-activation events with payload processes parented to svchost/dllhost"
+    detection:
+      rule: detect_remote_scheduled_task_dcom
+      patterns:
+        - '(?i)4698.*scheduled\s+task.*creat'
+        - '(?i)(schtasks|\\bat\\b).*remote.*creat'
+        - '(?i)dcom.*(10028|lateral)'
+        - '(?i)task\s+scheduler.*operational.*106'
+    severity: high
+    mitigations:
+      - "Forward the Task Scheduler Operational log centrally; without 106/200/141 the 4698 events lack execution context"
+      - "Baseline legitimate task-creation sources and alert on tasks created by remote logon sessions"
+      - "Restrict who can create tasks on servers and disable the legacy at.exe service where unused"
+      - "Harden DCOM: restrict remote activation permissions and alert on 10028 from non-management hosts"
+    examples:
+      - summary: "Expel's lateral-movement tracking guide (Part I) documents the remote scheduled-task detection cluster defenders should standardize on: 4624 Type 3 for the delivery logon, 4698/4702/4699 for task lifecycle, and Task Scheduler Operational 106/140/141/200/201 for creation through execution — the same sequence that distinguishes an attacker's one-shot task from legitimate automation."
+        reference: "https://expel.com/blog/mdr-insights-tracking-lateral-movement-of-bad-actors-in-a-windows-environment-part-i/"
+    references:
+      - "https://expel.com/blog/mdr-insights-tracking-lateral-movement-of-bad-actors-in-a-windows-environment-part-i/"
+      - "https://zenodo.org/records/16989808/files/Detecting%20Suspicious%20Scheduled%20Tasks%20(Use%20Cases%20+%20Logs).pdf"
+
+doctrine_notes:
+  - title: "Attackers do not break in; they log in"
+    body: "Once inside, the intruder's first choice is never the clever exploit — it is the stolen credential, the reused session, the misconfigured delegation. Every lateral hop in this pack succeeds because something legitimate was reused illegitimately. Defend accordingly: the highest-value investment is not another exploit signature but authentication telemetry (logon types, ticket pairing, session ownership) read with the assumption that the credential in the log may not belong to the human it names."
+  - title: "The network is flat until you prove otherwise"
+    body: "Attackers assume every segmentation boundary has an unmodeled path — a dual-homed host, a management interface, an IPv6 route, a jump host — and they are usually right. Defenders must stop trusting the firewall diagram and continuously measure actual inter-zone flows against intended policy. A segmentation rule that is not verified in flow data is a hope, not a control."
+  - title: "Think in graphs, because the attacker does"
+    body: "An intruder with a foothold does not see hosts; they see a graph of privilege edges and they walk the shortest path to the crown jewels. If you have never computed your own shortest paths to Domain Admin, the attacker is doing your reconnaissance for you. Run the graph analysis yourself, find the choke points, and cut them — one well-chosen edge removal defeats more attacks than a hundred endpoint alerts."
+  - title: "Living off the land means the noise is the signal"
+    body: "PsExec, WMI, WinRM, scheduled tasks, SSH, RDP — every lateral-movement channel in this pack is a legitimate admin tool. There is no malware signature to catch. Detection therefore cannot be about the tool; it must be about the relationship: who used it, from where, to where, and whether that triplet has ever existed before. Baseline the legitimate admin graph, and every attacker stands out as a first-seen edge."
+  - title: "Patience is the attacker's best evasion"
+    body: "The loud intruder gets caught at the recon stage; the dangerous one enumerates slowly, reuses one credential at a time, and pivots through a single proxy for weeks. Defenses tuned only for bursts and volume will miss the campaign that matters. Correlate across time — credential access today, the lateral hop next week — and treat low-and-slow first-seen edges with the same seriousness as a noisy scan."
+
+canonical_probes:
+  - "Event 4624 Logon Type 3 with NTLM from WORKSTATION-12 to 40 hosts in 5 minutes — suspected pass-the-hash lateral movement"
+  - "tscon.exe running with SYSTEM privileges — potential RDP session hijacking in progress"
+  - "New service installed (EventID 7045) with ImagePath cmd.exe from remote host — possible PsExec lateral execution"
+  - "Kerberos ticket lifetime anomaly: golden ticket suspected, lifetime 10 years vs 10 hour policy"
+  - "SharpHound collection indicators: LDAP query spike and event 4662 burst from single account"

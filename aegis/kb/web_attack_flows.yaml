@@ -1,0 +1,706 @@
+pack: web_attack_flows
+version: "1.0"
+techniques:
+  - id: AEG-T265
+    name: "Password Reset Poisoning and Token Leakage Chains"
+    category: web_attack_flows
+    description: >-
+      Password reset flows mint single-use secret tokens that are emailed to
+      users, and the entire security of the flow rests on that token reaching
+      only the legitimate account holder. Reset poisoning breaks that
+      assumption: when the application builds the reset URL from an
+      attacker-controlled Host header or X-Forwarded-Host value, the genuine
+      reset email carries a link pointing at the attacker's server, so the
+      victim's click delivers their live token straight to the attacker, who
+      then sets a new password and takes the account. Sibling leakage paths
+      include tokens exposed in Referer headers, server logs, and dangling-
+      markup HTML injection inside reset emails.
+    how_it_works: >-
+      The attacker submits a password-reset request for the victim's account
+      while overriding the Host header (or X-Forwarded-Host, which some stacks
+      trust when behind a proxy) to point at an attacker-controlled domain.
+      The application composes the reset link from that header and sends it in
+      a legitimate email from the real site. When the victim clicks, the token
+      lands in the attacker's access logs. The attacker then opens the real
+      site's reset page with the stolen token and chooses a new password.
+      Defenders detect this by comparing the Host header on reset endpoints
+      against the canonical domain, watching for reset tokens appearing in
+      cross-domain Referer logs, and flagging password changes that follow a
+      token redemption from an unexpected client.
+    variants:
+      - "Host-header poisoning: reset URL built from an attacker-supplied Host value"
+      - "X-Forwarded-Host override: proxy-trusted header abused behind load balancers"
+      - "Reset-token Referer leakage: token-bearing URLs leaking to third-party analytics"
+      - "Dangling-markup injection: HTML injected into reset emails to exfiltrate the token"
+      - "Server-side parameter pollution in reset flows leaking internal reset tokens"
+    indicators:
+      - "Password-reset requests whose Host header differs from the application's canonical domain"
+      - "X-Forwarded-Host, X-Host, or Forwarded headers present on authentication or reset endpoints"
+      - "Password changes that immediately follow token redemption from a new device or geography"
+      - "Reset-token values appearing in external access logs, Referer headers, or error reports"
+    detection:
+      rule: detect_reset_poisoning_chains
+      patterns:
+        - '(?i)x-forwarded-host[\s\w-]*(?:forgot|reset|password)'
+        - '(?i)reset\s+token[\s\w-]*(?:leak|exfiltrat|external|referer)'
+        - '(?i)host\s+header[\s\w-]*poison'
+    severity: critical
+    mitigations:
+      - "Never build reset or verification URLs from the request Host header; use a configured canonical base URL"
+      - "Ignore or strip X-Forwarded-Host on authentication endpoints; validate Host against an allowlist at the edge"
+      - "Make reset tokens single-use, short-lived, bound to the account, and invalidate all sessions on use"
+      - "Log token issuance and redemption with client metadata; alert on tokens redeemed from unexpected clients"
+    examples:
+      - summary: "A public bug-bounty writeup documents a /forgot-password endpoint that built an internal API call from the client-supplied username without re-encoding; injecting URL-encoded parameter separators exposed a hidden field parameter, and requesting the reset token field returned the administrator account's live password-reset token, which was used to set a new admin password and take over the account."
+        reference: "https://github.com/MalikHettige/Bug-bounty-writeups/blob/main/API-testing/labs/lab%20-%20Exploiting%20Server-Side%20Parameter%20Pollution%20in%20a%20Query%20String.md"
+    references:
+      - "https://portswigger.net/web-security/host-header/exploiting/password-reset-poisoning"
+      - "https://portswigger.net/web-security/host-header/exploiting/password-reset-poisoning/lab-host-header-basic-password-reset-poisoning"
+
+  - id: AEG-T266
+    name: "OAuth and OIDC Redirect Flow Abuse"
+    category: web_attack_flows
+    description: >-
+      OAuth 2.0 and OpenID Connect delegate login to an authorization server
+      that returns authorization codes or tokens to a client-registered
+      redirect URI. Every implementation choice in that handoff is an attack
+      surface: loose redirect_uri validation lets an attacker steer the
+      authorization code to their own endpoint, missing state parameters allow
+      login CSRF and forced account linking, and the legacy implicit flow
+      exposes tokens directly in URL fragments where Referer headers and
+      browser history leak them. The code-for-token exchange step is the real
+      exploit primitive — the redirect is only the delivery mechanism.
+    how_it_works: >-
+      The attacker crafts an authorization request whose redirect_uri passes
+      weak server-side validation — via path traversal, query-string suffix,
+      subdomain tricks, or an open redirect on the client domain — and lures
+      the victim into authorizing. The authorization server then delivers the
+      victim's authorization code to the attacker-controlled destination. If
+      PKCE is absent and the token endpoint does not re-validate
+      redirect_uri, the attacker exchanges the code for tokens and session
+      access. Forced-linking variants abuse missing state to bind the
+      attacker's OAuth identity to the victim's account. Defenders watch for
+      redirect_uri values deviating from exact registered matches and for
+      authorization codes redeemed by unexpected clients.
+    variants:
+      - "redirect_uri validation bypass via path traversal, query suffix, or subdomain tricks"
+      - "Authorization-code interception through open redirects on the client domain"
+      - "Implicit-flow token leakage via URL fragments, Referer headers, and history"
+      - "Missing state enabling login CSRF and forced OAuth account linking"
+      - "Mix-up attacks confusing multiple authorization servers"
+    indicators:
+      - "Authorization requests with redirect_uri values that deviate from exactly registered URIs"
+      - "Authorization codes exchanged by a different client or IP than the one that requested them"
+      - "OAuth callback endpoints receiving requests with missing or replayed state parameters"
+      - "Tokens or codes appearing in Referer headers sent to third-party domains"
+    detection:
+      rule: detect_oauth_redirect_abuse
+      patterns:
+        - '(?i)redirect_uri[\s\w-]*(?:bypass|mismatch|attacker|intercept)'
+        - '(?i)authorization\s+code[\s\w-]*(?:intercept|leak|exfiltrat)'
+        - '(?i)oauth[\s\w-]*(?:implicit|state)[\s\w-]*(?:missing|bypass|token)'
+    severity: critical
+    mitigations:
+      - "Enforce exact-match redirect_uri validation against pre-registered values; no wildcards, no partial matches"
+      - "Require PKCE on all authorization-code flows and re-validate redirect_uri at the token endpoint"
+      - "Use cryptographically random state parameters bound to the user agent; accept each authorization response once"
+      - "Retire the implicit flow; never place tokens in URL fragments"
+    examples:
+      - summary: "Prakhar Prasad's HackerOne report against Slack (hackerone.com/reports/2575) showed the OAuth server only prefix-matched redirect_uri values, so a registered URL could be extended onto an attacker-controlled host; victims authorizing the app had their OAuth tokens delivered to the attacker, a canonical redirect_uri validation failure."
+        reference: "https://hackmag.com/security/bugtrap-oauth"
+    references:
+      - "https://cheatsheetseries.owasp.org/cheatsheets/OAuth2_Cheat_Sheet.html"
+      - "https://dev.to/rxkov/oauth-20-redirecturi-bypass-the-5-condition-matrix-that-determines-exploitability-45mk"
+
+  - id: AEG-T267
+    name: "SAML Assertion Forgery and Signature Wrapping"
+    category: web_attack_flows
+    description: >-
+      SAML single sign-on lets an identity provider assert a user's identity
+      to a service provider in signed XML, and the security of the entire
+      federation rests on the service provider verifying that signature
+      against exactly the data it then trusts. XML Signature Wrapping (XSW)
+      and canonicalization differentials break that binding: two pieces of
+      code disagree about what the document says, so the verifier checks the
+      signature over one version of the assertion while the application reads
+      the user identity from another, unsigned version. The result is
+      authentication bypass — login as any user with a self-made assertion.
+    how_it_works: >-
+      The attacker takes a legitimately signed SAML response for their own
+      low-privilege account and restructures the XML — wrapping the signed
+      assertion, injecting comments that canonicalization strips, or
+      exploiting parser differentials where the verifying parser and the
+      reading parser interpret the same bytes differently. The service
+      provider validates the signature successfully but then extracts the
+      NameID or attributes from the attacker's unsigned copy, logging them
+      in as the victim. Defenders detect this at the library level (patched
+      SAML toolkits), by rejecting assertions with duplicate or unexpected
+      structure, and by alerting on logins where the verified identity and
+      the consumed identity diverge.
+    variants:
+      - "XML Signature Wrapping: signed assertion duplicated, unsigned copy consumed"
+      - "Comment-injection canonicalization differentials (seven-character bypasses)"
+      - "Dual-parser differentials: verifier and reader parse the same bytes differently"
+      - "Assertion replay where expiry and one-time-use are not enforced"
+    indicators:
+      - "SAML responses containing duplicate Assertion or NameID elements"
+      - "XML comments inside identity fields such as NameID"
+      - "Logins where the identity-provider session user and the consumed SAML identity differ"
+      - "Unpatched SAML libraries (ruby-saml, python-saml, OmniAuth-SAML) in the dependency tree"
+    detection:
+      rule: detect_saml_signature_wrapping
+      patterns:
+        - '(?i)saml[\s\w-]*(?:signature[\s_-]*wrapping|assertion[\s_-]*forg)'
+        - '(?i)xml[\s_-]*signature[\s_-]*wrapping'
+        - '(?i)nameid[\s\w-]*(?:comment|tamper|mismatch)'
+    severity: critical
+    mitigations:
+      - "Use a single, well-tested XML parser for both signature verification and data extraction"
+      - "Reject SAML responses with unexpected structure: duplicate assertions, comments in identity fields"
+      - "Enforce assertion expiry, audience restriction, and one-time use; validate the full Conditions element"
+      - "Keep SAML libraries patched and add a second factor at the service provider where feasible"
+    examples:
+      - summary: "In 2025 GitHub Security Lab found ruby-saml using two different XML parsers (REXML and Nokogiri) on the signature-verification path; with a single valid IdP signature an attacker could forge assertions and log in as any user (CVE-2025-25291, CVE-2025-25292), and an exploitable instance was found in GitLab — the same parser-differential shape as Duo's 2018 findings."
+        reference: "https://dev.to/axrisi/how-saml-works-and-why-xml-signature-wrapping-keeps-breaking-it-p2c"
+    references:
+      - "https://dev.to/axrisi/how-saml-works-and-why-xml-signature-wrapping-keeps-breaking-it-p2c"
+      - "https://www.eweek.com/security/duo-security-discloses-saml-single-sign-on-vulnerabilities/"
+
+  - id: AEG-T268
+    name: "Multi-Factor Authentication Bypass Workflows"
+    category: web_attack_flows
+    description: >-
+      Multi-factor authentication only helps when every path into the account
+      actually enforces it. Bypass workflows target the seams: MFA fatigue
+      (push bombing) wears the victim down until one approval slips through,
+      debug parameters or response manipulation disable the second-factor
+      check server-side, legacy protocols like IMAP bypass MFA entirely, SIM
+      swapping reroutes SMS codes, and unenrolled or fallback flows let the
+      attacker choose the weakest factor. This technique deepens AEG-T143's
+      brief MFA mention into the full family of workflow-level bypasses.
+    how_it_works: >-
+      With stolen credentials the attacker repeatedly triggers login, each
+      attempt pushing an approval prompt to the victim's phone until fatigue
+      or a social-engineering nudge (a fake IT message) produces one tap of
+      approval. Parallel workflow flaws skip the human entirely: toggling a
+      debug flag leaks or disables the OTP check, intercepting the
+      verification response and flipping a failure to success walks past the
+      gate, and legacy mail protocols authenticate with password alone.
+      Defenders detect fatigue by counting push prompts per user per hour,
+      flag number-change or factor-downgrade events, and treat any
+      debug/test parameter on auth endpoints as a finding.
+    variants:
+      - "MFA fatigue / push bombing: approval-prompt spam until the victim taps approve"
+      - "Debug-parameter OTP bypass: flags like debug or test disabling the verification check"
+      - "Response manipulation: flipping a failed verification response to success client-side"
+      - "SIM swapping: porting the victim number to intercept SMS codes"
+      - "Legacy-protocol bypass: IMAP/POP authenticating with password only"
+    indicators:
+      - "Bursts of MFA push prompts to one user far above their normal pattern"
+      - "Debug, test, or verbose parameters present on authentication or OTP endpoints"
+      - "Factor enrollment changes, SIM changes, or fallback-to-SMS events before a login"
+      - "Logins via legacy protocols from accounts enrolled in MFA"
+    detection:
+      rule: detect_mfa_bypass_workflows
+      patterns:
+        - '(?i)mfa[\s\w-]*(?:fatigue|push[\s_-]*bomb|bypass)'
+        - '(?i)otp[\s\w-]*(?:brute|bypass|leak)'
+        - '(?i)debug[\s\w-]*(?:otp|mfa|verification)[\s\w-]*bypass'
+    severity: high
+    mitigations:
+      - "Deploy phishing-resistant MFA (FIDO2/WebAuthn); treat push-approve as the weakest acceptable factor"
+      - "Rate-limit push prompts per user, add progressive delays, and alert on prompt bursts"
+      - "Strip debug and test parameters in production; never let client input alter verification logic"
+      - "Block legacy authentication protocols and alert on factor changes preceding logins"
+    examples:
+      - summary: "In September 2022 an attacker used a contractor's stolen Uber credentials to bombard them with MFA push prompts; after repeated approvals were denied, a WhatsApp message impersonating Uber IT convinced the contractor to approve one, giving the attacker VPN access that pivoted into Slack, G Suite, and Uber's HackerOne dashboard. Uber linked the activity to Lapsus$."
+        reference: "https://nhimg.org/uber-breach"
+    references:
+      - "https://abnormal.ai/glossary/mfa-bypass"
+      - "https://undercodetesting.com/exploiting-debug-parameters-the-hidden-risk-in-mfa-bypass/"
+
+  - id: AEG-T269
+    name: "Client-Side Parameter Pollution and Method Override Abuse"
+    category: web_attack_flows
+    description: >-
+      HTTP parameter pollution exploits the fact that no universal rule says
+      what a server must do when the same parameter arrives twice: some
+      frameworks take the first value, some the last, some concatenate.
+      Attackers split a malicious value across duplicate parameters so each
+      half passes a filter that only inspects one occurrence, or inject
+      attacker-chosen values into positional argument lists. HTTP method
+      override headers (X-HTTP-Method-Override) and _method fields let a POST
+      smuggle PUT or DELETE semantics past access controls that only guard
+      specific verbs, turning a blocked action into an allowed one.
+    how_it_works: >-
+      The attacker submits duplicate query or body parameters where the
+      application's framework resolves the ambiguity differently than the
+      WAF or validation layer expects — the filter sees the benign first
+      occurrence while the application acts on the malicious last one, or
+      vice versa. Client-side variants inject parameters into links the
+      application later reflects, altering its behavior for the victim.
+      Method override abuse sends a permitted verb with a header or field
+      claiming a restricted one, bypassing verb-scoped authorization.
+      Defenders detect duplicate-parameter traffic on sensitive endpoints,
+      override headers reaching the application, and authorization decisions
+      that differ by verb for the same resource.
+    variants:
+      - "Duplicate-parameter splitting: filter sees one occurrence, app acts on another"
+      - "Positional argument injection via extra parameters (transfer from-account swap)"
+      - "Client-side HPP: polluted links reflected into application behavior"
+      - "Method override: X-HTTP-Method-Override or _method smuggling restricted verbs"
+    indicators:
+      - "Requests carrying the same parameter name twice or more on sensitive endpoints"
+      - "X-HTTP-Method-Override headers or _method fields in traffic"
+      - "Authorization behaving differently per verb for the same resource path"
+      - "Validation passing on requests whose resolved parameter values differ from inspected ones"
+    detection:
+      rule: detect_parameter_pollution_override
+      patterns:
+        - '(?i)parameter\s+pollution'
+        - '(?i)x-http-method-override|_method\s*=\s*(put|delete|patch)'
+        - '(?i)duplicate\s+parameter[\s\w-]*(?:first|last)[\s_-]*wins'
+    severity: medium
+    mitigations:
+      - "Reject or explicitly handle duplicate parameters; define and document first-wins or last-wins per framework"
+      - "Validate the resolved parameter value after framework parsing, not the raw input"
+      - "Disable method-override handling or restrict it to explicitly allowlisted routes"
+      - "Apply authorization per resource and action, independent of the HTTP verb used"
+    examples:
+      - summary: "The classic Web Hacking 101 parameter-pollution case shows a bank transfer built from positional parameters: injecting an attacker-controlled from parameter shifted the array so the transfer debited the attacker's chosen account instead of the victim's, demonstrating how duplicate parameters corrupt server-side logic."
+        reference: "https://leanpub.com/read/web-hacking-101/leanpub-auto-http-parameter-pollution"
+    references:
+      - "https://portswigger.net/web-security/api-testing/server-side-parameter-pollution"
+      - "https://leanpub.com/read/web-hacking-101/leanpub-auto-http-parameter-pollution"
+
+  - id: AEG-T270
+    name: "Checkout Price Trust and Cart Logic Abuse"
+    category: web_attack_flows
+    description: >-
+      E-commerce checkouts repeatedly fail the same way: the browser is
+      allowed to state the price. Hidden form fields, client-side totals,
+      currency selectors, and quantity inputs arrive at the server as
+      suggestions, but too many implementations treat them as facts — charging
+      the client-supplied total, honoring negative quantities, stacking
+      promotions the business never intended to combine, or letting the
+      payment step reference a different cart than the one priced. This is
+      the web-checkout sibling of AEG-T231's API-scope business-logic
+      technique, focused on the storefront flows where money changes hands.
+    how_it_works: >-
+      The attacker intercepts the checkout sequence and edits what the client
+      sends: the hidden price field, the line-item total, the currency code,
+      or the quantity. Where the server re-uses those values without
+      re-deriving them from its own catalog, the order is created at the
+      tampered price. Promo stacking abuses combinable discount codes; cart
+      swapping prices one basket and pays for another; currency switching
+      exploits exchange-rate handling. Defenders detect orders whose totals
+      do not reconcile with catalog prices, extreme quantity or discount
+      values, and payment callbacks referencing carts that differ from the
+      priced session.
+    variants:
+      - "Hidden-field price tampering: client-supplied totals charged as-is"
+      - "Negative or zero quantities creating credits instead of charges"
+      - "Promo stacking: combining discounts the business never meant to combine"
+      - "Cart swapping and currency switching between pricing and payment steps"
+    indicators:
+      - "Orders whose charged totals do not reconcile with server-side catalog prices"
+      - "Quantity, discount, or currency values at extreme or negative levels"
+      - "Payment callbacks referencing a different cart or total than the priced session"
+      - "Repeated redemption of combinable promotions from single accounts"
+    detection:
+      rule: detect_checkout_price_abuse
+      patterns:
+        - '(?i)(?:price|total|amount)[\s\w-]*(?:tamper|manipulat|client[\s_-]*side)'
+        - '(?i)hidden[\s_-]*field[\s\w-]*(?:price|total|discount)'
+        - '(?i)currency[\s\w-]*(?:switch|mismatch)'
+    severity: high
+    mitigations:
+      - "Re-derive every price, tax, discount, and total server-side from the catalog at checkout time"
+      - "Treat all client-supplied monetary values as untrusted input; validate ranges and signs"
+      - "Bind the priced cart to the payment step with a server-side session or signed token"
+      - "Monitor for total/catalog mismatches and promotion-stacking anomalies as fraud signals"
+    examples:
+      - summary: "OWASP's Business Logic Abuse Top 10 documents price and quantity manipulation, promotion stacking, and related checkout-logic classes as recurring real-world flaws, noting they are found only through abuse-case testing because every request is well-formed and authorized."
+        reference: "https://securitybrief.co.uk/story/owasp-unveils-first-top-10-business-logic-abuse-threats-list"
+    references:
+      - "https://cheatsheetseries.owasp.org/cheatsheets/Business_Logic_Security_Cheat_Sheet.html"
+      - "https://securitybrief.co.uk/story/owasp-unveils-first-top-10-business-logic-abuse-threats-list"
+
+  - id: AEG-T271
+    name: "Race-Condition Money Flows (TOCTOU in Web Transactions)"
+    category: web_attack_flows
+    description: >-
+      Race conditions live in the gap between checking a condition and acting
+      on it: the server verifies that a coupon is unused, that a balance
+      covers a withdrawal, or that a rate limit has not been hit — and then a
+      second request slips through the same check before the first request's
+      update lands. Fired in tight parallel bursts, especially single-packet
+      bursts that defeat network jitter, these duplicate requests multiply a
+      one-time action: coupons redeemed dozens of times, balances overdrawn,
+      rate-limited PIN guesses exhausted without lockout. This deepens the
+      race variant AEG-T231 names into a dedicated detection discipline.
+    how_it_works: >-
+      The attacker identifies a check-then-act sequence — balance verification
+      before debit, unused-flag check before coupon redemption, attempt
+      counter before lockout — and fires many identical requests
+      simultaneously so all of them read the pre-update state. Each request
+      passes the check independently; the updates then land sequentially,
+      each believing it was the only one. Defenders detect this in telemetry
+      as clusters of near-identical state-changing requests from one
+      principal within milliseconds, business-metric anomalies (redemption
+      counts exceeding issuance), and missing idempotency keys on one-time
+      actions.
+    variants:
+      - "Coupon and voucher double-redemption through parallel requests"
+      - "Balance overdraw: parallel withdrawals each reading the pre-debit balance"
+      - "Rate-limit racing: single-packet bursts exhausting guess budgets before counters update"
+      - "Inventory oversell: concurrent purchases each passing the stock check"
+    indicators:
+      - "Clusters of near-identical state-changing requests from one principal within milliseconds"
+      - "Redemption or refund counts exceeding the number legitimately issued"
+      - "Missing idempotency keys on endpoints that must execute exactly once"
+      - "Balance or inventory ledgers showing impossible transitions under load"
+    detection:
+      rule: detect_race_condition_money_flows
+      patterns:
+        - '(?i)race\s+condition[\s\w-]*(?:coupon|balance|refund|redeem|withdraw)'
+        - '(?i)concurrent[\s\w-]*request[\s\w-]*(?:burst|flood|parallel)'
+        - '(?i)time[\s_-]*of[\s_-]*check[\s\w-]*time[\s_-]*of[\s_-]*use|toctou'
+    severity: high
+    mitigations:
+      - "Make check-and-act atomic: single conditional statements, row locks, or serializable transactions"
+      - "Require idempotency keys on every one-time action and reject duplicates"
+      - "Enforce limits in the database (unique constraints, check constraints), not just application code"
+      - "Load-test sensitive endpoints with parallel bursts and monitor business metrics for impossible states"
+    examples:
+      - summary: "RedFox Security's chaining research documents a single-packet race attack using Turbo Intruder: many PIN guesses fired in one burst slipped past a five-attempt rate-limit lockout, letting the attacker guess a password-reset token and complete an account takeover the sequential limit was meant to stop."
+        reference: "https://www.redfoxsec.com/blog/how-attackers-chain-idor-race-conditions-and-business-logic-flaws"
+    references:
+      - "https://securelayer7.net/learn-pdf/application-security/race-conditions.pdf"
+      - "https://www.apisec.ai/blog/race-condition-vulnerabilities-in-apis"
+
+  - id: AEG-T272
+    name: "Low-Severity Bug Chaining to Account Takeover"
+    category: web_attack_flows
+    description: >-
+      Real account takeovers rarely come from a single critical bug. The
+      attacker's craft is composition: an IDOR that leaks another user's
+      email plus a password-reset flow that trusts the Host header, or a
+      verbose error that discloses a reset token combined with a race
+      condition that defeats the attempt limit. Each finding alone rates
+      low or medium and dies in triage; chained, they walk past every
+      control. This technique is the workflow deepening of AEG-T144 (IDOR)
+      and AEG-T225 (mass assignment): not the bug classes, but the chains
+      defenders must learn to see.
+    how_it_works: >-
+      The attacker maps the application's data flows and collects small
+      primitives: an endpoint that returns another user's record, a profile
+      field that reflects unsanitized input, a reset flow with a weak link.
+      They then sequence them so each step's output feeds the next step's
+      input — harvesting the victim's identifier via IDOR, triggering a reset
+      whose token leaks through a second flaw, racing the verification to
+      beat lockout. Defenders counter by correlating findings across an
+      assessment instead of scoring them in isolation, threat-modeling
+      complete account-takeover paths, and fixing the chain at its cheapest
+      link.
+    variants:
+      - "IDOR harvest plus reset-flow abuse: identifier leak feeding token theft"
+      - "Mass assignment plus IDOR: self-promotion then cross-account data access"
+      - "Information disclosure plus brute-force racing: leaked hints feeding guess attacks"
+      - "Verbose-error token leak plus session handling gaps"
+    indicators:
+      - "One session exercising multiple distinct low-severity flaws in a single workflow"
+      - "Assessment findings that are individually minor but jointly reach authentication state"
+      - "Password resets or privilege changes preceded by cross-account reads"
+      - "Attack-path graphs showing short routes from unauthenticated to account control"
+    detection:
+      rule: detect_bug_chaining_takeover
+      patterns:
+        - '(?i)(?:idor|mass[\s_-]*assignment)[\s\w-]*(?:chain|combin)'
+        - '(?i)low[\s_-]*severity[\s\w-]*chain'
+        - '(?i)account\s+takeover[\s\w-]*chain'
+    severity: critical
+    mitigations:
+      - "Score assessment findings by reachable impact, not isolated severity; model full account-takeover paths"
+      - "Fix the cheapest link in every chain: ownership checks, token hygiene, and lockout correctness"
+      - "Correlate alerts across authentication, authorization, and business-logic telemetry"
+      - "Run chained attack-path testing in every assessment, not just single-finding verification"
+    examples:
+      - summary: "RedFox Security's 2026 research walks through a complete chain: IDOR-class data access combined with race conditions and business-logic flaws, sequenced so each low-severity primitive feeds the next, ending in account takeover — the pattern defenders miss when findings are triaged in isolation."
+        reference: "https://www.redfoxsec.com/blog/how-attackers-chain-idor-race-conditions-and-business-logic-flaws"
+    references:
+      - "https://www.redfoxsec.com/blog/how-attackers-chain-idor-race-conditions-and-business-logic-flaws"
+      - "https://portswigger.net/web-security/api-testing/server-side-parameter-pollution"
+
+  - id: AEG-T273
+    name: "WAF-Evasion Pattern Families at Detection Level"
+    category: web_attack_flows
+    description: >-
+      A web application firewall only sees what its parser decodes, and
+      attackers specialize in the gap between the WAF's decoding and the
+      application's. The evasion families are stable: double URL encoding
+      (%2527 decoding to %27 at one layer and ' at the next), Unicode and
+      overlong UTF-8 representations, SQL and HTML comment interleaving that
+      breaks signature matching, case variation, null-byte truncation, and
+      payload splitting across parameters or chunked bodies. For defenders,
+      evasion attempts are signal: the probing sequence that maps a filter
+      precedes the real exploit, and each family has a recognizable shape in
+      logs.
+    how_it_works: >-
+      The attacker first sends a canary request that the WAF blocks, then
+      iterates encodings until the same logical input passes: double-encoded
+      metacharacters where the WAF decodes once and the app twice, comments
+      inserted inside keywords (UN/**/ION) that the database ignores but the
+      signature misses, or XML hex entities that only the backend XML parser
+      resolves. Chunked transfer encoding splits the payload so no single
+      inspection window contains the full signature. Defenders detect the
+      family shapes — %25 sequences, %uXXXX, comment tokens inside
+      parameters, sudden encoding shifts from one client — and treat a
+      block-followed-by-encoded-retry sequence as an active attack in
+      progress.
+    variants:
+      - "Double and multiple encoding: %25 sequences decoded unevenly across layers"
+      - "Unicode and overlong UTF-8 representations of blocked characters"
+      - "Comment interleaving: SQL, HTML, or XML comments breaking keyword signatures"
+      - "Case variation and null-byte truncation against naive filters"
+      - "Payload splitting across parameters, headers, or chunked transfer encoding"
+    indicators:
+      - "Parameters containing %25 (double-encoded) or %uXXXX (Unicode-encoded) sequences"
+      - "Comment tokens (/**/, <!-- -->, hex entities) inside request parameters"
+      - "A blocked request followed by encoded retries of the same logical input from one client"
+      - "Sudden encoding shifts or mixed encodings within a single session"
+    detection:
+      rule: detect_waf_evasion_families
+      patterns:
+        - '(?i)%25(?:27|22|3c|3e|3b)'
+        - '(?i)(?:doubl|multiple)[\s_-]*encod'
+        - '(?i)%u[0-9a-f]{4}'
+        - '(?i)/\*\*/|/\*!'
+    severity: medium
+    mitigations:
+      - "Normalize and canonicalize input once, at a single layer, before any security inspection"
+      - "Layer defenses: WAF as one control among parameterized queries, output encoding, and allowlists"
+      - "Alert on evasion-shaped traffic (encoded retries after blocks) as attack-in-progress, not noise"
+      - "Test WAF rules against evasion families in CI; assume any single-decode inspection can be bypassed"
+    examples:
+      - summary: "A 2026 PortSwigger lab writeup shows the full evasion workflow: a UNION-based SQL injection blocked by a WAF responding 'Attack detected' was re-sent with the payload wrapped in XML hex entities, which the WAF did not decode but the backend XML parser did — bypassing the filter and extracting administrator credentials."
+        reference: "https://medium.com/@razajavaid2004/portswigger-lab-sql-injection-with-filter-bypass-via-xml-encoding-817934e3ad8c"
+    references:
+      - "https://undercodetesting.com/beyond-the-firewall-the-art-of-crafting-waf-bypass-payloads-with-double-encoding-and-size-based-evasion-video/"
+      - "https://www.examcollection.com/blog/web-application-firewall-evasion-methods/"
+
+  - id: AEG-T274
+    name: "HTTP Request Smuggling Workflows"
+    category: web_attack_flows
+    description: >-
+      Modern web traffic passes through chains of systems — CDN, load
+      balancer, reverse proxy, application server — and each link must agree
+      on exactly where one HTTP request ends and the next begins. Request
+      smuggling exploits disagreement: when the front end honors
+      Content-Length while the back end honors Transfer-Encoding (CL.TE), or
+      vice versa (TE.CL), the attacker's extra bytes are left in the
+      connection queue and interpreted as the start of the next victim's
+      request. That desync enables response-queue poisoning, session hijack,
+      cache poisoning, and access-control bypass, all invisible to
+      application-layer logging.
+    how_it_works: >-
+      The attacker sends a request carrying both Content-Length and
+      Transfer-Encoding headers with conflicting lengths, or ambiguous
+      variants (obfuscated TE headers, duplicate CL headers, HTTP/2
+      downgrade quirks). The front end forwards what it considers one
+      request; the back end parses two, leaving the smuggled prefix queued.
+      The next legitimate request arriving on the reused connection is
+      glued to that prefix, so the attacker's crafted request executes in
+      the victim's context — or the victim's response is poisoned and served
+      to the attacker. Defenders detect ambiguous framing headers, desync
+      timing anomalies, and responses delivered to the wrong client session.
+    variants:
+      - "CL.TE: front end uses Content-Length, back end uses Transfer-Encoding"
+      - "TE.CL: front end uses Transfer-Encoding, back end uses Content-Length"
+      - "TE.TE: obfuscated Transfer-Encoding headers parsed differently per hop"
+      - "HTTP/2 downgrade and header-smuggling desync variants"
+    indicators:
+      - "Requests carrying both Content-Length and Transfer-Encoding headers"
+      - "Obfuscated, duplicated, or conflicting framing headers in edge logs"
+      - "Responses delivered to mismatched client sessions or queue-poisoning timing anomalies"
+      - "HTTP/1.1 retained on upstream hops behind an HTTP/2 edge"
+    detection:
+      rule: detect_request_smuggling
+      patterns:
+        - '(?i)\b(?:cl\.te|te\.cl|te\.te|h2\.cl)\b'
+        - '(?i)request\s+smuggl|http\s+desync'
+        - '(?i)transfer-encoding[\s\w-]*content-length[\s\w-]*mismatch|ambiguous[\s\w-]*content-length'
+    severity: critical
+    mitigations:
+      - "Terminate HTTP/2 end to end; eliminate HTTP/1.1 on upstream hops where possible"
+      - "Reject requests with ambiguous framing: both CL and TE present, duplicate CL, obfuscated TE"
+      - "Normalize requests at the edge and use distinct back-end connections per security context"
+      - "Scan regularly with desync detection tooling and monitor for framing-header anomalies"
+    examples:
+      - summary: "At Black Hat USA 2026 PortSwigger's James Kettle presented HTTP Terminator, an AI-assisted pipeline that generated and proved tens of thousands of novel desync vectors, compromising around 700 live targets including banks and government infrastructure — demonstrating that request smuggling is evolving, not dying."
+        reference: "https://www.darkreading.com/application-security/http-terminator-hunts-novel-desync-attacks"
+    references:
+      - "https://www.yeswehack.com/learn-bug-bounty/http-request-smuggling-guide-vulnerabilities"
+      - "https://www.darkreading.com/application-security/http-terminator-hunts-novel-desync-attacks"
+
+  - id: AEG-T275
+    name: "Prototype Pollution to RCE Pathways"
+    category: web_attack_flows
+    description: >-
+      JavaScript objects inherit from a shared prototype, and many merge,
+      clone, or extend utilities copy attacker-controlled keys like
+      __proto__, constructor, and prototype straight onto it — changing
+      behavior for every object in the process. On its own that is a logic
+      bug; the pathway to remote code execution opens when the polluted
+      properties are ones the runtime or libraries actually read: Node.js
+      child-process options, template-engine settings, or ORM configuration.
+      The attacker pollutes first, then triggers an ordinary feature that
+      reads the poisoned property and executes.
+    how_it_works: >-
+      The attacker submits JSON containing __proto__ or
+      constructor/prototype keys to an endpoint that recursively merges
+      input into configuration objects. The merge writes the attacker's
+      properties onto Object.prototype, so every subsequently created object
+      inherits them. The attacker then invokes a normal feature — a
+      maintenance job that spawns a child process, a report generator, a
+      template render — whose code reads the polluted property (for example
+      process-spawn arguments) and acts on it. Defenders detect __proto__
+      and constructor keys in inbound JSON, unexpected inherited properties
+      in application objects, and child processes spawned with unusual
+      arguments after web requests.
+    variants:
+      - "Privilege escalation: polluting isAdmin-style flags inherited by authorization checks"
+      - "RCE via process-spawn options: polluting execArgv or shell options read by child_process"
+      - "Configuration hijacking: polluting template or ORM settings to alter behavior"
+      - "Client-side pollution feeding DOM XSS through polluted library defaults"
+    indicators:
+      - "__proto__, constructor, or prototype keys appearing in inbound JSON bodies"
+      - "Application objects carrying inherited properties no code path legitimately sets"
+      - "Child processes spawned with unexpected arguments following web requests"
+      - "Recursive merge, extend, or defaults utilities operating on untrusted input in code review"
+    detection:
+      rule: detect_prototype_pollution_rce
+      patterns:
+        - '(?i)__proto__'
+        - '(?i)prototype\s+pollution'
+        - '(?i)constructor\s*\{\s*"prototype"'
+    severity: critical
+    mitigations:
+      - "Block __proto__, constructor, and prototype keys during merge; use Map or Object.create(null)"
+      - "Validate JSON schemas strictly and reject unexpected keys on merge endpoints"
+      - "Never let polluted configuration reach process-spawn, template, or ORM options without allowlisting"
+      - "Alert on pollution-key patterns in request bodies as high-severity events"
+    examples:
+      - summary: "PortSwigger's Web Security Academy lab for server-side prototype pollution demonstrates the complete pathway: polluting the prototype with process-spawn arguments, then triggering the application's maintenance-job feature, causes the spawned Node.js child process to execute attacker-influenced arguments — prototype pollution escalated to remote code execution."
+        reference: "https://portswigger.net/web-security/prototype-pollution/server-side/lab-remote-code-execution-via-server-side-prototype-pollution"
+    references:
+      - "https://portswigger.net/web-security/prototype-pollution/server-side/lab-remote-code-execution-via-server-side-prototype-pollution"
+      - "https://portswigger.net/burp/documentation/scanner/bchecks/worked-examples/server-side-prototype-pollution"
+
+  - id: AEG-T276
+    name: "Serialized-Object Gadget-Chain Kill Chains"
+    category: web_attack_flows
+    description: >-
+      Where AEG-T142 catalogs the insecure-deserialization vulnerability
+      classes, this technique describes the kill chain attackers actually
+      run: serialized blobs are the delivery vehicle, and gadget chains —
+      sequences of legitimate library classes whose methods link together
+      into unintended behavior — are the warhead. The chain stages are
+      token forgery (weak or leaked signing keys letting the attacker craft
+      the blob), gadget assembly (chaining classes already present in the
+      application's dependencies), and trigger (the application's own
+      deserialization call executing the chain). Each stage leaves distinct
+      telemetry if defenders know where to look.
+    how_it_works: >-
+      The attacker first defeats blob integrity — a leaked HMAC secret, a
+      guessable key, or an unsigned format — then embeds a gadget chain built
+      from classes in the target's dependency tree: one class's
+      deserialization hook invokes another's method, cascading until a sink
+      executes a command, writes a file, or opens a network connection. The
+      application's own parse call fires the whole chain with no further
+      attacker interaction. Defenders detect class and type names from
+      unexpected namespaces inside blobs, deserialization exceptions
+      spiking during probing, and the telltale post-parse behavior of the
+      server spawning processes or loading unusual classes.
+    variants:
+      - "Signed-cookie forgery: leaked or weak keys letting attackers mint malicious blobs"
+      - "Library gadget chains: dependency-tree classes linked into command execution"
+      - "Type-name instantiation chains: type fields driving arbitrary class construction"
+      - "Second-order chains: malicious objects stored in caches or queues, detonated by another service"
+    indicators:
+      - "Serialized blobs containing class or type names from unexpected namespaces"
+      - "Integrity-check failures or deserialization exceptions spiking during probing windows"
+      - "Application servers spawning child processes or loading unusual classes right after parsing input"
+      - "Base64 blobs in cookies or parameters that decode to serialized-object markers"
+    detection:
+      rule: detect_gadget_chain_kill_chains
+      patterns:
+        - '(?i)gadget[\s_-]*chain'
+        - '(?i)(?:ysoserial|marshalsec|frohoff)'
+        - '(?i)deseriali[sz][\s\w-]*rce|deseriali[sz][\s\w-]*gadget'
+    severity: critical
+    mitigations:
+      - "Never deserialize untrusted data; use schema-bound formats with no type-name instantiation"
+      - "Enforce class and type allowlists at every deserialization point; deny unknown types by default"
+      - "Sign and encrypt state blobs with keys outside the application; validate before parsing"
+      - "Minimize gadget availability: trim dependencies and isolate deserializing services with least privilege"
+    examples:
+      - summary: "Security analyses of insecure deserialization consistently document the same kill chain: attacker-controlled serialized data is reconstructed by the runtime, library gadget chains link benign classes into a pipeline, and the final gadget performs command execution or file access — RCE without injecting any new code, using only classes already on the classpath."
+        reference: "https://www.ituonline.com/comptia-securityx/comptia-securityx-4/deserialization-vulnerabilities-analyzing-vulnerabilities-and-attacks/"
+    references:
+      - "https://knowledge-base.secureflag.com/vulnerabilities/unsafe_deserialization/unsafe_deserialization_vulnerability.html"
+      - "https://owasp.deteact.com/cheat/cheatsheets/Deserialization_Cheat_Sheet.html"
+
+doctrine_notes:
+  - title: "Attackers Chain; Defenders Silo"
+    body: >-
+      A web attacker almost never wins with one vulnerability. They collect
+      small primitives — an IDOR that leaks an email address, a reset flow
+      that trusts the Host header, a rate limit that a race defeats — and
+      sequence them so each step's output feeds the next step's input until
+      the account falls. Each finding alone scores low and dies in triage;
+      chained, they bypass every control. The defensive consequence: never
+      score findings only in isolation. Model complete attack paths, ask what
+      each minor flaw unlocks for the next one, and fix the cheapest link in
+      every chain, because the attacker only needs the chain to hold once.
+  - title: "The Client Is the Attacker"
+    body: >-
+      Everything arriving from the browser is attacker-controlled, including
+      the parts developers think of as their own: hidden form fields, prices,
+      quantities, currency codes, redirect URIs, Host headers, role flags,
+      and workflow step order. The web attacker's first question about any
+      feature is always 'what happens if I change this value the server
+      trusted?' The defensive discipline is total: re-derive every
+      security-relevant value server-side from authoritative data, validate
+      ranges and types on the resolved value, and treat client state as
+      input, never as truth.
+  - title: "Business Rules Are the Blind Spot"
+    body: >-
+      Scanners hunt malformed input; web attackers hunt honest input used
+      dishonestly — a coupon applied twice, a checkout step skipped, two
+      withdrawals racing one balance check. Every request in these attacks
+      is well-formed and authorized, which is why signatures never fire and
+      why this is where real money is lost. The defensive consequence is
+      organizational, not just technical: threat-model from the business
+      process, write abuse cases alongside use cases, enforce workflows as
+      server-side state machines, and monitor business metrics (redemptions,
+      refunds, price reconciliations) with the same seriousness as request
+      metrics.
+  - title: "Evasion Attempts Are Early Warning, Not Noise"
+    body: >-
+      Before the real exploit lands, the attacker maps the filter: a blocked
+      canary request, then encoded retries of the same logical input —
+      double encoding, comment interleaving, case games — until something
+      passes. Most teams log the block and ignore the retries, discarding
+      the clearest signal they will ever get that a targeted attack is in
+      progress. The defensive move is to correlate: a WAF block followed by
+      evasion-shaped retries from the same client is an active attack, and
+      it deserves an incident response while the attacker is still probing,
+      not after the payload lands.
+
+canonical_probes:
+  - "poisoned X-Forwarded-Host on /forgot-password sent the reset token to an external domain"
+  - "redirect_uri pointed at attacker.com and the authorization code was intercepted"
+  - "double-encoded %2527 probe against the login form after the WAF blocked the first attempt"
+  - "__proto__ key in the JSON body polluted the prototype, causing unexpected admin flag inheritance"
+  - "CL.TE desync between the CDN and origin left a smuggled second request in the queue"

@@ -565,3 +565,1160 @@ techniques:
     references:
       - "https://www.isc2.org/Ethics"
       - "https://www.nist.gov/publications/technical-guide-information-security-testing-and-assessment?pub_id=152164"
+  - category: hacker_mindset
+    description: 'An espionage operator''s target list is a map of future options, not present desires.
+      They compromise the unglamorous: a test tenant, a SOHO router, a water utility''s IT network. As a
+      defender, when you find an intrusion that ''makes no sense'' — nothing stolen, no ransom, no obvious
+      motive — do not downgrade it. Ask instead: what future capability does this position buy? The most
+      dangerous intrusions look the most boring.'
+    detection:
+      patterns:
+      - (?i)pre-?positioning for disrupt
+      - (?i)position,? not spectacle
+      rule: detect_apt_positioning_mindset
+    how_it_works: 'Defender application: hunt for quiet positioning, not just noisy malware — dormant access
+      paths, fresh credentials on stale accounts, firewall rules nobody remembers approving. Score telemetry
+      for preparation signals (staging, credential harvesting without exfiltration), and rehearse the disruptive
+      scenario in tabletops, not only the espionage one.'
+    id: AEG-T349
+    indicators:
+    - Response playbooks trigger only on data-theft or ransomware, with no runbook for disruptive pre-positioning.
+    - Dormant privileged accounts and stale remote-access paths go unreviewed because 'nothing was stolen'.
+    mitigations:
+    - 'Run pre-positioning hunts: dormant access paths, persistence created with no associated theft.'
+    - Maintain and yearly exercise a disruptive-scenario runbook (OT isolation, comms fallback).
+    name: APT Operators Optimize for Position, Not Spectacle
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/news-events/cybersecurity-advisories
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: hunt for quiet positioning, not just noisy malware —
+      dormant access paths, fresh credentials on stale accounts, firewall rules nobody remembers approving.'
+  - category: hacker_mindset
+    description: Espionage campaigns and pre-positioning operations often steal nothing for months or years.
+      Train yourself to hunt for access and persistence, not just exfiltration. A beaconing implant with
+      no data movement, a valid account used from a strange network, an OAuth grant that never gets exercised
+      — these are the quiet artifacts of an operator waiting. If your detection stack only fires on theft,
+      you are blind to the patient half of the threat.
+    detection:
+      patterns:
+      - (?i)absence of theft is a signal
+      - (?i)staging without (theft|exfiltration)
+      rule: detect_no_theft_signal_mindset
+    how_it_works: 'Defender application: when an intrusion shows no data theft, escalate instead of closing
+      — absence of theft is the signature of pre-positioning, wiper staging, or long-dwell espionage. Require
+      every ''no-theft'' finding to trigger a wider hunt for persistence and staging artifacts before the
+      case closes.'
+    id: AEG-T350
+    indicators:
+    - Intrusion cases close as 'no impact' as soon as DLP shows no exfiltration.
+    - 'No hunts exist for staging-without-theft: tooling dropped but never executed.'
+    mitigations:
+    - Mandate expanded hunts on every intrusion regardless of theft evidence.
+    - 'Hunt staging artifacts: dormant tooling, credential harvesting with no exfil.'
+    name: The Absence of Theft Is a Signal, Not a Relief
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/news-events/cybersecurity-advisories
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: when an intrusion shows no data theft, escalate instead
+      of closing — absence of theft is the signature of pre-positioning, wiper staging, or long-dwell espionage.'
+  - category: hacker_mindset
+    description: 'Every long campaign leaks somewhere — a reused certificate, a registration pattern, an
+      operator''s work-hours, a misconfigured redirector. APT tradecraft is built to minimize these leaks,
+      not eliminate them; perfection is impossible at campaign scale. The defender''s edge is breadth: long-retention
+      logs, infrastructure pivoting, and cross-campaign correlation. Never mirror the attacker''s narrow
+      focus. Widen the net and let their need to operate be the thing that exposes them.'
+    detection:
+      patterns:
+      - (?i)opsec asymmetry
+      - (?i)must catch them once
+      rule: detect_opsec_asymmetry_mindset
+    how_it_works: 'Defender application: design detection for the attacker''s weakest OPSEC moment — infrastructure
+      reuse, certificate overlap, working-hours patterns, tooling fingerprints. Keep 12+ months of DNS/auth/proxy
+      telemetry so one reused artifact collapses months of their OPSEC, and correlate weakly across cases
+      instead of demanding a single smoking gun.'
+    id: AEG-T351
+    indicators:
+    - Telemetry retention under 90 days makes historical correlation impossible.
+    - Detections require high-confidence single events; weak multi-signal correlation is absent.
+    mitigations:
+    - Retain DNS, auth, and proxy telemetry 12+ months for retro-hunting.
+    - 'Correlate cross-case on infrastructure reuse: certificates, domains, tooling.'
+    name: 'OPSEC Asymmetry: They Must Be Perfect Everywhere, You Must Catch Them Once'
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/news-events/cybersecurity-advisories
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: design detection for the attacker''s weakest OPSEC moment
+      — infrastructure reuse, certificate overlap, working-hours patterns, tooling fingerprints.'
+  - category: hacker_mindset
+    description: 'Code fingerprints, language strings, and infrastructure choices can be forged — Olympic
+      Destroyer proved a sophisticated actor can plant another group''s entire signature. As a defender,
+      respond to behavior, not identity: contain the mechanics you can see, and require independent, multi-source
+      corroboration before you let an attribution drive your response. An adversary who knows you overfit
+      on code similarity will hand you exactly the code similarity you expect.'
+    detection:
+      patterns:
+      - (?i)attribution artifacts? (as )?possibly planted
+      - (?i)planted attribution
+      rule: detect_planted_attribution_mindset
+    how_it_works: 'Defender application: never let one language string, keyboard layout, or timestamp drive
+      response — require independent corroboration across infrastructure, victimology, and TTP clusters.
+      Separate ''what we observed'' from ''who we think it is'' in every incident communication, and never
+      let a single plantable artifact trigger escalatory action.'
+    id: AEG-T352
+    indicators:
+    - Incident reports state attribution as fact from a single artifact.
+    - Response actions follow uncorroborated artifacts (ASN blocks, public attribution).
+    mitigations:
+    - 'Require multi-source corroboration before attributing: infra, victimology, TTPs.'
+    - Separate observed facts from attribution judgments in incident communications.
+    name: Treat Attribution Artifacts as Possibly Planted
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/news-events/cybersecurity-advisories
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: never let one language string, keyboard layout, or timestamp
+      drive response — require independent corroboration across infrastructure, victimology, and TTP clusters.'
+  - category: hacker_mindset
+    description: 'A web attacker almost never wins with one vulnerability. They collect small primitives
+      — an IDOR that leaks an email address, a reset flow that trusts the Host header, a rate limit that
+      a race defeats — and sequence them so each step''s output feeds the next step''s input until the account
+      falls. Each finding alone scores low and dies in triage; chained, they bypass every control. The defensive
+      consequence: never score findings only in isolation. Model complete attack paths, ask what each minor
+      flaw unlocks for the next one, and fix the cheapest link in every chain, because the attacker only
+      needs the chain to hold once.'
+    detection:
+      patterns:
+      - (?i)attackers chain;? defenders silo
+      - (?i)low-?severity bug chaining
+      rule: detect_chaining_mindset
+    how_it_works: 'Defender application: break the silos that attackers exploit — review findings in combination,
+      not isolation. A reflected XSS plus an open redirect plus verbose errors is not three lows, it is
+      one account-takeover chain. Require cross-finding composition review in pentest triage and bug-bounty
+      payouts.'
+    id: AEG-T353
+    indicators:
+    - Pentest findings are triaged and fixed in isolation with no composition review.
+    - Bug bounty severity ignores exploit chains across individually 'low' findings.
+    mitigations:
+    - 'Require chain-aware triage: every finding reviewed for composability with others.'
+    - Reward and prioritize demonstrated exploit chains in bounty programs.
+    name: Attackers Chain; Defenders Silo
+    references:
+    - https://attack.mitre.org/
+    - https://owasp.org/www-project-top-ten/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: break the silos that attackers exploit — review findings
+      in combination, not isolation.'
+  - category: hacker_mindset
+    description: 'Everything arriving from the browser is attacker-controlled, including the parts developers
+      think of as their own: hidden form fields, prices, quantities, currency codes, redirect URIs, Host
+      headers, role flags, and workflow step order. The web attacker''s first question about any feature
+      is always ''what happens if I change this value the server trusted?'' The defensive discipline is
+      total: re-derive every security-relevant value server-side from authoritative data, validate ranges
+      and types on the resolved value, and treat client state as input, never as truth.'
+    detection:
+      patterns:
+      - (?i)the client is the attacker
+      - (?i)never trust client-?computed
+      rule: detect_client_attacker_mindset
+    how_it_works: 'Defender application: treat every byte from the client as hostile input — validate server-side,
+      never trust client-computed prices, roles, or workflow state. Audit for trust boundaries drawn in
+      JavaScript: hidden fields, client-side checks, and frontend-only authorization are attacker-controlled.'
+    id: AEG-T354
+    indicators:
+    - Prices, roles, or discounts are computed or validated only in the browser.
+    - Authorization checks exist in frontend code with no server-side enforcement.
+    mitigations:
+    - Enforce all validation and authorization server-side; the client is untrusted.
+    - Audit for hidden-field trust and client-side-only access control.
+    name: The Client Is the Attacker
+    references:
+    - https://attack.mitre.org/
+    - https://owasp.org/www-project-top-ten/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: treat every byte from the client as hostile input — validate
+      server-side, never trust client-computed prices, roles, or workflow state.'
+  - category: hacker_mindset
+    description: 'Scanners hunt malformed input; web attackers hunt honest input used dishonestly — a coupon
+      applied twice, a checkout step skipped, two withdrawals racing one balance check. Every request in
+      these attacks is well-formed and authorized, which is why signatures never fire and why this is where
+      real money is lost. The defensive consequence is organizational, not just technical: threat-model
+      from the business process, write abuse cases alongside use cases, enforce workflows as server-side
+      state machines, and monitor business metrics (redemptions, refunds, price reconciliations) with the
+      same seriousness as request metrics.'
+    detection:
+      patterns:
+      - (?i)business rules are the blind spot
+      - (?i)business-?logic abuse
+      rule: detect_business_logic_mindset
+    how_it_works: 'Defender application: scanners find injections; only humans find logic flaws. Map every
+      business rule that moves money, access, or state, and abuse-case each one: negative quantities, race
+      conditions, state-machine skipping, coupon stacking. Put business-logic abuse cases into acceptance
+      criteria, not just security testing.'
+    id: AEG-T355
+    indicators:
+    - Security testing covers only injection classes; business logic is untested.
+    - State transitions (checkout, approval, refund) lack abuse-case review.
+    mitigations:
+    - 'Abuse-case every money/access/state rule: races, negatives, skips, stacking.'
+    - Include business-logic abuse in definition-of-done for financial workflows.
+    name: Business Rules Are the Blind Spot
+    references:
+    - https://attack.mitre.org/
+    - https://owasp.org/www-project-top-ten/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: scanners find injections; only humans find logic flaws.'
+  - category: hacker_mindset
+    description: 'Before the real exploit lands, the attacker maps the filter: a blocked canary request,
+      then encoded retries of the same logical input — double encoding, comment interleaving, case games
+      — until something passes. Most teams log the block and ignore the retries, discarding the clearest
+      signal they will ever get that a targeted attack is in progress. The defensive move is to correlate:
+      a WAF block followed by evasion-shaped retries from the same client is an active attack, and it deserves
+      an incident response while the attacker is still probing, not after the payload lands.'
+    detection:
+      patterns:
+      - (?i)evasion attempts are early warning
+      - (?i)waf-?evasion pattern
+      rule: detect_evasion_warning_mindset
+    how_it_works: 'Defender application: treat WAF-evasion attempts as reconnaissance, not noise — log and
+      alert on encoding tricks, comment interleaving, and payload splitting even when blocked. A spike in
+      evasions against one endpoint is an attacker mapping your filters; respond with a hunt, not a shrug.'
+    id: AEG-T356
+    indicators:
+    - Blocked WAF evasions are logged nowhere or never reviewed.
+    - Evasion spikes against a single endpoint trigger no investigation.
+    mitigations:
+    - Alert on evasion-pattern clusters per endpoint, blocked or not.
+    - Treat filter-mapping behavior as the start of a targeted campaign.
+    name: Evasion Attempts Are Early Warning, Not Noise
+    references:
+    - https://attack.mitre.org/
+    - https://owasp.org/www-project-top-ten/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: treat WAF-evasion attempts as reconnaissance, not noise
+      — log and alert on encoding tricks, comment interleaving, and payload splitting even when blocked.'
+  - category: hacker_mindset
+    description: 'A malware operator''s first job is not the victim — it is staying invisible to you. Everything
+      about C2 operations (burner domains, fast flux, jitter, dead drops, living off trusted services) is
+      infrastructure discipline aimed at one goal: that you find the implant before you find the operator.
+      Defenders invert this: every OPSEC measure leaves a shape — churn, cadence, infrastructure reuse across
+      victims. Hunt the shape of their discipline, and one catch becomes the whole campaign.'
+    detection:
+      patterns:
+      - (?i)opsec is their survival
+      - (?i)punish opsec laziness
+      rule: detect_c2_opsec_mindset
+    how_it_works: 'Defender application: attack the operator''s OPSEC, not just their malware — hunt infrastructure
+      reuse, certificate overlaps, and working-hours beacons across cases. Long-retention telemetry turns
+      their one reused domain into your break in the case. Prioritize detections that punish OPSEC laziness:
+      rare JA3s, odd beacon jitter, burner-domain patterns.'
+    id: AEG-T357
+    indicators:
+    - Detections target malware hashes only; infrastructure-reuse correlation is absent.
+    - Beaconing analysis ignores jitter and timing fingerprints.
+    mitigations:
+    - 'Hunt infrastructure reuse across incidents: certs, domains, JA3 fingerprints.'
+    - 'Detect on OPSEC failures: odd jitter, burner patterns, reused tooling.'
+    name: OPSEC is their survival function
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: attack the operator''s OPSEC, not just their malware
+      — hunt infrastructure reuse, certificate overlaps, and working-hours beacons across cases.'
+  - category: hacker_mindset
+    description: 'Domains, IPs, and even whole C2 servers are designed to be burned. Blocking one IP is
+      the operator''s expected cost of doing business, which is why they build fallbacks and dead-drop resolvers.
+      The durable targets are the operator''s habits: the registrar they reuse, the naming patterns in their
+      domains, the malleable profile they forget to change, the working hours their beacons keep. Detect
+      the habit, not the asset.'
+    detection:
+      patterns:
+      - (?i)infrastructure is disposable
+      - (?i)single-?point kills fail
+      rule: detect_disposable_infra_mindset
+    how_it_works: 'Defender application: stop celebrating single-domain takedowns — the operator rebuys
+      infrastructure in minutes. Instead, extract durable value from each takedown: tooling fingerprints,
+      TTPs, victimology, and affiliate identities. Measure success by adversary cost imposed (burned tooling,
+      exposed operators), not domains sinkholed.'
+    id: AEG-T358
+    indicators:
+    - Success is measured in domains blocked, not adversary cost imposed.
+    - Takedowns are not mined for tooling fingerprints or operator identity.
+    mitigations:
+    - 'Mine every takedown for durable intel: TTPs, tooling, affiliate links.'
+    - 'Target the expensive parts: operators, developers, money flows — not domains.'
+    name: Infrastructure is disposable; implants are cheap; operators are expensive
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: stop celebrating single-domain takedowns — the operator
+      rebuys infrastructure in minutes.'
+  - category: hacker_mindset
+    description: 'Every C2 technique in this pack is a bet that defenders will not inspect what they trust:
+      CDN traffic, encrypted DNS, chat platforms, benign-looking web requests. The operator studies your
+      allow-lists as carefully as you study their malware. The defensive answer is behavioral, not reputational:
+      judge the process, the cadence, and the content shape — never the destination''s reputation.'
+    detection:
+      patterns:
+      - (?i)hide in what you already allow
+      - (?i)living-?off-?cloud
+      rule: detect_allowed_traffic_mindset
+    how_it_works: 'Defender application: invert the allowlist mindset — the most dangerous traffic is the
+      traffic you already permit. Baseline normal for each allowed service (Discord, Slack, OneDrive, DNS)
+      per role, and alert on behavioral deviation: odd hours, odd volumes, odd endpoints. Egress filtering
+      must be behavioral, not just categorical.'
+    id: AEG-T359
+    indicators:
+    - Allowed SaaS and cloud services have no behavioral baselines per role.
+    - Egress policy is allow/deny by category with no anomaly detection on allowed traffic.
+    mitigations:
+    - Baseline allowed-service behavior per role; alert on deviation.
+    - 'Make egress filtering behavioral: volume, timing, and endpoint anomaly.'
+    name: They hide in what you already allow
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: invert the allowlist mindset — the most dangerous traffic
+      is the traffic you already permit.'
+  - category: hacker_mindset
+    description: 'When a sample probes for your sandbox, sleeps past your timeout, or demands human interaction,
+      it is doing reconnaissance on your defenses — learning what you can see and when you stop watching.
+      Treat every evasion attempt as an intelligence gift: it tells you the operator fears dynamic analysis,
+      which means their payload is fragile against it. Feed the sample a convincing lie (a hardened, interactive,
+      bare-metal-looking sandbox) and let it show you everything.'
+    detection:
+      patterns:
+      - (?i)anti-?analysis is reconnaissance
+      - (?i)evasion telemetry
+      rule: detect_antianalysis_recon_mindset
+    how_it_works: 'Defender application: treat sandbox-evasion attempts as the adversary telling you their
+      target profile — collect and analyze what they check for (VM artifacts, EDR presence, locale) because
+      it reveals who they fear and where they operate. Feed evasion telemetry back into detection engineering
+      instead of discarding it as ''blocked''.'
+    id: AEG-T360
+    indicators:
+    - Sandbox-evasion telemetry is discarded instead of analyzed.
+    - No one studies WHAT the malware checks for to profile the adversary.
+    mitigations:
+    - 'Collect and analyze evasion checks: they profile the adversary''s fears.'
+    - Turn anti-analysis telemetry into detection content.
+    name: Anti-analysis is reconnaissance against you
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: treat sandbox-evasion attempts as the adversary telling
+      you their target profile — collect and analyze what they check for (VM artifacts, EDR presence, locale)
+      because it reveals who they fear and where they operate.'
+  - category: hacker_mindset
+    description: 'Operators assume every channel will eventually be found. Fallback lists, peer-to-peer
+      relays, dead drops, and dormant secondary channels are not extras — they are the design. A takedown
+      that removes one channel and declares victory has simply triggered the operator''s continuity plan.
+      The defender''s doctrine must match: map the whole channel set, cut simultaneously, and watch the
+      silence for the reactivation signal.'
+    detection:
+      patterns:
+      - (?i)redundancy is their doctrine
+      - (?i)fallback c2 channels?
+      rule: detect_redundancy_mindset
+    how_it_works: 'Defender application: plan takedowns against redundancy — assume every C2 has a fallback
+      channel, every operator has a backup persona, every payload has a second stager. Sequence disruptions
+      to collapse fallbacks simultaneously (infrastructure, comms, and financial rails together) rather
+      than picking off single points.'
+    id: AEG-T361
+    indicators:
+    - Incident response removes one persistence mechanism and declares victory.
+    - No hunt follows a takedown for fallback channels.
+    mitigations:
+    - After any disruption, hunt explicitly for fallback C2 channels.
+    - Sequence takedowns across infra, comms, and financial rails at once.
+    name: Redundancy is their doctrine, so single-point kills fail
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: plan takedowns against redundancy — assume every C2 has
+      a fallback channel, every operator has a backup persona, every payload has a second stager.'
+  - category: hacker_mindset
+    description: 'Social engineers do not break trust systems; they ride them. Every successful operation
+      in this pack abuses something the victim already trusts — the helpdesk''s helpfulness, the recruiter''s
+      legitimacy, the QR code''s neutrality, the ESP''s deliverability, the CAPTCHA''s authority. For the
+      defender''s system prompt: treat every trust relationship as an attack surface. When a request, message,
+      or session arrives wrapped in institutional trust, verify the actor, not the wrapping. The question
+      is never ''does this look legitimate'' — the attacker controls what it looks like — but ''is this
+      actor who they claim to be, verified through a channel they do not control.'''
+    detection:
+      patterns:
+      - (?i)trust is the exploit
+      - (?i)out-?of-?band verification
+      rule: detect_trust_exploit_mindset
+    how_it_works: 'Defender application: inventory every trust relationship — vendors, helpdesk procedures,
+      executive communications — and attack each one on paper before criminals do. Replace trust-based verification
+      (caller ID, email display names, ''sounds legitimate'') with out-of-band verification rituals, especially
+      for money movement and credential resets.'
+    id: AEG-T362
+    indicators:
+    - Money movement and credential resets rely on caller ID or email display names.
+    - No out-of-band verification ritual exists for high-risk requests.
+    mitigations:
+    - Replace trust cues with out-of-band verification for money and access.
+    - 'Red-team your own trust relationships: vendors, helpdesk, executives.'
+    name: Trust is the exploit, not the obstacle
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/news-events/alerts
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: inventory every trust relationship — vendors, helpdesk
+      procedures, executive communications — and attack each one on paper before criminals do.'
+  - category: hacker_mindset
+    description: 'The operations that defeat the best controls are slow: weeks of LinkedIn rapport before
+      a job lure, benign emails before the callback, a broker''s quiet foothold parked for months before
+      the affiliate detonates. Defenders optimize for the fast anomaly and miss the slow one. Bake into
+      the system prompt a bias toward longitudinal thinking: correlate across days and weeks, join weak
+      signals across channels (social, email, voice, identity), and treat ''benign first contact'' as potential
+      staging, not as evidence of innocence. Speed is the attacker''s risk; patience is their advantage
+      — take it away by remembering longer than they plan.'
+    detection:
+      patterns:
+      - (?i)patience is the attacker'?s cheapest
+      - (?i)dormant footholds?
+      rule: detect_patience_mindset
+    how_it_works: 'Defender application: assume the adversary is already inside and waiting — hunt for dormant
+      footholds, not just active intrusions. Long-dwell actors are defeated by asset hygiene over time:
+      continuous credential rotation, session timeouts, and periodic access recertification shrink the window
+      patience needs.'
+    id: AEG-T363
+    indicators:
+    - Hunts look only for active malicious behavior, never dormant footholds.
+    - Credentials and sessions live indefinitely; recertification is absent.
+    mitigations:
+    - 'Hunt dormant access: stale sessions, old tokens, forgotten service accounts.'
+    - Rotate credentials and recertify access on a schedule that beats patience.
+    name: Patience is the attacker's cheapest weapon
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/news-events/alerts
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: assume the adversary is already inside and waiting —
+      hunt for dormant footholds, not just active intrusions.'
+  - category: hacker_mindset
+    description: 'Initial access brokers, PhaaS kit vendors, RMM trial abusers, and stealer-log merchants
+      mean the person who breaks in is rarely the person who detonates. This division of labor creates defender-visible
+      seams: a quiet credential foothold that suddenly changes tooling and tempo, a session stolen by a
+      kit and monetized by someone else. For the defender: hunt the seams. Tooling discontinuities, actor-handoff
+      timing gaps, and first-seen-everything anomalies are where the supply chain shows. Disrupt the access
+      market''s product — quiet, durable, transferable footholds — and you degrade every downstream buyer
+      at once.'
+    detection:
+      patterns:
+      - (?i)intrusion into a supply chain
+      - (?i)broker-?sold footholds?
+      rule: detect_broker_supply_chain_mindset
+    how_it_works: 'Defender application: defend the intrusion supply chain like a supply chain — monitor
+      IAB chatter for your sector, treat broker-sold footholds as a distinct detection problem (first-seen
+      valid-account anomalies, tooling discontinuity at handoff), and shrink the product they sell: exposed
+      services, valid creds, unpatched edge.'
+    id: AEG-T364
+    indicators:
+    - No monitoring of access-broker chatter relevant to your sector.
+    - First-seen valid-account logins trigger no anomaly review.
+    mitigations:
+    - Track IAB chatter for your sector as early warning.
+    - 'Detect handoff: valid-account first-seen anomalies and tooling discontinuity.'
+    name: Brokers turned intrusion into a supply chain — defend it like one
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/news-events/alerts
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: defend the intrusion supply chain like a supply chain
+      — monitor IAB chatter for your sector, treat broker-sold footholds as a distinct detection problem
+      (first-seen valid-account anomalies, tooling discontinuity at handoff), and shrink the product they
+      sell: exposed services, valid creds, unpatched edge.'
+  - category: hacker_mindset
+    description: 'ClickFix, device-code phishing, callback phishing, and quishing share one property: the
+      victim performs the critical step themselves — pasting the command, entering the code, making the
+      call, scanning the code. Endpoint controls tuned for attacker-delivered malware go quiet because there
+      is no attacker-delivered malware. The system prompt must encode this: when a human action completes
+      an authentication or execution flow, verify the provenance of the instruction, not just the safety
+      of the artifact. ''The user did it voluntarily'' is not exoneration; in these families it is the entire
+      attack.'
+    detection:
+      patterns:
+      - (?i)user is the execution engine
+      - (?i)defend the handoff
+      rule: detect_handoff_mindset
+    how_it_works: 'Defender application: defend the handoff, not just the payload — the click, the paste,
+      the Win+R sequence. Technical controls should assume the user WILL execute: application allowlisting,
+      clipboard/paste restrictions on sensitive dialogs, and Win+R / Office-macro policies that make the
+      handoff fail closed.'
+    id: AEG-T365
+    indicators:
+    - Endpoint policy assumes users won't run untrusted content; no fail-closed handoff controls.
+    - ClickFix-style sequences (Win+R, paste, Enter) are not blocked or alerted.
+    mitigations:
+    - 'Fail closed at the handoff: allowlist execution, restrict Win+R and macros.'
+    - Alert on paste-into-run-dialog and similar execution-handoff patterns.
+    name: The user is the execution engine — defend the handoff, not just the payload
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/news-events/alerts
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: defend the handoff, not just the payload — the click,
+      the paste, the Win+R sequence.'
+  - category: hacker_mindset
+    description: 'For every successful intrusion there are dozens of failed lures, bounced pretexts, and
+      ignored calls — and the attacker treats each failure as reconnaissance, refining the next attempt.
+      Defenders usually treat near-misses as noise: the unclicked phish, the reported QR email, the challenged
+      tailgater get deleted and forgotten. Invert this: every reported lure is free threat intelligence
+      about an active operation. The system prompt should reward reporting, correlate near-miss reports
+      across the organization, and treat a cluster of failed attempts against one team as an incident in
+      progress, not a training success story.'
+    detection:
+      patterns:
+      - (?i)defenders must fail loudly
+      - (?i)near-?miss reporting
+      rule: detect_fail_loudly_mindset
+    how_it_works: 'Defender application: build a near-miss reporting culture — every reported phish, every
+      questioned wire request, every ''this looked weird'' is free threat intel. Reward reporting visibly,
+      respond fast, and feed near-misses into detection tuning. The organization that reports loudly learns
+      faster than the attacker iterates.'
+    id: AEG-T366
+    indicators:
+    - Suspicious emails and requests go unreported; no easy reporting channel exists.
+    - Near-misses are never fed back into detection or training.
+    mitigations:
+    - Make reporting one click and visibly rewarded; respond to every report.
+    - Feed near-miss reports into detection tuning and targeted training.
+    name: Attackers fail constantly and learn; defenders must fail loudly
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/news-events/alerts
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: build a near-miss reporting culture — every reported
+      phish, every questioned wire request, every ''this looked weird'' is free threat intel.'
+  - category: hacker_mindset
+    description: 'Cloud attackers think one layer up from defenders. They rarely start by exploiting application
+      code; they start with the control plane — IAM, the Kubernetes API, the CI system, the registry — because
+      one control-plane win converts into every workload beneath it. A single ClusterRoleBinding, one CreatePolicyVersion
+      call, or one malicious workflow file is worth more than a hundred application bugs. For the defender
+      this inverts the priority list: the audit log of the control plane (CloudTrail, API-server audit,
+      CI audit logs) is the highest value telemetry in the estate, and any change there from an unexpected
+      identity is suspicious by default.'
+    detection:
+      patterns:
+      - (?i)control plane,? not the workload
+      - (?i)blast radius of a control-?plane
+      rule: detect_control_plane_mindset
+    how_it_works: 'Defender application: shift cloud security left of the workload — audit IAM trust policies,
+      role assumptions, and control-plane logging before container images. The blast radius of a workload
+      compromise is one pod; the blast radius of a control-plane compromise is the account. Price your controls
+      accordingly.'
+    id: AEG-T367
+    indicators:
+    - Cloud security effort focuses on workload scanning; IAM trust policies unreviewed.
+    - Control-plane logging (CloudTrail) is incomplete or unmonitored.
+    mitigations:
+    - Audit IAM trust policies and privilege paths before workload hardening.
+    - Ensure complete, tamper-protected control-plane logging.
+    name: Attack the control plane, not the workload
+    references:
+    - https://attack.mitre.org/
+    - https://cloudsecurityalliance.org/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: shift cloud security left of the workload — audit IAM
+      trust policies, role assumptions, and control-plane logging before container images.'
+  - category: hacker_mindset
+    description: 'In cloud estates the attacker does not need zero-days — they need your mistakes, and mistakes
+      are enumerable. Public buckets, wildcard IAM, anonymous API auth, IMDSv1 left on, mutable image tags:
+      each is a standing misconfiguration that scanners find within hours. The attacker mindset is inventory-first:
+      enumerate everything, sort by privilege yield, exploit the richest target. Defenders must run the
+      same inventory continuously (CSPM, RBAC audits, MetadataOptions sweeps, trust-policy reviews) and
+      treat every finding as an open door, because from the attacker''s side that is exactly what it is.'
+    detection:
+      patterns:
+      - (?i)misconfiguration is the vulnerability
+      - (?i)hunt it like one
+      rule: detect_misconfig_mindset
+    how_it_works: 'Defender application: treat misconfiguration as your primary vulnerability class — continuous
+      CSPM scanning, drift detection on IaC, and misconfiguration SLAs measured like patch SLAs. Every public
+      postmortem that starts with ''misconfigured'' is a reminder: the scanner finding you ignored IS the
+      vulnerability.'
+    id: AEG-T368
+    indicators:
+    - Misconfigurations have no SLA; findings linger for months.
+    - IaC drift goes undetected; no continuous posture scanning.
+    mitigations:
+    - Run continuous CSPM with misconfiguration SLAs like patch SLAs.
+    - Detect IaC drift and alert on posture regression.
+    name: Misconfiguration is the vulnerability; hunt it like one
+    references:
+    - https://attack.mitre.org/
+    - https://cloudsecurityalliance.org/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: treat misconfiguration as your primary vulnerability
+      class — continuous CSPM scanning, drift detection on IaC, and misconfiguration SLAs measured like
+      patch SLAs.'
+  - category: hacker_mindset
+    description: 'An experienced cloud attacker evaluates every credential by one question: what is the
+      blast radius if I hold this? A CI job token that can read production state, a Lambda role with s3:*,
+      a service account bound to cluster-admin — each is a blast radius waiting to be spent. Defenders should
+      adopt the same arithmetic proactively: for every identity, compute effective permissions including
+      role chains, PassRole targets, policy-version write paths, and group memberships, then shrink the
+      radius until it matches the task. Anything whose blast radius exceeds its job description is not a
+      misconfiguration to schedule — it is an incident in waiting.'
+    detection:
+      patterns:
+      - (?i)blast-?radius math
+      - (?i)effective permissions per identity
+      rule: detect_blast_radius_mindset
+    how_it_works: 'Defender application: do blast-radius math on every identity — if this role is compromised,
+      what exactly can it reach? Visualize effective permissions (not just attached policies), simulate
+      compromise per role, and aggressively scope down wildcard actions. An identity''s blast radius should
+      be a reviewed number, not a surprise.'
+    id: AEG-T369
+    indicators:
+    - No one can answer 'what can this role reach if compromised'.
+    - Wildcard IAM actions persist without blast-radius review.
+    mitigations:
+    - Compute effective permissions per identity; review blast radius quarterly.
+    - Simulate role compromise and scope down wildcards.
+    name: Do blast-radius math on every identity
+    references:
+    - https://attack.mitre.org/
+    - https://cloudsecurityalliance.org/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: do blast-radius math on every identity — if this role
+      is compromised, what exactly can it reach? Visualize effective permissions (not just attached policies),
+      simulate compromise per role, and aggressively scope down wildcard actions.'
+  - category: hacker_mindset
+    description: 'Sophisticated cloud intruders suppress CloudTrail, narrow event selectors, or cut the
+      SIEM''s read path before doing anything noisy — because they know defenders detect through logs. This
+      means the logging pipeline itself is a production system under attack: org-level trails, immutable
+      buckets, SCPs denying log tampering, and immediate paging on any suppression event. A defender who
+      treats ''trail stopped'' as a routine config change has already lost; the correct reflex is to treat
+      it as an active intrusion until proven otherwise.'
+    detection:
+      patterns:
+      - (?i)logs are the first target
+      - (?i)alert on logging gaps
+      rule: detect_log_target_mindset
+    how_it_works: 'Defender application: protect telemetry like production — immutable log storage, separate
+      accounts for log archives, alerting on logging gaps themselves. An attacker who can silence CloudTrail
+      is invisible; a gap in logging IS the alert. Test log-tamper resistance the way you test backups.'
+    id: AEG-T370
+    indicators:
+    - Logs live in the same account they monitor, mutable by the same admins.
+    - Logging gaps trigger no alerts.
+    mitigations:
+    - Store logs immutably in separate accounts; alert on logging gaps.
+    - Test log-tamper resistance like you test backup restores.
+    name: Logs are the first target, so protect them like production
+    references:
+    - https://attack.mitre.org/
+    - https://cloudsecurityalliance.org/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: protect telemetry like production — immutable log storage,
+      separate accounts for log archives, alerting on logging gaps themselves.'
+  - category: hacker_mindset
+    description: 'Cross-account roles, OIDC federation, vendor integrations, and service-account bindings
+      all express trust — but the trust that matters is the one written in the policy document, not the
+      one in the architecture diagram. A trust policy naming a vendor''s whole account without an external
+      ID, a CI federation trusting any branch, a ClusterRoleBinding to a broad group: each silently extends
+      the trust boundary far beyond what anyone intended. Attackers read the actual policy; defenders must
+      too, continuously and mechanically, because intent does not appear in CloudTrail — only the policy
+      does.'
+    detection:
+      patterns:
+      - (?i)trust boundaries are drawn in policy
+      - (?i)confused-?deputy gaps?
+      rule: detect_trust_boundary_mindset
+    how_it_works: 'Defender application: map trust boundaries from effective policy, not org charts or intent
+      — cross-account trust, resource policies, and confused-deputy gaps are where the real boundaries lie.
+      Review every trust policy for external principals and missing condition keys; intent doesn''t stop
+      API calls, policy does.'
+    id: AEG-T371
+    indicators:
+    - Trust boundaries assumed from org charts; cross-account trusts unreviewed.
+    - Trust policies lack external-ID and source conditions.
+    mitigations:
+    - Map effective trust boundaries from policy, not intent.
+    - Require external IDs and source conditions on cross-account trust.
+    name: Trust boundaries are drawn in policy, not in intent
+    references:
+    - https://attack.mitre.org/
+    - https://cloudsecurityalliance.org/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: map trust boundaries from effective policy, not org charts
+      or intent — cross-account trust, resource policies, and confused-deputy gaps are where the real boundaries
+      lie.'
+  - category: hacker_mindset
+    description: Attackers rarely need to break the model; they borrow its legitimate authority. The agent's
+      tools, tokens, and trust relationships do the attacker's work while the model believes it is helping.
+      Shrink what the agent is able to do -- least privilege, scoped tokens, approval gates on irreversible
+      actions -- rather than betting everything on the model choosing not to. Every capability you grant
+      an agent is a capability an attacker can borrow.
+    detection:
+      patterns:
+      - (?i)confused deputy
+      - (?i)whose authority is this
+      rule: detect_confused_deputy_mindset
+    how_it_works: 'Defender application: design agents as confused deputies by default — never let tool
+      output set goals, never let retrieved content choose tools or arguments, and keep secrets out of the
+      model''s context entirely. Every agent action needs an explicit principal: whose authority is this
+      acting under, and did they actually grant it?'
+    id: AEG-T372
+    indicators:
+    - Tool outputs can set agent goals or choose tool arguments unchecked.
+    - Secrets live in the model's context where injected instructions can read them.
+    mitigations:
+    - Label all retrieved content as untrusted data, never instructions.
+    - Broker secrets outside model context; require explicit principal per action.
+    name: The Agent Is a Confused Deputy, Not a Traitor
+    references:
+    - https://attack.mitre.org/
+    - https://genai.owasp.org/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: design agents as confused deputies by default — never
+      let tool output set goals, never let retrieved content choose tools or arguments, and keep secrets
+      out of the model''s context entirely.'
+  - category: hacker_mindset
+    description: 'Descriptions, parameter docs, agent cards, skill READMEs, and protocol headers are all
+      written by parties the defender does not control, yet they land directly in the model''s context with
+      implicit authority. Treat every such surface as untrusted input: scan it, sign it, pin it, and never
+      let it set goals, choose tools, or authorize actions.'
+    detection:
+      patterns:
+      - (?i)metadata is attacker-?controlled
+      - (?i)tool description.*untrusted
+      rule: detect_metadata_trust_mindset
+    how_it_works: 'Defender application: treat every tool description, skill doc, agent card, and plugin
+      manifest as untrusted input — scan, sign, and pin approved metadata; display full text before approval;
+      alert on metadata changes (the rug pull). An agent that trusts its tool list is already compromised.'
+    id: AEG-T373
+    indicators:
+    - Tool/skill metadata is trusted implicitly; changes trigger no review.
+    - MCP servers and plugins install without metadata inspection.
+    mitigations:
+    - Sign and pin approved tool metadata; alert on any change.
+    - Show full tool descriptions before approval; never truncate.
+    name: Tool, Skill, and Card Metadata Is Attacker-Controlled Input
+    references:
+    - https://attack.mitre.org/
+    - https://genai.owasp.org/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: treat every tool description, skill doc, agent card,
+      and plugin manifest as untrusted input — scan, sign, and pin approved metadata; display full text
+      before approval; alert on metadata changes (the rug pull).'
+  - category: hacker_mindset
+    description: One poisoned skill, adapter, memory entry, or rendezvous point compromises every agent
+      that touches it. Attackers think in fleets; defenders must too. Instrument for cross-session and cross-tenant
+      signals -- phrase clustering, synchronized behavior, shared rendezvous -- because the single-session
+      view will always look benign.
+    detection:
+      patterns:
+      - (?i)defend the population
+      - (?i)agent fleet
+      rule: detect_agent_population_mindset
+    how_it_works: 'Defender application: defend the agent population, not just the session — fleet-wide
+      guardrails, centralized audit of all agent tool calls, and kill-switches that work across every deployment.
+      One compromised agent is an incident; a compromised agent fleet with shared memory is a botnet. Rate-limit
+      and monitor agent-to-agent traffic.'
+    id: AEG-T374
+    indicators:
+    - Each agent deployment is secured in isolation with no fleet view.
+    - No centralized audit or fleet-wide kill-switch exists.
+    mitigations:
+    - Centralize audit of all agent tool calls across the fleet.
+    - Build fleet-wide guardrails and kill-switches; monitor agent-to-agent traffic.
+    name: 'Autonomy Compounds: Defend the Population, Not Just the Session'
+    references:
+    - https://attack.mitre.org/
+    - https://genai.owasp.org/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: defend the agent population, not just the session — fleet-wide
+      guardrails, centralized audit of all agent tool calls, and kill-switches that work across every deployment.'
+  - category: hacker_mindset
+    description: 'For agents, the win is not one hijacked action; it is a standing foothold: a memory entry,
+      a trojaned skill, a backdoored adapter, a stolen refresh token. Hunt for persistence mechanisms first
+      -- whatever survives the session, the redeploy, the re-auth -- and assume any incident response that
+      does not clear persistence has failed.'
+    detection:
+      patterns:
+      - (?i)persistence is the real prize
+      - (?i)agent'?s memory.*crown jewels
+      rule: detect_agent_persistence_mindset
+    how_it_works: 'Defender application: hunt agent persistence, not just agent actions — poisoned memory
+      entries, trojaned skills, modified system prompts, and scheduled agent tasks survive session end.
+      Treat the agent''s memory, skills, and config as crown jewels: versioned, signed, and monitored for
+      drift.'
+    id: AEG-T375
+    indicators:
+    - Agent memory, skills, and configs change without versioning or review.
+    - No monitoring for persistence in agent infrastructure.
+    mitigations:
+    - Version and sign agent memory, skills, and system prompts.
+    - Monitor agent config drift like production code changes.
+    name: Persistence Is the Real Prize
+    references:
+    - https://attack.mitre.org/
+    - https://genai.owasp.org/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: hunt agent persistence, not just agent actions — poisoned
+      memory entries, trojaned skills, modified system prompts, and scheduled agent tasks survive session
+      end.'
+  - category: hacker_mindset
+    description: The orchestrator, task queue, registry, and discovery service are the highest-value targets
+      in the mesh because their decisions are trusted downstream by everyone. Apply the strongest identity,
+      integrity, and provenance controls there, and log every delegation decision as if it will be exhibit
+      A.
+    detection:
+      patterns:
+      - (?i)control plane outranks
+      - (?i)whoever controls tasking
+      rule: detect_control_plane_agent_mindset
+    how_it_works: 'Defender application: secure the orchestrator above the agents — task queues, schedulers,
+      and control planes are the highest-value target. Whoever controls tasking controls the fleet. Harden
+      the control plane first: authentication, audit, and anomaly detection on task assignment itself.'
+    id: AEG-T376
+    indicators:
+    - The agent orchestrator has weaker security than the agents it commands.
+    - Task-queue poisoning would go undetected.
+    mitigations:
+    - 'Harden the control plane first: auth, audit, anomaly detection on tasking.'
+    - Treat task assignment as the highest-privilege operation.
+    name: The Control Plane Outranks Every Agent
+    references:
+    - https://attack.mitre.org/
+    - https://genai.owasp.org/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: secure the orchestrator above the agents — task queues,
+      schedulers, and control planes are the highest-value target.'
+  - category: hacker_mindset
+    description: 'Once inside, the intruder''s first choice is never the clever exploit — it is the stolen
+      credential, the reused session, the misconfigured delegation. Every lateral hop in this pack succeeds
+      because something legitimate was reused illegitimately. Defend accordingly: the highest-value investment
+      is not another exploit signature but authentication telemetry (logon types, ticket pairing, session
+      ownership) read with the assumption that the credential in the log may not belong to the human it
+      names.'
+    detection:
+      patterns:
+      - (?i)they log in
+      - (?i)do not break in
+      rule: detect_login_not_breakin_mindset
+    how_it_works: 'Defender application: shift detection from perimeter breach to credential use — alert
+      on anomalous valid-account logins (impossible travel, odd hours, new devices, privilege jumps) rather
+      than only failed ones. Assume valid credentials are already in play and hunt for their misuse.'
+    id: AEG-T377
+    indicators:
+    - Monitoring focuses on failed logins and perimeter alerts, not valid-account anomalies.
+    - Impossible-travel and odd-hour valid logins trigger nothing.
+    mitigations:
+    - 'Alert on anomalous valid-account use: travel, hours, devices, privilege jumps.'
+    - Hunt credential misuse assuming compromise is already inside.
+    name: Attackers do not break in; they log in
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: shift detection from perimeter breach to credential use
+      — alert on anomalous valid-account logins (impossible travel, odd hours, new devices, privilege jumps)
+      rather than only failed ones.'
+  - category: hacker_mindset
+    description: Attackers assume every segmentation boundary has an unmodeled path — a dual-homed host,
+      a management interface, an IPv6 route, a jump host — and they are usually right. Defenders must stop
+      trusting the firewall diagram and continuously measure actual inter-zone flows against intended policy.
+      A segmentation rule that is not verified in flow data is a hope, not a control.
+    detection:
+      patterns:
+      - (?i)network is flat until
+      - (?i)prove (otherwise|segmentation)
+      rule: detect_flat_network_mindset
+    how_it_works: 'Defender application: prove segmentation instead of assuming it — continuously validate
+      that VLANs, security groups, and firewalls actually block what policy says. Attackers find the one
+      flat path; your job is to find it first with attack-path validation and breach-and-attack simulation
+      against your own segments.'
+    id: AEG-T378
+    indicators:
+    - Segmentation exists on paper but is never validated by testing.
+    - No attack-path validation against your own network segments.
+    mitigations:
+    - Continuously validate segmentation with attack-path testing.
+    - Find the flat path before the attacker does.
+    name: The network is flat until you prove otherwise
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: prove segmentation instead of assuming it — continuously
+      validate that VLANs, security groups, and firewalls actually block what policy says.'
+  - category: hacker_mindset
+    description: An intruder with a foothold does not see hosts; they see a graph of privilege edges and
+      they walk the shortest path to the crown jewels. If you have never computed your own shortest paths
+      to Domain Admin, the attacker is doing your reconnaissance for you. Run the graph analysis yourself,
+      find the choke points, and cut them — one well-chosen edge removal defeats more attacks than a hundred
+      endpoint alerts.
+    detection:
+      patterns:
+      - (?i)think in graphs
+      - (?i)defend the choke points
+      rule: detect_graph_thinking_mindset
+    how_it_works: 'Defender application: think in graphs because the attacker does — map every path to Domain
+      Admin, every trust, every delegation, and defend the choke points, not the endpoints. BloodHound-style
+      analysis for defenders turns an unmanageable network into a ranked list of edges to cut.'
+    id: AEG-T379
+    indicators:
+    - No one has mapped attack paths to crown jewels; defense is endpoint-by-endpoint.
+    - Choke points (admin tiering, delegation) are undefended.
+    mitigations:
+    - Map attack paths to crown jewels; defend choke points first.
+    - Use graph analysis to rank edges to cut.
+    name: Think in graphs, because the attacker does
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: think in graphs because the attacker does — map every
+      path to Domain Admin, every trust, every delegation, and defend the choke points, not the endpoints.'
+  - category: hacker_mindset
+    description: 'PsExec, WMI, WinRM, scheduled tasks, SSH, RDP — every lateral-movement channel in this
+      pack is a legitimate admin tool. There is no malware signature to catch. Detection therefore cannot
+      be about the tool; it must be about the relationship: who used it, from where, to where, and whether
+      that triplet has ever existed before. Baseline the legitimate admin graph, and every attacker stands
+      out as a first-seen edge.'
+    detection:
+      patterns:
+      - (?i)noise is the signal
+      - (?i)living off the land.*signal
+      rule: detect_lotl_noise_mindset
+    how_it_works: 'Defender application: when the attacker lives off the land, the binary is innocent and
+      the USAGE is the signal — baseline normal LOLBin behavior per role and alert on deviation: rare flags,
+      odd parents, odd hours. Invest in command-line logging; without it, living-off-the-land is invisible
+      by design.'
+    id: AEG-T380
+    indicators:
+    - Command-line logging is off; LOLBin usage is unbaselined.
+    - Detections key on binary presence, not usage anomaly.
+    mitigations:
+    - Enable command-line logging; baseline LOLBin usage per role.
+    - 'Alert on usage deviation: rare flags, odd parents, odd hours.'
+    name: Living off the land means the noise is the signal
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: when the attacker lives off the land, the binary is innocent
+      and the USAGE is the signal — baseline normal LOLBin behavior per role and alert on deviation: rare
+      flags, odd parents, odd hours.'
+  - category: hacker_mindset
+    description: The loud intruder gets caught at the recon stage; the dangerous one enumerates slowly,
+      reuses one credential at a time, and pivots through a single proxy for weeks. Defenses tuned only
+      for bursts and volume will miss the campaign that matters. Correlate across time — credential access
+      today, the lateral hop next week — and treat low-and-slow first-seen edges with the same seriousness
+      as a noisy scan.
+    detection:
+      patterns:
+      - (?i)patience is the attacker'?s best evasion
+      - (?i)low-?and-?slow
+      rule: detect_slow_evasion_mindset
+    how_it_works: 'Defender application: defeat low-and-slow with long memory — retain auth and process
+      telemetry for a year or more, and hunt for slow patterns (one login a week, gradual privilege growth)
+      that short windows miss. Time is the attacker''s evasion; retention is your counter.'
+    id: AEG-T381
+    indicators:
+    - Telemetry retention under 90 days blinds you to slow campaigns.
+    - No hunts target low-frequency, long-duration patterns.
+    mitigations:
+    - Retain auth/process telemetry 12+ months.
+    - 'Hunt slow patterns: weekly logins, gradual privilege growth.'
+    name: Patience is the attacker's best evasion
+    references:
+    - https://attack.mitre.org/
+    - https://www.cisa.gov/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: defeat low-and-slow with long memory — retain auth and
+      process telemetry for a year or more, and hunt for slow patterns (one login a week, gradual privilege
+      growth) that short windows miss.'
+  - category: hacker_mindset
+    description: 'Every criminal specialty in this pack — brokers, affiliates, herders, launderers — exists
+      because specialization lowers the cost per attack. Target selection follows expected return: big-game
+      hunting when payments flow, high-volume mid-market targeting when they collapse. When you see a tactic
+      shift, ask what changed in the economics first; the answer predicts the next shift better than any
+      malware analysis.'
+    detection:
+      patterns:
+      - (?i)rational economic actors
+      - (?i)attacker'?s currency
+      rule: detect_economic_actor_mindset
+    how_it_works: 'Defender application: price your defenses in the attacker''s currency — raise their cost
+      past your value. Every control should increase attacker expense (time, money, risk): MFA raises phishing
+      cost, patching raises exploit cost, monitoring raises dwell-time risk. Defend the highest-ROI targets
+      first, because that is where rational actors go.'
+    id: AEG-T382
+    indicators:
+    - Controls are deployed without considering attacker cost.
+    - Highest-value targets get average protection.
+    mitigations:
+    - 'Raise attacker cost past asset value: MFA, patching, monitoring.'
+    - Prioritize defenses by attacker ROI, highest first.
+    name: Criminals are rational economic actors, not masterminds
+    references:
+    - https://attack.mitre.org/
+    - https://www.europol.europa.eu/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: price your defenses in the attacker''s currency — raise
+      their cost past your value.'
+  - category: hacker_mindset
+    description: 'Criminal markets run on escrow, reputation scores, and deposits because no court enforces
+      their deals. That trust is the single most attackable surface in the underground economy: one exit
+      scam, one covert takeover, one publicized infiltration poisons every successor market. Defenders should
+      treat trust-destruction — takedowns, seizures, publicized arrests — as strategic wins with compounding
+      effects, not one-off news.'
+    detection:
+      patterns:
+      - (?i)manufactured trust is fragile
+      - (?i)trust is manufactured
+      rule: detect_manufactured_trust_mindset
+    how_it_works: 'Defender application: attack criminal trust systems — they depend on reputation and escrow
+      because they cannot use courts. Support takedowns that poison trust (seized markets run by LE, exit-scam
+      amplification); internally, apply the lesson: your own third-party trust should be verified, not assumed.'
+    id: AEG-T383
+    indicators:
+    - No strategy for exploiting adversary trust failures.
+    - Third-party trust is assumed, never verified.
+    mitigations:
+    - 'Exploit criminal trust fragility: support trust-poisoning operations.'
+    - Verify third-party trust continuously; assume nothing.
+    name: Trust is manufactured, and manufactured trust is fragile
+    references:
+    - https://attack.mitre.org/
+    - https://www.europol.europa.eu/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: attack criminal trust systems — they depend on reputation
+      and escrow because they cannot use courts.'
+  - category: hacker_mindset
+    description: 'Laundering always ends where crime meets the regulated world: mule accounts, nested exchanges,
+      OTC brokers, sanctioned mixers. These exits are finite, observable, and legally exposed — which is
+      why sanctions, bank transaction monitoring, and wallet reporting work. When tracing an incident, the
+      payment chain''s fiat exit is where attribution, seizure, and disruption are cheapest.'
+    detection:
+      patterns:
+      - (?i)follow the money to the chokepoints
+      - (?i)cash-?out chokepoints?
+      rule: detect_money_chokepoint_mindset
+    how_it_works: 'Defender application: follow the money to the chokepoints — exchanges, OTC brokers, and
+      mixers are where pseudonymous crime meets regulated finance. Build blockchain-tracing capability or
+      partnerships, screen counterparties, and treat ransom-payment decisions as intelligence opportunities,
+      not just business decisions.'
+    id: AEG-T384
+    indicators:
+    - No blockchain-tracing capability or partnerships.
+    - Ransom decisions made without intelligence exploitation.
+    mitigations:
+    - Build or partner for blockchain tracing to chokepoints.
+    - Screen counterparties; exploit payment events for intelligence.
+    name: Follow the money to the chokepoints
+    references:
+    - https://attack.mitre.org/
+    - https://www.europol.europa.eu/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: follow the money to the chokepoints — exchanges, OTC
+      brokers, and mixers are where pseudonymous crime meets regulated finance.'
+  - category: hacker_mindset
+    description: 'Every growing criminal operation accumulates forensic residue: reused handles, shared
+      wallets, bragging, metadata, real emails in admin inboxes. Investigators do not need to be smarter
+      than criminals; they need to be more patient. Assume adversary mistakes compound over time, hunt for
+      the reused artifact, and treat each takedown''s documented OPSEC failures as a template for catching
+      the next actor.'
+    detection:
+      patterns:
+      - (?i)scale is the enemy of opsec
+      - (?i)scale-?opsec tradeoff
+      rule: detect_scale_opsec_mindset
+    how_it_works: 'Defender application: exploit the scale-OPSEC tradeoff — large criminal operations MUST
+      reuse infrastructure, recruit visibly, and leave patterns. Hunt at scale: bulk infrastructure registration,
+      recruitment chatter, and repeated TTPs across victims are where big operations become visible.'
+    id: AEG-T385
+    indicators:
+    - Threat intel looks only at your own incidents, never sector-wide patterns.
+    - Infrastructure-scale hunting is absent.
+    mitigations:
+    - 'Hunt at scale: bulk registrations, recruitment, cross-victim TTPs.'
+    - Share and consume sector-wide intelligence.
+    name: Scale is the enemy of OPSEC
+    references:
+    - https://attack.mitre.org/
+    - https://www.europol.europa.eu/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: exploit the scale-OPSEC tradeoff — large criminal operations
+      MUST reuse infrastructure, recruit visibly, and leave patterns.'
+  - category: hacker_mindset
+    description: 'Payment rates at record lows do not end cybercrime — they redirect it into cheaper leverage:
+      data-theft-only extortion, insider recruitment, mid-market volume plays, and fraud supply chains.
+      Celebrate the payment collapse as proof that collective defense works, then immediately re-aim detections
+      at the adaptations, because the same actors with the same skills are still in business.'
+    detection:
+      patterns:
+      - (?i)re-?specializes criminals
+      - (?i)not retirement
+      rule: detect_respecialize_mindset
+    how_it_works: 'Defender application: when ransomware payments fall, expect re-specialization — not retirement.
+      Track where operators go: data-theft extortion without encryption, IAB services, hacktivist fronts.
+      Your defenses must follow the business model, not the malware family.'
+    id: AEG-T386
+    indicators:
+    - Ransomware defense assumes encryption will always be the payload.
+    - No tracking of operator re-specialization after market shifts.
+    mitigations:
+    - 'Track operator re-specialization: extortion-only, IAB, fronts.'
+    - Defend against the business model, not just the malware.
+    name: A contracting ransom market re-specializes criminals, it does not retire them
+    references:
+    - https://attack.mitre.org/
+    - https://www.europol.europa.eu/
+    severity: medium
+    variants:
+    - 'Defender application: Defender application: when ransomware payments fall, expect re-specialization
+      — not retirement.'

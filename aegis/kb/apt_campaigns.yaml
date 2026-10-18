@@ -1,0 +1,674 @@
+pack: apt_campaigns
+version: "1.0"
+techniques:
+  - id: AEG-T253
+    name: "Critical-Infrastructure Pre-Positioning for Disruptive Effect"
+    category: apt_campaigns
+    description: >-
+      Unlike traditional espionage, some state campaigns (notably PRC actor
+      Volt Typhoon, per the Feb 2024 CISA/NSA/FBI advisory AA24-038A) break
+      into critical-infrastructure IT networks and stay quiet — for years —
+      specifically to hold position for lateral movement into operational
+      technology (OT) assets if a future crisis or conflict demands disruptive
+      or destructive effects. The absence of data theft is the tell: the
+      foothold itself is the objective.
+    how_it_works: >-
+      Public reporting describes a repeatable campaign shape: initial access
+      via exploited internet-facing network appliances (VPNs, firewalls,
+      routers from Fortinet, Ivanti, Citrix, Cisco), then credential-based
+      persistence using valid administrator accounts and living-off-the-land
+      binaries (ntdsutil, wmic, netsh, PowerShell) with minimal malware.
+      Traffic is laundered through hijacked SOHO routers (the "KV Botnet" —
+      mostly end-of-life Cisco and NetGear devices) to conceal the operator's
+      origin. Defenders observe long-dwell beacons, IT-to-OT boundary
+      probing, and OT-adjacent discovery (engineering workstations, historian
+      servers) with no matching exfiltration — the signature of a
+      pre-positioning posture rather than an espionage one.
+    variants:
+      - "IT-network staging with OT as the downstream target (Volt Typhoon pattern, AA24-038A)"
+      - "SOHO-router proxy botnets used to conceal operator origin (KV Botnet, disrupted Jan 2024)"
+      - "Communications/energy/water sector focus for crisis-time leverage"
+    indicators:
+      - "Credential-based access and living-off-the-land activity inside critical-infrastructure IT networks with no corresponding data exfiltration"
+      - "Lateral-movement probes from corporate IT segments toward OT-adjacent systems (engineering workstations, historians, jump hosts)"
+      - "Outbound sessions routed through compromised residential/SOHO IP space that matches known proxy-botnet patterns"
+      - "Dwell measured in years: aged footholds whose operators periodically revalidate access without escalating visibly"
+    detection:
+      rule: detect_ot_prepositioning_campaign
+      patterns:
+        - '(?i)pre[\s_-]*position\w*.{0,80}(critical.infrastructure|\bot\b|operational.technology|ics\b)'
+        - '(?i)(soho|kv[\s_-]?botnet).{0,60}(router|compromise|proxy)'
+        - '(?i)(lateral.movement|pivot).{0,60}(it|corporate).{0,30}(to|into).{0,30}(ot|operational|ics)'
+    severity: critical
+    mitigations:
+      - "Monitor and log the IT/OT boundary as a first-class detection surface: alert on any corporate-to-OT authentication or discovery attempts."
+      - "Remove or segment end-of-life edge devices; replace unsupported SOHO routers in and around critical-infrastructure sites."
+      - "Enforce phishing-resistant MFA and privileged-access workstations for all OT-adjacent administrative paths."
+      - "Hunt for long-dwell footholds with multi-year log retention rather than 30-90 day windows."
+    examples:
+      - summary: "AA24-038A (CISA, NSA, FBI, Feb 7 2024) assessed with high confidence that PRC actor Volt Typhoon was pre-positioning on U.S. critical-infrastructure IT networks for disruptive or destructive attacks in a future crisis, with some footholds held at least five years."
+        reference: "https://stateofsurveillance.org/articles/government/volt-typhoon-2026-tracker/"
+      - summary: "In a court-authorized operation announced Jan 31 2024, the FBI remotely removed the KV Botnet malware from hundreds of hijacked end-of-life SOHO routers that Volt Typhoon used to conceal the origin of its critical-infrastructure intrusions."
+        reference: "https://www.bleepingcomputer.com/news/security/fbi-disrupts-chinese-botnet-by-wiping-malware-from-infected-routers/"
+    references:
+      - "https://stateofsurveillance.org/articles/government/volt-typhoon-2026-tracker/"
+      - "https://www.bleepingcomputer.com/news/security/fbi-disrupts-chinese-botnet-by-wiping-malware-from-infected-routers/"
+
+  - id: AEG-T254
+    name: "False-Flag and Deception Operations"
+    category: apt_campaigns
+    description: >-
+      Sophisticated state actors deliberately plant another group's
+      fingerprints — code similarities, compile artifacts, language strings,
+      infrastructure choices — to misdirect attribution. Kaspersky's
+      analysis of Olympic Destroyer (Feb 2018) showed a forged set of
+      Lazarus-Group code features that initially fooled several analysts
+      before the forgery was exposed; the operation was ultimately
+      attributed to Russia's GRU (Sandworm).
+    how_it_works: >-
+      Deception is layered at detection level: borrowed malware-builder
+      artifacts (e.g. Rich-header or compile-environment matches copied from
+      a different actor's known samples), infrastructure routed through the
+      impersonated actor's usual geography, and narrative lures (target
+      selection that fits the impersonated group's motives). Olympic
+      Destroyer combined a forged Lazarus code fingerprint with North
+      Korean-looking operational touches, exploiting the industry's reliance
+      on code-similarity attribution. For defenders the operational lesson is
+      behavioral: respond to the intrusion's observable mechanics, treat
+      attribution-grade artifacts as potentially planted, and require
+      multi-source corroboration before acting on an attribution.
+    variants:
+      - "Code-fingerprint forgery: planting another actor's builder/compile artifacts (Olympic Destroyer vs Lazarus)"
+      - "Infrastructure mimicry: routing through the impersonated actor's geography or hosting patterns"
+      - "Narrative camouflage: choosing targets and timing that fit the impersonated group's known motives"
+    indicators:
+      - "Attribution artifacts that are 'too perfect': a code-similarity match that is complete on the exact features analysts publish, but inconsistent on unpublicized internals"
+      - "Contradictory operational signals — e.g. target selection or operator work-hours inconsistent with the attributed actor's profile"
+      - "Multiple credible attributions pointing at different actors for the same campaign, splitting across code vs infrastructure vs targeting evidence"
+    detection:
+      rule: detect_false_flag_deception
+      patterns:
+        - '(?i)false[\s_-]*flag'
+        - '(?i)(mimic|forge|plant|copy|borrow).{0,50}(another|other|different).{0,30}(actor|group|apt|lazarus|intrusion.set|malware.family)'
+        - '(?i)attribution.{0,40}(mislead|deceiv|manipulat|false|planted)'
+    severity: high
+    mitigations:
+      - "Corroborate attribution across independent evidence classes (code, infrastructure, targeting, human intelligence) — never on code similarity alone."
+      - "Build incident response on observed behavior and containment needs, not on the presumed actor's identity."
+      - "Track which attribution artifacts are publicly documented; treat over-matching published fingerprints as a forgery signal."
+      - "Share contradictory evidence with trusted intelligence-sharing communities before committing to an attribution-driven response."
+    examples:
+      - summary: "Kaspersky researchers showed Olympic Destroyer's code features were deliberately forged to perfectly match Lazarus Group's known fingerprint — 'a very sophisticated false flag' — before inconsistencies exposed the deception; the attack was ultimately attributed to GRU/Sandworm."
+        reference: "https://www.darkreading.com/cyberattacks-data-breaches/olympic-destroyer-s-false-flag-changes-the-game"
+      - summary: "Kaspersky's Securelist analysis concluded Olympic Destroyer was an elaborate false flag and warned that even the best code-similarity attribution technology can be influenced by a sophisticated attacker as actors grow more skilled."
+        reference: "https://securelist.com/tag/olympic-destroyer/feed/"
+    references:
+      - "https://www.darkreading.com/cyberattacks-data-breaches/olympic-destroyer-s-false-flag-changes-the-game"
+      - "https://securelist.com/tag/olympic-destroyer/feed/"
+
+  - id: AEG-T255
+    name: "State-Sponsored Cryptocurrency Heists and Laundering Chains"
+    category: apt_campaigns
+    description: >-
+      DPRK actors (Lazarus Group, tracked by the FBI as TraderTraitor) run
+      the world's largest state-sponsored crypto-theft operation — an
+      estimated $6.75 billion stolen since 2017 — treating exchange and
+      DeFi compromises as a revenue arm for the regime. The February 21,
+      2025 Bybit theft of roughly $1.5 billion in Ethereum remains the
+      largest single crypto heist on record and illustrates the full
+      campaign lifecycle: targeted compromise, multisig-deception theft,
+      and industrial-scale cross-chain laundering.
+    how_it_works: >-
+      Public forensic reporting on Bybit shows the campaign shape: attackers
+      compromised a Safe wallet developer's workstation, used stolen session
+      tokens to reach the wallet's cloud hosting, and injected a malicious
+      frontend payload so authorized signers were shown one routine transfer
+      while approving another that handed over wallet control — no keys were
+      stolen. The laundering phase then spreads funds across thousands of
+      addresses and multiple blockchains, converting heavily into Bitcoin
+      via bridges and mixing services (a large share moved through
+      THORChain). Defenders in financial/crypto environments detect these
+      campaigns at laundering time — peel chains, rapid cross-chain hops,
+      mixer deposits — and at preparation time via developer-workstation and
+      supply-chain compromise of wallet infrastructure.
+    variants:
+      - "Exchange and DeFi heists via developer-workstation compromise and frontend injection (Bybit, Feb 2025)"
+      - "Bridge and cross-chain laundering pipelines (THORChain, mixers, OTC networks)"
+      - "Campaign clusters: TraderTraitor, AppleJeus, BlueNoroff/APT38 job-lure and trojanized-app delivery"
+    indicators:
+      - "Multisig or approval-flow anomalies: signer interfaces rendering transaction details inconsistent with the on-chain execution"
+      - "Post-theft laundering signatures: rapid peel chains, cross-chain bridge hops, and mixer deposits within hours of the theft"
+      - "Compromise of wallet-infrastructure developer workstations or CI/CD ahead of the theft event"
+      - "Blockchain-analytics attribution hits to TraderTraitor/Lazarus-linked address clusters (per FBI notices)"
+    detection:
+      rule: detect_state_crypto_heist
+      patterns:
+        - '(?i)(lazarus|tradertraitor|apt38|bluenoroff).{0,60}(heist|theft|crypto|exchange|wallet)'
+        - '(?i)(mixer|tumbler|bridge|thorchain).{0,60}(launder|cross[\s_-]?chain)'
+        - '(?i)(multisig|signer).{0,60}(decept|doctored|mismatch|frontend.injection)'
+    severity: high
+    mitigations:
+      - "Harden the signing path: verify transaction details on hardware wallets or out-of-band signers, never trust a single frontend rendering."
+      - "Isolate and monitor developer workstations and CI/CD for wallet infrastructure as crown-jewel systems."
+      - "Pre-register blockchain-analytics alerts for theft-linked address clusters and share FBI-designated addresses across the ecosystem."
+      - "Require multi-person, multi-channel approval for large transfers with independent confirmation of destination addresses."
+    examples:
+      - summary: "The FBI publicly attributed the Feb 21 2025 Bybit theft (~$1.5B in virtual assets) to North Korea's TraderTraitor actors; Sygnia's forensic review found attackers compromised a Safe developer's workstation and injected a frontend payload that deceived signers into approving a wallet takeover."
+        reference: "https://crypto.news/how-zachxbt-traced-bybit-hack-funds-to-a-lazarus-linked-network/"
+      - summary: "Reporting estimates Lazarus Group has stolen ~$6.75B in cryptocurrency since 2017 via a structured laundering pipeline of cross-chain bridges, mixers, and OTC desks, with ~$2.02B stolen by DPRK actors in 2025 alone per Chainalysis."
+        reference: "https://financefeeds.com/north-korean-crypto-heists/"
+    references:
+      - "https://crypto.news/how-zachxbt-traced-bybit-hack-funds-to-a-lazarus-linked-network/"
+      - "https://financefeeds.com/north-korean-crypto-heists/"
+
+  - id: AEG-T256
+    name: "Legacy Non-Production Tenant Compromise for Email-Archive Access"
+    category: apt_campaigns
+    description: >-
+      In the January 2024 Microsoft breach, Russia's SVR (Midnight Blizzard
+      / APT29) password-sprayed a legacy, non-production test tenant account
+      with no MFA, then used a legacy test OAuth application with elevated
+      access to create malicious OAuth apps granted Exchange Online
+      full_access_as_app — reading senior-leadership mailboxes for months.
+      The campaign's hallmark: attackers prize forgotten, ungoverned
+      identities and application registrations precisely because defenders
+      have stopped looking at them.
+    how_it_works: >-
+      The pattern starts with low-and-slow password spraying through
+      residential proxy networks to defeat IP-based detection, aimed at
+      test/dev tenants outside production baselines. Once inside, the actor
+      locates over-privileged legacy OAuth app registrations — trust
+      artifacts whose permissions were granted long ago and never
+      re-certified — and uses them to mint new malicious apps or grant
+      broad mailbox/Graph scopes to actor-controlled applications. Microsoft
+      detected the activity via Exchange Web Services and audit-log review;
+      CISA's Emergency Directive 24-02 ordered federal agencies to rotate
+      any credentials exposed in the stolen correspondence. The generalized
+      defender lesson: non-human identities (test tenants, legacy apps,
+      service principals) need owners, review cycles, and monitoring
+      exactly like production accounts.
+    variants:
+      - "Password-sprayed legacy test tenant as the initial foothold (Midnight Blizzard, Nov 2023)"
+      - "Legacy OAuth app with stale elevated permissions used to mint malicious apps"
+      - "Self-targeted collection: stealing email archives to learn what defenders know about the actor"
+    indicators:
+      - "Password-spray-shaped authentication attempts (low volume per account, many accounts, rotating residential source IPs) against test or dev tenants"
+      - "Legacy OAuth app registrations with broad scopes (Mail.ReadWrite, full_access_as_app) and no recorded owner or review"
+      - "New OAuth app consent grants or service-principal credential additions created by or for legacy/test identities"
+      - "Exchange Web Services or Graph API access to executive mailboxes from application identities with no business justification"
+    detection:
+      rule: detect_legacy_tenant_campaign
+      patterns:
+        - '(?i)(legacy|test|non[\s_-]*production).{0,60}(tenant|account).{0,60}(compromise|spray|breach|no.mfa)'
+        - '(?i)password[\s_-]*spray.{0,60}(legacy|test|residential.proxy)'
+        - '(?i)oauth.{0,40}(malicious|legacy|test).{0,40}(app|application).{0,40}(full_access_as_app|mail.read)'
+    severity: high
+    mitigations:
+      - "Inventory every tenant, test environment, and OAuth app registration; assign owners and sunset anything without one."
+      - "Enforce phishing-resistant MFA on ALL accounts including legacy and test tenants — no exceptions."
+      - "Require admin-consent workflow for all app grants; block consent to apps from unverified publishers."
+      - "Audit mailbox and Graph API access by application identities continuously; alert on executive-mailbox access from new apps."
+    examples:
+      - summary: "Microsoft disclosed (Jan 2024) that Midnight Blizzard compromised a legacy non-production test tenant via password spray in late Nov 2023, then abused a legacy OAuth app to read senior-leadership email; CISA Emergency Directive 24-02 ordered credential rotation for exposed material."
+        reference: "https://nhimg.org/microsoft-midnight-blizzard-breach"
+      - summary: "The Cloud Security Alliance's review of the breach highlights the legacy-account and over-privileged-app pattern as a cloud IAM failure: the foothold account survived precisely because it was not production and therefore not in security baselines."
+        reference: "https://cloudsecurityalliance.org/blog/2025/09/15/reflecting-on-the-2024-microsoft-breach"
+    references:
+      - "https://nhimg.org/microsoft-midnight-blizzard-breach"
+      - "https://cloudsecurityalliance.org/blog/2025/09/15/reflecting-on-the-2024-microsoft-breach"
+
+  - id: AEG-T257
+    name: "Zero-Day Acquisition Pipelines: Brokers, Contractors, Commercial Markets"
+    category: apt_campaigns
+    description: >-
+      Before any zero-day is exploited (see AEG-T108 for usage patterns),
+      it must be acquired — and a mature commercial pipeline exists for
+      exactly that. Brokers such as Zerodium buy exclusive zero-day research
+      from independent researchers and resell to government clients;
+      Crowdfense has advertised $5–7M bounties for iPhone exploit chains;
+      Russia-aligned "Operation Zero" publicly offered up to $4M for
+      Telegram attack chains before U.S. Treasury sanctions in 2025. For
+      defenders, the pipeline matters because purchased zero-days convert
+      directly into other actors' future initial-access campaigns.
+    how_it_works: >-
+      The acquisition chain runs: independent researchers or contractors
+      develop weaponized exploits → brokers pay on delivery (often with
+      payment terms that penalize the seller if the bug is patched first,
+      discouraging disclosure) → government or surveillance-vendor buyers
+      stockpile them for espionage and targeted operations. Zerodium has
+      published price lists (up to ~$2M for unauthenticated root RCE);
+      vendors like Trend Micro's ZDI operate a parallel defensive-disclosure
+      track. Intelligence from the pipeline surfaces publicly in broker
+      bounty announcements, sanctions actions, and vendor threat reports —
+      which defenders use to prioritize which product classes to harden,
+      monitor, and patch fastest.
+    variants:
+      - "Commercial brokers buying exclusive exploits for government clients (Zerodium model)"
+      - "Public bounty ladders signaling buyer demand (Crowdfense $5–7M iPhone chains, Operation Zero $4M Telegram)"
+      - "Sanctioned acquisition fronts (U.S. Treasury action against Russia's Operation Zero, 2025)"
+    indicators:
+      - "Broker bounty announcements or price-list updates spiking for a product class you depend on"
+      - "Sanctions or law-enforcement actions naming exploit-acquisition operations targeting your sector's technology stack"
+      - "Threat-intel reporting linking a newly disclosed zero-day to prior broker inventory"
+    detection:
+      rule: detect_zero_day_acquisition_pipeline
+      patterns:
+        - '(?i)(exploit|zero[\s_-]*day).{0,60}(broker|market|bounty|acquisit|stockpil)'
+        - '(?i)(zerodium|crowdfense|operation.zero|exodus.intelligence).{0,60}(bounty|broker|market|sanction)'
+        - '(?i)bounty.{0,40}(\$[0-9]).{0,40}(iphone|android|chrome|telegram|whatsapp)'
+    severity: medium
+    mitigations:
+      - "Track broker bounty ladders as an early-warning feed: products with rising payouts deserve faster patch SLAs and deeper monitoring."
+      - "Buy and deploy exploit-mitigation stacks (sandboxing, memory-safety hardening) for the product classes brokers price highest."
+      - "Participate in defensive-disclosure ecosystems (ZDI-style) to pull researcher supply toward disclosure rather than sale."
+      - "Map vendor threat reports on state zero-day usage back to your asset inventory within days of publication."
+    examples:
+      - summary: "Zerodium has publicly advertised exploit bounties up to ~$2M for unauthenticated root-level RCE, selling exclusively to vetted government and corporate clients — illustrating the commercial pipeline that converts researcher findings into state stockpiles."
+        reference: "https://www.packetlabs.net/posts/demystifying-the-market-for-zero-day-software-exploits/"
+      - summary: "Infosecurity Magazine's reporting on the zero-day market documents how intermediaries buy researcher exploits and resell to government buyers, and how payment terms discourage the researchers from disclosing the flaws."
+        reference: "https://www.infosecurity-magazine.com/magazine-features/prm/the-murky-market-for-zeroday-bugs/"
+    references:
+      - "https://www.packetlabs.net/posts/demystifying-the-market-for-zero-day-software-exploits/"
+      - "https://www.infosecurity-magazine.com/magazine-features/prm/the-murky-market-for-zeroday-bugs/"
+
+  - id: AEG-T258
+    name: "Tiered C2 Infrastructure and Burn-and-Rotate Discipline"
+    category: apt_campaigns
+    description: >-
+      Elite campaign operators do not point implants at a single server;
+      they build layered command-and-control infrastructure — implants talk
+      to disposable redirectors, redirectors forward to mid-tier filters,
+      and only the innermost tier touches the real team server — so that
+      any burned component can be discarded without exposing the core.
+      This is distinct from beacon behavior itself (see network C2 entries):
+      it is the campaign's infrastructure lifecycle discipline, and it is
+      why takedowns of single domains so often fail to end an operation.
+    how_it_works: >-
+      The tiered model separates roles: first-hop redirectors (aged domains,
+      valid TLS certificates, benign decoy content) absorb defender
+      attention; mid-tiers add filtering and provider/geo separation; the
+      team server never accepts public connections. Operators practice
+      burn-and-rotate: short-lived domains per campaign phase, rapid
+      re-pointing when defenders block infrastructure, and separate channels
+      (HTTPS, DNS, SSH) per tier so blocking one protocol does not kill the
+      operation. Defenders counter by pivoting on infrastructure reuse (TLS
+      certificates, name servers, registration patterns), monitoring for
+      redirector-like behavior (a domain serving benign content with a small
+      anomalous sub-path), and assuming a blocked domain is a symptom, not
+      the cure.
+    variants:
+      - "Interactive / short-haul / long-haul callback tiers with separate channels per tier"
+      - "CDN-fronted redirectors with benign decoy sites sharing the C2 domain"
+      - "Rapid domain rotation when defenders block infrastructure (operational resilience)"
+    indicators:
+      - "Implant traffic whose TLS certificate, name server, or registration pattern recurs across otherwise unrelated campaigns (infrastructure reuse)"
+      - "Domains serving benign content to casual visitors while a small fraction of requests route to anomalous sub-paths"
+      - "A blocked C2 domain quickly replaced by new infrastructure with overlapping registration or certificate traits"
+      - "Multi-protocol callbacks from one host family (HTTPS plus DNS plus SSH) suggesting tiered fallback channels"
+    detection:
+      rule: detect_tiered_c2_infrastructure
+      patterns:
+        - '(?i)(redirector|team[\s_-]?server).{0,60}(tier|layer|burn|rotat)'
+        - '(?i)burn[\s_-]*and[\s_-]*rotate'
+        - '(?i)(c2|command.and.control).{0,60}(infrastructure|hygiene|opsec|tier)'
+        - '(?i)(short[\s_-]*haul|long[\s_-]*haul).{0,40}(callback|c2|beacon)'
+    severity: high
+    mitigations:
+      - "Pivot on infrastructure, not just domains: cluster by TLS certificate, name server, and registration traits to find the whole tier at once."
+      - "Monitor certificate-transparency and new-domain feeds for redirector-shaped registrations (aged-looking but newly weaponized)."
+      - "Block and hunt at the behavior level — the team server behind the redirectors survives any single-domain block."
+      - "Share infrastructure-level indicators with peers; file hashes alone cannot defeat tiered infrastructure."
+    examples:
+      - summary: "Red-team infrastructure writeups document the layered C2 model APT operators use: CDN-fronted redirectors shielding the team server, with blast-radius containment so any single burned component is replaced without disrupting the operation."
+        reference: "https://cybersecpentesting.com/blog/c2-infrastructure-opsec.html"
+      - summary: "Redirector-architecture guides describe the full communication chain — implant to first-hop redirector to mid-tier to team server — and the operational reason for it: discovered redirectors can be swapped while the core operation continues."
+        reference: "https://xbz0n.sh/blog/c2-redirectors"
+    references:
+      - "https://cybersecpentesting.com/blog/c2-infrastructure-opsec.html"
+      - "https://xbz0n.sh/blog/c2-redirectors"
+
+  - id: AEG-T259
+    name: "DPRK Remote IT-Worker Infiltration and Laptop Farms"
+    category: apt_campaigns
+    description: >-
+      North Korea runs a state-directed program placing its nationals in
+      remote IT jobs at Western companies under stolen or fabricated
+      identities — generating revenue for the regime (85–90% of earnings,
+      per the FBI) and, more dangerously, positioning insiders with
+      legitimate corporate access. In October 2026 the DOJ charged 14 people
+      and seized ~187 computers in a laptop-farm network that had placed
+      workers at 70+ U.S. companies from 2019–2025.
+    how_it_works: >-
+      The scheme's shape: DPRK workers (tracked as Famous Chollima) apply
+      with stolen or synthetic identities; U.S.-based facilitators host
+      company-issued laptops at their homes ("laptop farms"), install
+      remote-access software, and sometimes sit for interviews or drug tests
+      on the workers' behalf; the real worker operates from overseas while
+      appearing domestic. Newer variants spoof device identifiers, reuse
+      disguised devices across jobs, subcontract work to third-country
+      freelancers, and — per FBI warnings — extort employers by threatening
+      to leak stolen data or harming former managers. The defender's problem
+      is identity assurance at hiring and continuous verification: the
+      insider arrived through the front door with a valid offer letter.
+    variants:
+      - "Laptop farms: facilitator-hosted company laptops with remote-access software masking worker location"
+      - "Facilitator-assisted hiring: paid stand-ins for interviews, identity verification, drug tests"
+      - "Extortion pivot: workers threatening data leaks or violence when detected or terminated"
+    indicators:
+      - "Remote employees whose login telemetry (time zones, device identifiers, network egress) contradicts their claimed location"
+      - "Device-identifier reuse across multiple employee records, or identifiers inconsistent with the issued hardware"
+      - "Interviews or onboarding artifacts suggesting stand-ins (video anomalies, mismatched ID documents)"
+      - "Post-termination extortion attempts referencing internal data the former 'employee' accessed"
+    detection:
+      rule: detect_dprk_it_worker_infiltration
+      patterns:
+        - '(?i)(laptop[\s_-]*farm|remote[\s_-]*it[\s_-]*worker).{0,60}(north.korea|dprk|famous.chollima|facilitator)'
+        - '(?i)(fake|fraudulent|stolen.identity).{0,40}(remote|hire|onboard|identity).{0,40}(dprk|north.korea|sanction)'
+        - '(?i)device[\s_-]*identifier.{0,40}(spoof|reuse|mismatch).{0,40}(employee|laptop)'
+    severity: high
+    mitigations:
+      - "Verify remote hires with layered identity checks: live video interviews, document validation, and device-identity binding at onboarding."
+      - "Continuously monitor remote-employee telemetry for location and device inconsistencies; re-verify on anomalies."
+      - "Restrict new remote hires' access to sensitive data and code until a probationary verification period completes."
+      - "Maintain an incident playbook for suspected DPRK IT-worker cases: isolate access, preserve devices, engage law enforcement (FBI IC3)."
+    examples:
+      - summary: "The DOJ (Oct 2026) charged 14 individuals and seized ~187 computers in a laptop-farm network that placed DPRK IT workers at 70+ U.S. companies (2019–2025), generating ~$3M; the FBI's PSA I-101326-PSA describes evolving facilitator and device-spoofing tactics."
+        reference: "https://www.justice.gov/usao-ndoh/pr/14-indicted-north-korean-remote-it-worker-conspiracy-affecting-more-70-us-companies"
+      - summary: "The FBI warns North Korean IT workers now recruit Americans as facilitators — paying for interview stand-ins, identity verification, and laptop hosting — and increasingly threaten extortion backed by data stolen from inside the employer."
+        reference: "https://thecyberexpress.com/fbi-warns-north-korean-it-workers/"
+    references:
+      - "https://www.justice.gov/usao-ndoh/pr/14-indicted-north-korean-remote-it-worker-conspiracy-affecting-more-70-us-companies"
+      - "https://thecyberexpress.com/fbi-warns-north-korean-it-workers/"
+
+  - id: AEG-T260
+    name: "State Wiper Operations Disguised as Ransomware"
+    category: apt_campaigns
+    description: >-
+      State actors repeatedly deploy destructive wipers camouflaged as
+      financially motivated ransomware — the disguise buys deniability,
+      confuses incident response, and misdirects the media narrative.
+      NotPetya (June 2017, attributed to GRU/Sandworm) presented a ransom
+      note while irreversibly destroying disks, causing ~$10B in global
+      damage; in February 2022 ESET found HermeticWiper — deployed via
+      compromised domain controllers against Ukrainian organizations —
+      paired with a crude HermeticRansom decoy.
+    how_it_works: >-
+      The operational pattern: gain broad access first (NotPetya rode a
+      trojanized M.E.Doc software update; HermeticWiper was pushed from
+      seized domain controllers via group policy), then execute irreversible
+      disk destruction — NotPetya overwrote the Master Boot Record and
+      encrypted the Master File Table with no recovery path; HermeticWiper
+      abused a legitimate EaseUS partition driver to corrupt drives before
+      reboot. The ransom note is the tell-in-reverse: researchers (Comae,
+      Kaspersky, Symantec) concluded within days that NotPetya could never
+      decrypt even if paid — the payment mechanism was narrative cover for
+      sabotage. Defenders detect this class by treating "ransomware" with
+      non-functional recovery paths as a destructive attack: isolate for
+      containment, not for negotiation, and hunt the deployment mechanism
+      (GPO, update channel) rather than the payload.
+    variants:
+      - "Supply-chain-delivered wiper with ransom camouflage (NotPetya via M.E.Doc)"
+      - "Domain-controller-pushed wiper with crude ransom decoy (HermeticWiper/HermeticRansom, Feb 2022)"
+      - "Wiper families as track-covering for grid attacks (CaddyWiper alongside Industroyer2)"
+    indicators:
+      - "'Ransomware' whose payment or decryption path is non-functional — no working recovery mechanism even in principle"
+      - "Mass, simultaneous MBR/disk-corruption events across many hosts with no prior exfiltration or ransom negotiation"
+      - "Wiper deployment via enterprise management channels: group policy pushes, software-update mechanisms, or domain-controller-originated execution"
+      - "Paired crude ransomware binaries alongside the wiper (smokescreen pattern)"
+    detection:
+      rule: detect_state_wiper_camouflage
+      patterns:
+        - '(?i)(wiper|wiped|wiping).{0,60}(disguised|masquerad|camouflage|ransomware.decoy|smokescreen)'
+        - '(?i)(notpetya|hermeticwiper|caddywiper|whispergate|hermeticransom).{0,60}(destructive|wiper|sandworm|gru)'
+        - '(?i)(mbr|master.boot.record|master.file.table).{0,60}(overwrite|corrupt|destroy|irreversible)'
+    severity: critical
+    mitigations:
+      - "Maintain tested offline backups and bare-metal recovery capability for destructive scenarios — wipers make 'pay and restore' impossible."
+      - "Monitor enterprise management channels (GPO, update servers, RMM) for unauthorized mass-deployment commands."
+      - "Segment and protect domain controllers and update infrastructure as the highest-value destructive-attack launchpads."
+      - "In IR playbooks, add a 'wiper check': if recovery is technically impossible, switch immediately from ransom negotiation to destructive-attack containment."
+    examples:
+      - summary: "NotPetya (June 27 2017) spread from a trojanized M.E.Doc update, destroyed disks irreversibly while displaying a ransom note, and was attributed to GRU/Sandworm; researchers concluded within days it was a wiper with ransomware as narrative cover, causing ~$10B in damage."
+        reference: "https://www.deretticyberlabs.com/research/archive/notpetya.html"
+      - summary: "ESET and Symantec discovered HermeticWiper on hundreds of Ukrainian machines on Feb 23 2022 — deployed from compromised domain controllers, abusing a signed EaseUS driver to corrupt disks — with a crude HermeticRansom binary serving as the smokescreen."
+        reference: "https://thehackernews.com/2022/02/new-wiper-malware-targeting-ukraine.html?m=0"
+    references:
+      - "https://www.deretticyberlabs.com/research/archive/notpetya.html"
+      - "https://thehackernews.com/2022/02/new-wiper-malware-targeting-ukraine.html?m=0"
+
+  - id: AEG-T261
+    name: "Dual-Mission Intrusion Sets: Espionage Blended with Cybercrime"
+    category: apt_campaigns
+    description: >-
+      Some state intrusion sets run espionage and profit-motivated crime
+      from the same infrastructure and operators. APT41 (Barium/Winnti,
+      active since at least 2012) is the canonical case: the DOJ's 2020
+      indictments charge five PRC nationals with intrusions against 100+
+      victims for state espionage — theft of source code, certificates,
+      and business data — alongside ransomware and crypto-jacking schemes
+      run for personal profit. Defenders who classify an intrusion as
+      'only crime' or 'only espionage' misjudge what the actor will do
+      next.
+    how_it_works: >-
+      The dual-mission shape: the same operators, tooling (PlugX, Cobalt
+      Strike, China Chopper, ShadowPad), and access broker networks serve
+      both masters. Espionage targets (telecoms, software firms, think
+      tanks, Hong Kong activists) sit beside financially motivated activity
+      (gaming-industry theft of virtual currency and source code,
+      ransomware, cryptominers on victim hosts). The criminal revenue may
+      self-fund operations and provide a cover narrative — 'just
+      cybercriminals' — that delays state-level response. For defenders,
+      the implication is that any APT41-family foothold must be investigated
+      for both data theft and persistence-for-profit, and that the actor's
+      playbook includes rapid monetization (ransomware) alongside
+      long-dwell collection.
+    variants:
+      - "Espionage tooling reused for ransomware and cryptojacking (APT41 pattern)"
+      - "Gaming-industry targeting for virtual goods and source code theft"
+      - "State-company overlap: operators moonlighting criminal schemes on state-built access"
+    indicators:
+      - "A single intrusion showing both collection behavior (source code, certificate theft) and monetization (miners, ransomware, virtual-currency theft)"
+      - "Known APT41 tooling (ShadowPad, PlugX, Cobalt Strike with actor-typical configs) appearing in apparently 'criminal' incidents"
+      - "Victimology spanning espionage targets and gaming/financial targets within one campaign cluster"
+    detection:
+      rule: detect_dual_mission_intrusion
+      patterns:
+        - '(?i)(apt41|barium|winnti|wicked.panda|double.dragon).{0,80}(ransomware|crypto[\s_-]*jack|cybercrime|gaming)'
+        - '(?i)(dual[\s_-]*mission|espionage).{0,60}(cybercrime|financial|ransomware|monetiz)'
+        - '(?i)(shadowpad|plugx).{0,60}(ransomware|miner|virtual.currency)'
+    severity: high
+    mitigations:
+      - "Never classify a dual-mission actor's intrusion as crime-only: scope every investigation for espionage collection as well."
+      - "Protect code-signing certificates and source-code repositories with the same rigor as classified data — they are APT41-class targets."
+      - "Monitor gaming, telecom, and software supply-chain sectors for the blended victimology pattern."
+      - "Share intrusion-set (not just incident-type) intelligence so 'criminal' cases get correlated with state campaigns."
+    examples:
+      - summary: "The DOJ (Sept 2020) indicted five PRC nationals as APT41 for intrusions against 100+ victims spanning espionage (source code, certificates, business data) and criminal schemes (ransomware, crypto-jacking); all five are on the FBI's most-wanted list."
+        reference: "https://www.justice.gov/opa/pr/seven-international-cyber-defendants-including-apt41-actors-charged-connection-computer?ref=news.risky.biz"
+      - summary: "SecurityWeek's coverage of the indictments details the blended targeting — software and game companies, telecoms, universities, think tanks, and Hong Kong activists — and the parallel ransomware and crypto-jacking operations."
+        reference: "https://www.securityweek.com/us-charges-alleged-hackers-chinese-apt41-group-attacks-100-firms/"
+    references:
+      - "https://www.justice.gov/opa/pr/seven-international-cyber-defendants-including-apt41-actors-charged-connection-computer?ref=news.risky.biz"
+      - "https://www.securityweek.com/us-charges-alleged-hackers-chinese-apt41-group-attacks-100-firms/"
+
+  - id: AEG-T262
+    name: "Watering-Hole Operations Against Targeted Communities"
+    category: apt_campaigns
+    description: >-
+      Instead of phishing individuals, watering-hole operators compromise
+      websites a target community already trusts — then wait for the targets
+      to come to them. APT29 (Midnight Blizzard/SVR) was disrupted by
+      Amazon's threat-intelligence team running a watering-hole campaign in
+      2025, and the group has repeatedly abused legitimate European
+      information-exchange and document systems as lures. The technique
+      scales targeted collection: one compromised site can yield dozens of
+      high-value victims without a single email.
+    how_it_works: >-
+      The operation shape: identify a site the target community visits
+      (industry portals, government document-exchange systems, conference
+      pages), compromise it or inject a malicious element, and fingerprint
+      visitors to serve exploits selectively to targets of interest while
+      showing benign content to everyone else. NOBELIUM variants use HTML
+      smuggling and malicious ISO/LNK droppers (the EnvyScout/ROOTSAW
+      chain) after the initial lure. When defenders block the malicious
+      infrastructure, operators rapidly pivot to new domains — so detection
+      focuses on the pattern: trusted-site compromise correlated with
+      selective visitor exploitation, plus fast infrastructure churn after
+      each block.
+    variants:
+      - "Compromised community and industry portals with selective exploitation (APT29 watering holes)"
+      - "Abuse of legitimate document-exchange systems as lures (LegisWrite/eTrustEx-style, BlackBerry 2023 reporting)"
+      - "Conference and event pages trojanized around target-community gatherings"
+    indicators:
+      - "A trusted community/government site serving different content to different visitors (selective exploitation)"
+      - "High-value individuals' browsers fetching ISO/IMG droppers or HTML-smuggled payloads from normally benign domains"
+      - "Rapid domain and server rotation following each defensive block, with overlapping registration traits"
+      - "Exploit code appearing on sites whose administrators report no authorized changes"
+    detection:
+      rule: detect_watering_hole_operation
+      patterns:
+        - '(?i)watering[\s_-]*hole'
+        - '(?i)(compromised|poisoned|trojanized).{0,40}(legitimate|trusted|community|government).{0,30}(site|portal|forum|exchange)'
+        - '(?i)(html.smuggling|selective.exploitation).{0,60}(watering|trusted.site|visitor)'
+    severity: medium
+    mitigations:
+      - "Monitor the integrity of high-trust community and government sites you operate: file-integrity monitoring and change alerting."
+      - "Deploy browser isolation or script-blocking for high-risk users visiting community portals."
+      - "Hunt for selective-exploitation patterns: the same URL behaving differently across visitor profiles."
+      - "Block and pivot on the full infrastructure set when a watering hole is found — expect rapid operator rotation."
+    examples:
+      - summary: "Amazon's threat-intelligence team disrupted an APT29 watering-hole campaign in 2025; the group pivoted to new domains and servers each time defenders blocked infrastructure, illustrating the operational resilience of the technique."
+        reference: "https://www.infosecurity-magazine.com/news/amazon-russian-apt29-watering-hole/"
+      - summary: "BlackBerry reported NOBELIUM exploiting legitimate European information-exchange systems (LegisWrite, eTrustEx) and compromised library websites to deliver EnvyScout droppers via HTML smuggling against government targets."
+        reference: "https://www.bitdefender.com/en-us/blog/hotforsecurity/russia-based-apt29-group-exploited-information-exchange-systems-to-attack-governments"
+    references:
+      - "https://www.infosecurity-magazine.com/news/amazon-russian-apt29-watering-hole/"
+      - "https://www.bitdefender.com/en-us/blog/hotforsecurity/russia-based-apt29-group-exploited-information-exchange-systems-to-attack-governments"
+
+  - id: AEG-T263
+    name: "Strategic Targeting of Journalists, Dissidents, and High-Risk Individuals"
+    category: apt_campaigns
+    description: >-
+      State campaigns systematically target journalists, human-rights
+      activists, dissidents, and political campaigns — not for money, but
+      for intelligence and suppression. Google's Threat Analysis Group,
+      which tracks 270+ government-backed groups across 50+ countries,
+      sent ~40,000 state-sponsored-attack warnings in 2019 alone, with
+      officials, journalists, and dissidents the most targeted; over 90%
+      of the attacks were credential phishing. Separately, TAG's 2024
+      'Buying Spying' report documents governments procuring commercial
+      spyware to surveil the same populations.
+    how_it_works: >-
+      The campaign pattern is high-precision and low-volume: credential
+      phishing emails impersonating news outlets or colleagues (attackers
+      send benign rapport-building messages first, then the malicious one),
+      zero-day or commercial-spyware exploitation of the target's phone, and
+      account-hijack attempts against email and cloud accounts holding
+      source communications. Iran- and DPRK-origin groups are the most
+      frequent offenders in TAG's data. The defender's posture is
+      asymmetric: the targets are individuals, so protection means
+      hardware security keys (Google's Advanced Protection Program),
+      locked-down account recovery, and treating every 'security alert'
+      email with suspicion — while newsrooms and NGOs run dedicated
+      digital-security support.
+    variants:
+      - "Credential-phishing waves against journalists and political campaigns (90%+ of observed state attacks per TAG)"
+      - "Commercial spyware procured by governments against activists and dissidents"
+      - "Rapport-building pretexts: benign messages before the malicious follow-up"
+    indicators:
+      - "Phishing emails impersonating news outlets, colleagues, or 'security alerts' aimed at journalists, activists, or campaign staff"
+      - "Account-recovery or password-reset attempts against high-risk individuals' email and cloud accounts"
+      - "Commercial-spyware indicators (per TAG/CSVs reporting) on devices of targeted individuals"
+      - "State-sponsored-attack warning notifications (Google, Apple) received by staff or sources"
+    detection:
+      rule: detect_high_risk_individual_targeting
+      patterns:
+        - '(?i)(journalist|dissident|activist|campaign.staff).{0,60}(target|phish|spyware|surveillance|credential)'
+        - '(?i)(government[\s_-]*backed|state[\s_-]*sponsored).{0,60}(phish|attack|warning).{0,40}(journalist|activist|dissident|official)'
+        - '(?i)(commercial.spyware|surveillance.vendor).{0,60}(journalist|activist|dissident)'
+    severity: high
+    mitigations:
+      - "Enroll high-risk individuals in hardware-key-based protection (Google Advanced Protection Program or equivalent)."
+      - "Lock down account recovery paths and train targets to verify 'security alert' emails out-of-band."
+      - "Provide newsrooms, NGOs, and campaigns with dedicated digital-security support and incident-response contacts."
+      - "Monitor for impersonation of your organization's journalists or outlets in phishing infrastructure."
+    examples:
+      - summary: "Google TAG sent ~40,000 state-sponsored-attack warnings in 2019, with government officials, journalists, and dissidents the most targeted; attackers increasingly impersonated news outlets and built rapport with benign messages before delivering malware."
+        reference: "https://mediawell.ssrc.org/news-items/google-sent-users-40000-warnings-of-nation-state-hack-attacks-in-2019-ars-technica/"
+      - summary: "Google TAG's 2024 'Buying Spying' report documents the commercial surveillance industry selling spyware to governments that deploy it against journalists, activists, and political opponents — the procurement pipeline behind targeted surveillance."
+        reference: "https://www.medianama.com/2024/02/223-googles-publishes-report-commercial-surveillance-vendors-operate/"
+    references:
+      - "https://mediawell.ssrc.org/news-items/google-sent-users-40000-warnings-of-nation-state-hack-attacks-in-2019-ars-technica/"
+      - "https://www.medianama.com/2024/02/223-googles-publishes-report-commercial-surveillance-vendors-operate/"
+
+  - id: AEG-T264
+    name: "Cyber-Enabled Election Influence Operations"
+    category: apt_campaigns
+    description: >-
+      State actors pair cyber intrusions with influence operations around
+      elections: stealing campaign material, then laundering it through
+      hack-and-leak or intimidation campaigns to shape outcomes and erode
+      trust. Iran's IRGC-linked Cotton Sandstorm posed as the 'Proud Boys'
+      to threaten Florida voters by email in 2020 and probed election
+      websites in swing states ahead of 2024; a joint ODNI/FBI/CISA
+      statement (Aug 2024) confirmed Iranian cyber operations targeting
+      both U.S. presidential campaigns.
+    how_it_works: >-
+      The operational blend: (1) cyber collection — spear-phishing and
+      social engineering against campaign staff and election officials to
+      steal non-public material; (2) influence laundering — releasing stolen
+      material through cutouts, or fabricating intimidation (spoofed voter
+      threats, fake 'hacktivist' videos probing election systems) to create
+      chaos without ever touching vote counts; (3) reconnaissance of
+      election-related websites and media outlets to prepare follow-on
+      operations. The 2020 Cotton Sandstorm case is the template: no voting
+      systems were affected, but the goal — confusion and doubt — was
+      achieved through pure perception effects. Defenders (election
+      officials, campaigns, media) counter with hardened campaign
+      infrastructure, rapid debunking of forged material, and
+      pre-positioned public communication that stolen or forged content
+      will be treated as inauthentic until verified.
+    variants:
+      - "Hack-and-leak: stolen campaign material released through cutouts (Iran 2024 pattern)"
+      - "Voter intimidation via spoofed extremist personas (Cotton Sandstorm 'Proud Boys' emails, 2020)"
+      - "Pre-election reconnaissance of election websites and media outlets"
+    indicators:
+      - "Spear-phishing and social-engineering campaigns targeting campaign staff and election officials in election cycles"
+      - "Spoofed threatening communications to voters claiming to be domestic extremist groups"
+      - "Reconnaissance and vulnerability probing of election-related websites and local media outlets"
+      - "Stolen non-public campaign material appearing through unfamiliar cutout accounts or outlets"
+    detection:
+      rule: detect_election_influence_operation
+      patterns:
+        - '(?i)(election|voter|campaign).{0,60}(influence|interference|intimidat|disinformation|hack.and.leak)'
+        - '(?i)(cotton.sandstorm|proud.boys).{0,60}(influence|voter|threaten|email)'
+        - '(?i)(recon|prob).{0,40}(election[\s_-]*related|swing.state).{0,40}(website|media)'
+    severity: high
+    mitigations:
+      - "Harden campaign and election-official infrastructure: phishing-resistant MFA, locked-down email, rapid incident response."
+      - "Pre-position public communication: commit in advance to treating leaked or forged election material as unverified."
+      - "Monitor and rapidly debunk spoofed voter-communications and fake 'hacktivist' claims during election windows."
+      - "Share threat indicators between election officials, campaigns, and platforms through established channels (EI-ISAC, CISA)."
+    examples:
+      - summary: "A joint ODNI/FBI/CISA statement (Aug 19 2024) confirmed increasingly aggressive Iranian cyber operations targeting both U.S. presidential campaigns, with stolen material intended to influence the election — the hack-and-leak pattern."
+        reference: "https://content.govdelivery.com/accounts/USDHSCISA/bulletins/3afd156"
+      - summary: "Microsoft-tracked Cotton Sandstorm (IRGC-linked) posed as the 'Proud Boys' to send threatening emails to Florida voters in 2020 and probed election-related websites in swing states ahead of the 2024 election."
+        reference: "https://www.hstoday.us/tag/iranian-election-influence-efforts/feed/"
+    references:
+      - "https://content.govdelivery.com/accounts/USDHSCISA/bulletins/3afd156"
+      - "https://www.hstoday.us/tag/iranian-election-influence-efforts/feed/"
+doctrine_notes:
+  - title: "APT Operators Optimize for Position, Not Spectacle"
+    body: "An espionage operator's target list is a map of future options, not present desires. They compromise the unglamorous: a test tenant, a SOHO router, a water utility's IT network. As a defender, when you find an intrusion that 'makes no sense' — nothing stolen, no ransom, no obvious motive — do not downgrade it. Ask instead: what future capability does this position buy? The most dangerous intrusions look the most boring."
+  - title: "The Absence of Theft Is a Signal, Not a Relief"
+    body: "Espionage campaigns and pre-positioning operations often steal nothing for months or years. Train yourself to hunt for access and persistence, not just exfiltration. A beaconing implant with no data movement, a valid account used from a strange network, an OAuth grant that never gets exercised — these are the quiet artifacts of an operator waiting. If your detection stack only fires on theft, you are blind to the patient half of the threat."
+  - title: "OPSEC Asymmetry: They Must Be Perfect Everywhere, You Must Catch Them Once"
+    body: "Every long campaign leaks somewhere — a reused certificate, a registration pattern, an operator's work-hours, a misconfigured redirector. APT tradecraft is built to minimize these leaks, not eliminate them; perfection is impossible at campaign scale. The defender's edge is breadth: long-retention logs, infrastructure pivoting, and cross-campaign correlation. Never mirror the attacker's narrow focus. Widen the net and let their need to operate be the thing that exposes them."
+  - title: "Treat Attribution Artifacts as Possibly Planted"
+    body: "Code fingerprints, language strings, and infrastructure choices can be forged — Olympic Destroyer proved a sophisticated actor can plant another group's entire signature. As a defender, respond to behavior, not identity: contain the mechanics you can see, and require independent, multi-source corroboration before you let an attribution drive your response. An adversary who knows you overfit on code similarity will hand you exactly the code similarity you expect."
+canonical_probes:
+  - "Pre-positioning in critical infrastructure OT networks for disruptive effect"
+  - "Olympic Destroyer false flag forged Lazarus code fingerprint"
+  - "Laptop farm remote IT workers North Korea identity fraud"
+  - "Password spray against legacy test tenant without MFA"
+  - "KV botnet SOHO routers compromised for covert proxying"
