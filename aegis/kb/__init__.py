@@ -7,6 +7,7 @@ them. It never contains operational attack instructions or payloads.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -177,14 +178,22 @@ class KB:
         return {p: len(v) for p, v in sorted(self.by_category.items())}
 
     # -- system prompt material ------------------------------------------
-    def doctrine_section(self, max_chars: int = 9000) -> str:
-        """hacker_mindset doctrine for the agent system prompt."""
+    def doctrine_section(self, max_chars: int | None = None) -> str:
+        """hacker_mindset doctrine for the agent system prompt.
+
+        max_chars=None (default) fits ALL doctrine — no truncation.
+        Override per-call with an explicit arg, or at runtime with the
+        AEGIS_DOCTRINE_CHARS env var, to control per-API-call cost.
+        """
+        if max_chars is None:
+            env = os.environ.get("AEGIS_DOCTRINE_CHARS", "").strip()
+            max_chars = int(env) if env else 0
         out = ["## Defender doctrine (think like an attacker, act like a defender)"]
         for t in self.by_category.get("hacker_mindset", []):
             chunk = f"### {t.id} {t.name}\n{t.description}\nKey: {t.how_it_works[:600]}"
             out.append(chunk)
         text = "\n\n".join(out)
-        return text[:max_chars]
+        return text[:max_chars] if max_chars > 0 else text
 
     def technique_index(self, max_chars: int = 12000) -> str:
         """Condensed per-category technique index for the system prompt."""
