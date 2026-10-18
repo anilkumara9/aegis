@@ -24,11 +24,54 @@ the plain-language ceiling.
 
 ## 60-second quickstart
 
-```bash
-cd ~/workspace/aegis
-python3 -m venv .venv && .venv/bin/pip install -e .
-# or: pip install -e .  (needs PyYAML + pytest)
+**Install with one command** (no manual venv steps — the installer builds an
+isolated venv at `~/.aegis/venv` and links `aegis` into `~/.local/bin`):
 
+```bash
+curl -fsSL https://raw.githubusercontent.com/<your-github-user>/aegis/main/install.sh | bash
+```
+
+> **Note:** `<your-github-user>` is a placeholder — the founder replaces it
+> with the real GitHub org/user after the repo is pushed.
+
+**Verify:**
+
+```bash
+aegis version   # -> aegis 0.2.0
+```
+
+**Set a provider key (pick one):**
+
+| Provider  | Env var            | Default model        | Notes                                  |
+|-----------|--------------------|----------------------|----------------------------------------|
+| anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5`  | default provider                        |
+| openai    | `OPENAI_API_KEY`    | `gpt-4o`             |                                        |
+| google    | `GOOGLE_API_KEY`    | *(v0.3 provider lane)* | Google provider — v0.3+                |
+| ollama    | *(none needed)*     | *(v0.3 provider lane)* | local models — v0.3+: `AEGIS_PROVIDER=ollama AEGIS_MODEL=<name> aegis` |
+| mock      | *(none needed)*     | *(n/a)*              | offline demo: `AEGIS_PROVIDER=mock aegis` |
+
+Override the model any time with `AEGIS_MODEL=<name>`.
+
+**First run:**
+
+```bash
+aegis
+```
+
+Typing `/` opens the command palette; `@path/to/file` attaches file context;
+`/sessions` + `/resume <n>` pick up where you left off.
+
+**Manual alternative** (if you prefer your own venv / pipx):
+
+```bash
+pipx install git+https://github.com/<your-github-user>/aegis.git
+# or
+python3 -m venv .venv && .venv/bin/pip install git+https://github.com/<your-github-user>/aegis.git
+```
+
+Then the tour:
+
+```bash
 # 1. Scan a tool-call trace for attack techniques:
 aegis scan examples/opencode_pattern_trace.jsonl
 # -> [CRITICAL] AEG-Txxx indirect injection ... + key-exfiltration chain

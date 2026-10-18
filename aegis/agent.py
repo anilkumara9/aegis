@@ -24,7 +24,22 @@ from .tools import ToolContext
 from .tools.registry import TOOLS
 
 
-def build_system_prompt(kb: KB) -> str:
+def build_system_prompt(kb: KB, mode: str = "dev") -> str:
+    mode_section = (
+        "## Mode: PLAN (read-only)\n"
+        "You are in PLAN mode. You may investigate freely: read files, query "
+        "your technique knowledge, fetch web pages, analyze traces. You "
+        "CANNOT write, edit, or execute anything — the guard denies those "
+        "tools at the enforcement layer, so do not attempt them. When the "
+        "user needs changes, describe them precisely: exact file paths, "
+        "exact diffs, exact commands to run. Think like an attacker studying "
+        "the target, but act only as the defender's planner."
+        if mode == "plan" else
+        "## Mode: DEV (full power)\n"
+        "You are in DEV mode with full tool power. Every call is still "
+        "guard-screened: dangerous patterns are denied, secrets redacted, "
+        "egress controlled, high-severity calls paused for human approval."
+    )
     return "\n\n".join([
         "# Aegis — defensive security agent",
         ("You are Aegis, a defensive cybersecurity agent. You have deep, "
@@ -34,6 +49,7 @@ def build_system_prompt(kb: KB) -> str:
          "payloads, no unauthorized-access assistance, no weaponized code. "
          "Security auditing is only ever performed on the user's OWN "
          "explicitly-specified local systems."),
+        mode_section,
         kb.doctrine_section(),
         kb.technique_index(),
         ("## Your defenses (always on)\n"
@@ -94,7 +110,7 @@ class AgentLoop:
         self.max_iterations = max_iterations or config.MAX_AGENT_ITERATIONS
         self.ctx = ToolContext(guard_session=guard_session, kb=kb, cwd=self.cwd,
                                approval_callback=approval_callback)
-        self.system = build_system_prompt(kb)
+        self.system = build_system_prompt(kb, guard_session.policy.mode)
         self.tool_specs = [t.spec() for t in TOOLS.values()]
         # Display callbacks for tool-call blocks: additive, never required.
         self.on_tool_start = on_tool_start or (lambda name, summary: None)
@@ -115,6 +131,22 @@ class AgentLoop:
                 self.conversation_id = conversation_id
                 if self.history is None:
                     self.history = []
+
+    def set_mode(self, mode: str) -> None:
+        """Switch dev/plan mode mid-session.
+
+        The guard policy is the enforcement point; the system prompt is
+        rebuilt so the model reasons correctly about its capabilities.
+        """
+        mode = mode.lower()
+        if mode not in ("dev", "plan"):
+            raise ValueError(f"unknown mode '{mode}' (want dev|plan)")
+        self.guard.policy.mode = mode
+        self.system = build_system_prompt(self.kb, mode)
+
+    @property
+    def mode(self) -> str:
+        return self.guard.policy.mode
 
     def attach_conversation(self, conversation_id: str,
                             keep_existing: bool = False) -> bool:

@@ -28,8 +28,31 @@ from .detect.engine import Finding, pattern_scan
 from .kb import KB
 
 EXEC_TOOLS = {"bash", "exec", "shell", "run_command", "terminal"}
+WRITE_TOOLS = {"write", "edit"}
 NETWORK_TOOLS = {"webfetch", "curl", "http_request", "wget"}
 URL_RE = re.compile(r"https?://([^/\s:]+)")
+
+# Plan mode (read-only) denies these at the guard layer — hard deny, not
+# a prompt suggestion. Read-only tools (read, kb_query, webfetch,
+# scan_trace, respond) stay available.
+PLAN_DENIED_TOOLS = WRITE_TOOLS | EXEC_TOOLS
+
+# Primarily-offensive kits: denied outright, always. Dual-use recon/scanner
+# tooling (nmap, sqlmap, hydra, …) is NOT blanket-denied — defenders need it
+# on their own assets — but stays guard-screened and approval-gated, and the
+# operator is responsible for scope. See docs/SCOPE_AND_LIMITS.md.
+OFFENSIVE_TOOL_PATTERNS = [
+    r"\bmsfconsole\b", r"\bmsfvenom\b", r"\bmsfdb\b", r"\bmsfrpc\b",
+    r"\bmimikatz\b", r"\bpypykatz\b", r"\bsekurlsa\b",
+    r"\bempire\b", r"\bstarkiller\b",
+    r"\bveil\b", r"\bshellter\b",
+    r"\bbeef-xss\b", r"\bbeef\b",
+    r"\broutersploit\b",
+    r"\bautopwn\b",
+    r"\bcobalt\s*strike\b",
+]
+
+_OFFENSIVE_RES = [re.compile(p, re.IGNORECASE) for p in OFFENSIVE_TOOL_PATTERNS]
 
 # Built-in deny patterns: never allow, regardless of policy.
 BUILTIN_DENY_ARG_PATTERNS = [
@@ -58,6 +81,7 @@ class Policy:
     egress_allowlist: list[str] | None = None  # None = any egress needs approval
     approval_callback: Callable[[list[Finding]], bool] | None = None
     name: str = "default"
+    mode: str = "dev"  # "dev" = full power; "plan" = read-only
 
     def to_dict(self) -> dict:
         return {
@@ -66,6 +90,7 @@ class Policy:
             "deny_arg_patterns": self.deny_arg_patterns,
             "egress_allowlist": self.egress_allowlist,
             "name": self.name,
+            "mode": self.mode,
         }
 
 
@@ -141,6 +166,21 @@ class GuardSession:
                 and tool_l not in self.policy.allowed_tools):
             return Verdict("deny", findings, {},
                            f"tool '{tool}' not on the allowlist")
+
+        # 1b. plan mode: read-only, enforced here at the guard layer — a
+        # model that "forgets" it is in plan mode still cannot write/execute.
+        if self.policy.mode == "plan" and tool_l in PLAN_DENIED_TOOLS:
+            return Verdict("deny", findings, {},
+                           f"plan mode is read-only: tool '{tool}' is disabled. "
+                           f"Describe the change instead, or switch to dev mode.")
+
+        # 1c. primarily-offensive kits are never allowed through the loop.
+        for rx in _OFFENSIVE_RES:
+            if rx.search(args_text) or rx.search(tool):
+                return Verdict("deny", findings, {},
+                               "offensive tooling is blocked: Aegis is defensive-only. "
+                               "See docs/SCOPE_AND_LIMITS.md for the allowed "
+                               "security-tool surface.")
 
         # 2. arg-pattern deny rules (built-in + policy)
         for rx in self._deny_res:

@@ -1,8 +1,0 @@
-Metadata-Version: 2.4
-Name: aegis
-Version: 0.1.0
-Summary: Aegis — defensive guard agent. Deep hacking knowledge pointed entirely at defense.
-License: MIT
-Requires-Python: >=3.10
-Description-Content-Type: text/markdown
-Requires-Dist: pyyaml>=6.0

@@ -221,6 +221,167 @@ class OpenAIProvider(Provider):
         yield ("done", None)
 
 
+class GoogleProvider(Provider):
+    """Gemini API transport (x-goog-api-key header, SSE stream)."""
+
+    name = "google"
+    api_base = "https://generativelanguage.googleapis.com/v1beta/models"
+    default_model = "gemini-2.0-flash"
+
+    def __init__(self, api_key: str, model: str):
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY (or GEMINI_API_KEY) is not set")
+        self.api_key = api_key
+        self.model = model or self.default_model
+
+    def _to_google(self, messages: list[dict]) -> list[dict]:
+        out = []
+        for m in messages:
+            role, content = m["role"], m.get("content", "")
+            if role == "assistant":
+                parts = []
+                if content:
+                    parts.append({"text": content})
+                for tc in m.get("tool_calls", []):
+                    parts.append({"functionCall": {
+                        "name": tc["name"], "args": tc["args"]}})
+                out.append({"role": "model", "parts": parts})
+            elif role == "tool":
+                out.append({"role": "user", "parts": [{
+                    "functionResponse": {"name": m.get("name", ""),
+                                         "response": {"output": content}}}]})
+            else:
+                out.append({"role": "user", "parts": [{"text": content}]})
+        return out
+
+    def stream(self, messages, tools, system):
+        body = {
+            "contents": self._to_google(messages),
+            "generationConfig": {"temperature": 0.2},
+            "tools": [{"functionDeclarations": [
+                {"name": t["name"], "description": t["description"],
+                 "parameters": t["parameters"]} for t in tools]}],
+        }
+        if system:
+            body["systemInstruction"] = {"parts": [{"text": system}]}
+        url = f"{self.api_base}/{self.model}:streamGenerateContent?alt=sse"
+        req = urllib.request.Request(
+            url, data=json.dumps(body).encode(),
+            headers={"x-goog-api-key": self.api_key,
+                     "content-type": "application/json"})
+        try:
+            resp = urllib.request.urlopen(req, timeout=120)
+        except Exception as e:
+            yield ("error", f"google request failed: {e}")
+            return
+        yield from self._parse(resp)
+
+    def _parse(self, resp) -> Iterator[Event]:
+        calls: list[tuple[str, object]] = []
+        n = 0
+        for _event, data in _sse_events(resp):
+            if data == "[DONE]":
+                continue
+            try:
+                obj = json.loads(data)
+            except Exception:
+                continue
+            for cand in obj.get("candidates", []):
+                for part in cand.get("content", {}).get("parts", []):
+                    if part.get("text"):
+                        yield ("text", part["text"])
+                    fc = part.get("functionCall")
+                    if fc:
+                        n += 1
+                        calls.append((f"gem-{n}", fc.get("name", ""),
+                                      fc.get("args", {})))
+        for cid, cname, cargs in calls:
+            yield ("tool_call", ToolCall(cid, cname,
+                                         cargs if isinstance(cargs, dict) else {}))
+        yield ("done", None)
+
+
+class OllamaProvider(Provider):
+    """Local Ollama transport (/api/chat, newline-delimited JSON stream)."""
+
+    name = "ollama"
+
+    def __init__(self, base_url: str, model: str):
+        self.base_url = (base_url or "http://localhost:11434").rstrip("/")
+        self.model = model or ""
+
+    def _to_ollama(self, messages: list[dict]) -> list[dict]:
+        out = []
+        for m in messages:
+            role = m["role"]
+            if role == "assistant" and m.get("tool_calls"):
+                out.append({
+                    "role": "assistant", "content": m.get("content") or "",
+                    "tool_calls": [{
+                        "id": tc["id"], "type": "function",
+                        "function": {"name": tc["name"],
+                                     "arguments": json.dumps(tc["args"])}}
+                        for tc in m["tool_calls"]]})
+            elif role == "tool":
+                out.append({"role": "tool",
+                            "tool_call_id": m.get("tool_call_id", ""),
+                            "content": m.get("content", "")})
+            else:
+                out.append({"role": role, "content": m.get("content", "")})
+        return out
+
+    def stream(self, messages, tools, system):
+        if not self.model:
+            yield ("error", "no model set: use --model <name> "
+                            "(ollama pull <name> first)")
+            return
+        body = {
+            "model": self.model, "stream": True,
+            "messages": ([{"role": "system", "content": system}] if system else [])
+            + self._to_ollama(messages),
+            "tools": [{"type": "function",
+                       "function": {"name": t["name"],
+                                    "description": t["description"],
+                                    "parameters": t["parameters"]}}
+                      for t in tools],
+        }
+        req = urllib.request.Request(
+            f"{self.base_url}/api/chat", data=json.dumps(body).encode(),
+            headers={"content-type": "application/json"})
+        try:
+            resp = urllib.request.urlopen(req, timeout=120)
+        except Exception as e:
+            yield ("error", f"ollama request failed: {e}")
+            return
+        yield from self._parse(resp)
+
+    def _parse(self, resp) -> Iterator[Event]:
+        calls: list[tuple[str, dict]] = []
+        for raw in resp:
+            line = raw.decode("utf-8", "ignore").strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            if obj.get("done"):
+                break
+            msg = obj.get("message", {})
+            if msg.get("content"):
+                yield ("text", msg["content"])
+            for tc in msg.get("tool_calls", []):
+                fn = tc.get("function", {})
+                args = fn.get("arguments", {})
+                if isinstance(args, str):
+                    args = _safe_args(args)
+                calls.append((fn.get("name", ""),
+                              args if isinstance(args, dict) else {}))
+        for i, (cname, cargs) in enumerate(calls, 1):
+            yield ("tool_call", ToolCall(f"oll-{i}", cname, cargs))
+        yield ("done", None)
+
+
 class MockProvider(Provider):
     """Scripted provider for tests and offline demos. No network.
 
@@ -271,6 +432,11 @@ def get_provider(name: str = "", model: str = "") -> Provider:
         return AnthropicProvider(config.ANTHROPIC_API_KEY, model)
     if name == "openai":
         return OpenAIProvider(config.OPENAI_API_KEY, model)
+    if name == "google":
+        return GoogleProvider(config.GOOGLE_API_KEY, model)
+    if name == "ollama":
+        return OllamaProvider(config.OLLAMA_URL, model)
     if name == "mock":
         return MockProvider([])
-    raise ValueError(f"unknown provider '{name}' (want anthropic|openai|mock)")
+    raise ValueError(f"unknown provider '{name}' "
+                     f"(want anthropic|openai|google|ollama|mock)")

@@ -29,6 +29,26 @@ exactly what it can and cannot do, in plain language.
    runtime is already owned, no in-agent guard can be trusted. Keep the
    host patched and the Docker daemon sane.
 
+## Allowed security-tool surface (v0.3)
+
+Aegis is a defensive agent, and its tool repertoire is a *defensive* one:
+
+- **Allowed, guard-screened:** operating security tooling on the user's OWN
+  explicitly-scoped local assets via the sandboxed bash tool — vulnerability
+  scanners, static analyzers, log analyzers, and similar — with the KB guiding
+  interpretation of results. Dual-use recon/scanner tools (nmap, sqlmap,
+  hydra, …) are NOT blanket-denied, because defenders legitimately need them
+  on their own networks; they stay guard-screened, and high-severity usage
+  pauses for human approval. The operator is responsible for scope: only ever
+  point these at systems you own or are authorized to test.
+- **Always denied:** primarily-offensive kits are blocked at the guard layer,
+  in every mode, with no override — msfconsole/msfvenom/msfdb, mimikatz /
+  pypykatz, Empire/Starkiller, Veil, Shellter, BeEF, RouterSploit, autopwn
+  tooling, Cobalt Strike artifacts. This is not a configurable denylist; it
+  is part of the defensive-only boundary.
+- **Never built:** exploit payload generation, credential-theft automation,
+  and attack execution against any target remain out of scope, permanently.
+
 ## Coverage cross-check
 
 The KB was cross-checked against MITRE ATT&CK's tactic list and OWASP's

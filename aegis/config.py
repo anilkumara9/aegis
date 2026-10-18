@@ -27,13 +27,17 @@ STATE_DIR = state_dir()
 SESSIONS_DIR = sessions_dir()
 AUDIT_DIR = audit_dir()
 
-PROVIDER = os.environ.get("AEGIS_PROVIDER", "anthropic").lower()  # anthropic | openai | mock
-MODEL = os.environ.get(
-    "AEGIS_MODEL",
-    "claude-sonnet-4-5-20250929" if PROVIDER == "anthropic" else "gpt-4o",
-)
+PROVIDER = os.environ.get("AEGIS_PROVIDER", "anthropic").lower()  # anthropic | openai | google | ollama | mock
+_MODEL_DEFAULTS = {
+    "anthropic": "claude-sonnet-4-5-20250929",
+    "openai": "gpt-4o",
+    "google": "gemini-2.0-flash",
+}
+MODEL = os.environ.get("AEGIS_MODEL", _MODEL_DEFAULTS.get(PROVIDER, ""))
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "") or os.environ.get("GEMINI_API_KEY", "")
+OLLAMA_URL = os.environ.get("AEGIS_OLLAMA_URL", "http://localhost:11434")
 
 # Tool sandbox: "docker" runs bash through a container when docker is present,
 # "local" runs on the host (guard still enforced). Default: docker if available.

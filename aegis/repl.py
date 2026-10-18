@@ -9,11 +9,12 @@ from pathlib import Path
 
 from . import __version__, config, guard as guard_mod
 from . import session as session_mod
+from . import tui
 from .agent import AgentLoop
 from .guard import Policy
 from .kb import KB
 from .providers import get_provider
-from .skills import SKILLS, hunt
+from .skills import SKILLS, hunt, plan_attack_surface
 from .tools import safe_path
 from .tools.registry import TOOL_NAMES
 
@@ -59,18 +60,19 @@ def interactive_approval(findings, tool="", args=None, cwd=None) -> bool:
 
 # -- tool-call display blocks -------------------------------------------
 def _print_tool_start(name: str, args_summary: str) -> None:
-    print(f"\n⏺ {name}({args_summary})", flush=True)
+    print(f"\n{tui.cyan('⏺')} {tui.bold(name)}({tui.dim(args_summary)})",
+          flush=True)
 
 
 def _print_tool_end(name: str, verdict: str, duration_ms: float,
                     output_excerpt: str) -> None:
     ms = f"{duration_ms:.0f}"
     if verdict in ("allow", "approved"):
-        print(f"✓ {verdict} {ms}ms")
+        print(tui.green(f"✓ {verdict}") + tui.dim(f" {ms}ms"))
     elif verdict == "deny":
-        print(f"✗ DENIED: {output_excerpt[:220]}")
+        print(tui.red("✗ DENIED") + f": {output_excerpt[:220]}")
     else:
-        print(f"✗ DENIED ({verdict}): {output_excerpt[:220]}")
+        print(tui.red(f"✗ DENIED ({verdict})") + f": {output_excerpt[:220]}")
 
 
 # -- @-file mentions ------------------------------------------------------
@@ -137,16 +139,23 @@ def _show_palette(filt: str, loop: AgentLoop,
 
 
 # -- REPL -----------------------------------------------------------------
-def run_repl(provider_name: str = "", model: str = "") -> int:
+def run_repl(provider_name: str = "", model: str = "",
+             mode: str = "dev") -> int:
     kb = KB.load()
     try:
         provider = get_provider(provider_name, model)
     except ValueError as e:
         print(f"error: {e}")
         print("Set AEGIS_PROVIDER=mock for offline mode, or export "
-              "ANTHROPIC_API_KEY / OPENAI_API_KEY.")
+              "ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY (or GEMINI_API_KEY); "
+              "for local models use AEGIS_PROVIDER=ollama with --model <name> "
+              "(ollama pull <name> first).")
         return 2
     cwd = Path.cwd()
+    mode = (mode or "dev").lower()
+    if mode not in ("dev", "plan"):
+        print(f"error: unknown mode '{mode}' (want dev|plan)")
+        return 2
 
     def approval_cb(findings, tool="", args=None):
         return interactive_approval(findings, tool, args, cwd=cwd)
@@ -154,7 +163,8 @@ def run_repl(provider_name: str = "", model: str = "") -> int:
     policy = Policy(allowed_tools=set(TOOL_NAMES),
                     approval_callback=approval_cb,
                     egress_allowlist=None,  # any egress pauses for approval
-                    name="repl")
+                    name="repl",
+                    mode=mode)
     session = guard_mod.create_session(policy, kb)
     conv = session_mod.new_session(session.id)
     loop = AgentLoop(provider, kb, session, cwd=cwd,
@@ -164,7 +174,12 @@ def run_repl(provider_name: str = "", model: str = "") -> int:
                      on_tool_start=_print_tool_start,
                      on_tool_end=_print_tool_end)
     print(BANNER.format(__version__=__version__))
-    print(f"provider: {provider.name}  model: {getattr(provider, 'model', '?')}")
+    print(tui.status_line(
+        f"provider: {provider.name}  model: {getattr(provider, 'model', '?')}  "
+        f"mode: {loop.mode}"))
+    if loop.mode == "plan":
+        print("PLAN mode: read-only. Writes, edits and command execution are "
+              "denied at the guard layer. /mode dev to switch.")
     print(f"session: {session.id}  audit: {session.audit.path}")
     print(f"KB: {kb.count()} techniques across {len(kb.packs())} packs")
     _print_recent_sessions(conv["id"])
@@ -172,7 +187,7 @@ def run_repl(provider_name: str = "", model: str = "") -> int:
 
     while True:
         try:
-            line = input("aegis> ").strip()
+            line = input(f"aegis[{loop.mode}]> ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nbye.")
             break
@@ -183,6 +198,9 @@ def run_repl(provider_name: str = "", model: str = "") -> int:
                 break
             continue
         print()
+        renderer = tui.StreamingRenderer()
+        prev_on_text = loop.on_text
+        loop.on_text = renderer.feed
         try:
             loop.run(expand_mentions(line, cwd))
         except guard_mod.SessionRevoked as e:
@@ -190,6 +208,9 @@ def run_repl(provider_name: str = "", model: str = "") -> int:
             break
         except Exception as e:
             print(f"\n[agent error: {e}]")
+        finally:
+            loop.on_text = prev_on_text
+            renderer.flush()
         print()
     return 0
 
@@ -258,6 +279,24 @@ def _handle_slash(line: str, loop: AgentLoop,
         return False
     if cmd == "/hunt":
         print(hunt(rest, kb))
+        return False
+    if cmd == "/plan":
+        print(plan_attack_surface(rest, kb))
+        return False
+    if cmd == "/mode":
+        want = (rest or "").strip().lower()
+        if want not in ("dev", "plan"):
+            print(f"mode: {loop.mode}  (usage: /mode <dev|plan>)")
+            return False
+        try:
+            loop.set_mode(want)
+        except ValueError as e:
+            print(f"error: {e}")
+            return False
+        print(f"mode -> {loop.mode}")
+        if loop.mode == "plan":
+            print("PLAN mode: read-only. write/edit/bash are denied at the "
+                  "guard layer.")
         return False
     if cmd == "/guard":
         sub = (rest or "status").lower()

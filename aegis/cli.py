@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from . import __version__, guard as guard_mod
@@ -98,7 +99,9 @@ def build_parser() -> argparse.ArgumentParser:
                                 description="Aegis defensive guard agent")
     sub = p.add_subparsers(dest="command")
 
-    sub.add_parser("repl", help="interactive terminal agent (default)")
+    rpl = sub.add_parser("repl", help="interactive terminal agent (default)")
+    rpl.add_argument("--mode", default="",
+                     help="dev|plan (default: dev; AEGIS_MODE env)")
 
     s = sub.add_parser("scan", help="analyze a tool-call trace")
     s.add_argument("trace", help="path to .jsonl trace file")
@@ -132,8 +135,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="--once|--interval|--triage|--schedule <dir> [...]")
 
     sub.add_parser("version", help="print version")
-    p.add_argument("--provider", default="", help="anthropic|openai|mock")
+    p.add_argument("--provider", default="", help="anthropic|openai|google|ollama|mock")
     p.add_argument("--model", default="", help="model name override")
+    p.add_argument("--mode", default="", help="dev|plan (default: dev; AEGIS_MODE env)")
     return p
 
 
@@ -151,7 +155,8 @@ def main(argv=None) -> int:
     cmd = args.command or "repl"
     if cmd == "repl":
         from .repl import run_repl
-        return run_repl(args.provider, args.model)
+        return run_repl(args.provider, args.model,
+                        args.mode or os.environ.get("AEGIS_MODE", "dev"))
     if cmd == "scan":
         return cmd_scan(args)
     if cmd == "guard":

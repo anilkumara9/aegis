@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.3.0 (2026-10-18)
+
+"Claude-Code-class CLI: model-agnostic, modes, polished TUI, one-command install."
+
+- **Providers**: Google Gemini (`AEGIS_PROVIDER=google`,
+  `GOOGLE_API_KEY`/`GEMINI_API_KEY`, default `gemini-2.0-flash`) and local
+  models via Ollama (`AEGIS_PROVIDER=ollama`, `AEGIS_OLLAMA_URL`, `--model`
+  picks the model) join Anthropic/OpenAI/mock in the provider abstraction.
+  Streaming where the API supports it.
+- **Modes**: `--mode dev` (default, full tool power, guard-screened) and
+  `--mode plan` (read-only). Plan mode is enforced AT THE GUARD LAYER —
+  write/edit/bash are hard-denied even if the model requests them. `/mode`
+  switches mid-session; the mode shows in the REPL prompt. `/plan` emits a
+  hacker-mindset, phase-by-phase attack plan for YOUR OWN code (defensive
+  planning, read-only).
+- **Polished TUI**: streaming markdown renderer with syntax-highlighted code
+  blocks (python/js/ts/bash/json/yaml/…), colorized tool-call blocks,
+  inline code/bold rendering, mode-aware prompt, status line. Dumb-terminal
+  safe; honors NO_COLOR.
+- **Offensive-tooling guard**: primarily-offensive kits (msfconsole/msfvenom,
+  mimikatz, Empire, Veil, BeEF, RouterSploit, …) are denied at the guard
+  layer in every mode. Dual-use scanner tooling stays allowed on the user's
+  own assets, guard-screened. Allowed surface documented in
+  `docs/SCOPE_AND_LIMITS.md`.
+- **Single-command distribution**: `pip install` exposes a real `aegis`
+  console command; new curl-pipeable `install.sh` (isolated venv under
+  `~/.aegis`, `~/.local/bin` on PATH, ends with `aegis version`
+  verification). README quickstart leads with the one-liner.
+- Defensive-only boundary unchanged.
+
 ## v0.2.0 (2026-10-18)
 
 "OpenCode interface parity + autonomous defensive team."

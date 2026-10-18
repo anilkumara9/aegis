@@ -54,6 +54,56 @@ against a real model, blocks a planted prompt-injection + exfiltration attempt
 LIVE inside the loop (test with a mock provider), and the audit log captures
 every tool call.
 
+## v0.3 scope (founder prompt 2026-10-18) — "open-source AI coding-hacking assistant"
+
+GOAL (founder, non-negotiable): Aegis replaces an entire defensive cybersecurity
+team. A Claude-Code-class CLI agent — installed and run with a SINGLE command,
+model-agnostic (OpenAI / Anthropic / Google / local), carrying the deepest
+defensive hacking knowledge ever shipped in an agent (techniques, tools,
+methods, algorithms, hacker mindset), dev + read-only plan modes, the guard
+enforced inside the loop on every tool call, polished TUI. Everything in v0.3
+serves this goal; anything that doesn't is cut.
+
+Vision: command-line-first AI assistant (Cursor/Copilot-terminal class), polished
+TUI, chat-driven help with code, deep defensive cybersecurity brain, powerful
+enough to replace an entire defensive security team. Model-agnostic. Modes.
+CLI-only — no desktop app (cancelled by founder 2026-10-18).
+
+Already built in v0.2.0: CLI agent, chat loop, read/write/execute tools,
+Anthropic+OpenAI providers, 252-technique defensive KB, in-loop guard, watch/
+hunt/triage. v0.3 adds:
+
+1. Providers: Google (Gemini API) + local models (Ollama-compatible endpoint,
+   user picks the model). Extend the existing provider abstraction. Keys via
+   env, as now.
+2. Modes: `--mode dev` (default; full tool power, guard-screened) and
+   `--mode plan` (read-only: reads, kb_query, webfetch allowed; writes/edits/
+   bash denied AT THE GUARD LAYER, not just the prompt; `/plan` emits a
+   hacker-mindset attack plan against the user's OWN code). Mode shown in the
+   prompt, switchable mid-session via `/mode`.
+3. Polished TUI: take the REPL to genuinely polished — layout, streaming,
+   syntax highlighting, tool blocks, diffs, palette. Founder bar: clean,
+   professional, readable at a glance.
+4. "Using all the hacking tools": the agent's tool repertoire for DEFENSE —
+   skilled operation of security tooling on the user's OWN assets (scanners,
+   analyzers) via the sandboxed bash tool + KB-guided interpretation. NEVER
+   operation of offensive kits or automation of attacks; the guard denies
+   offensive-tooling patterns. Document the allowed security-tool surface in
+   SCOPE_AND_LIMITS.md.
+5. Desktop app: CANCELLED by founder 2026-10-18 — CLI-only, like Claude Code.
+   Stack decision (CEO, founder-deferred 2026-10-18): Python stays. Rationale:
+   v0.1.0/v0.2.0 are verified builds (241 tests green); KB/guard/detection logic
+   is language-agnostic; single-command UX is a distribution problem, not a
+   language problem; a TypeScript rewrite would discard two verified builds for
+   zero capability gain.
+6. Single-command distribution (the "how opencode/claude code built"
+   requirement): `pip install` MUST expose a real `aegis` console command on
+   PATH; add a curl-pipeable `install.sh` mirroring OpenCode's
+   `curl -fsSL <url>/install.sh | bash` UX — installs into an isolated location
+   (~/.aegis), puts `aegis` on PATH, verifies with `aegis version`; typing
+   `aegis` alone boots the REPL. No manual venv steps for the user, ever.
+   Document the one-liner at the top of README quickstart.
+
 ## v0.2 scope (founder order 2026-10-18) — "OpenCode interface parity + autonomous defensive team"
 
 Reference: /tmp/opencode-ref — shallow clone of https://github.com/anomalyco/opencode.git
