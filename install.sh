@@ -1,7 +1,7 @@
 #!/bin/sh
 # Aegis installer — one-command setup, OpenCode/Claude Code style.
 #
-#   curl -fsSL https://raw.githubusercontent.com/<your-github-user>/aegis/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/anilkumara9/aegis/main/install.sh | bash
 #
 # What it does:
 #   1. Checks for python3 >= 3.10 (and curl/wget when it must download).
@@ -22,7 +22,7 @@ set -eu
 # ---------------------------------------------------------------- FOUNDER ---
 # After pushing to GitHub, replace the placeholder org/user below with the
 # real one. Until then the download path below will 404 on purpose.
-AEGIS_TARBALL_URL="https://github.com/<your-github-user>/aegis/archive/refs/heads/main.tar.gz"
+AEGIS_TARBALL_URL="https://github.com/anilkumara9/aegis/archive/refs/heads/main.tar.gz"
 # ----------------------------------------------------------------------------
 
 AEGIS_HOME="${AEGIS_HOME:-$HOME/.aegis}"
@@ -146,4 +146,4 @@ echo "     ...or run keyless:  AEGIS_PROVIDER=ollama AEGIS_MODEL=<name> aegis"
 echo "     ...or offline demo: AEGIS_PROVIDER=mock aegis"
 echo "  2. Just type:  aegis"
 echo ""
-echo "Docs: https://github.com/<your-github-user>/aegis  (FOUNDER: replace after push)"
+echo "Docs: https://github.com/anilkumara9/aegis  (FOUNDER: replace after push)"

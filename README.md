@@ -1,5 +1,17 @@
 # Aegis — defensive guard agent
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
+[![Version](https://img.shields.io/github/v/tag/anilkumara9/aegis?label=version)](https://github.com/anilkumara9/aegis/tags)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](https://github.com/anilkumara9/aegis/pulls)
+[![Open source](https://img.shields.io/badge/open--source-yes-blueviolet)](LICENSE)
+[![Contributors](https://img.shields.io/github/contributors/anilkumara9/aegis)](https://github.com/anilkumara9/aegis/graphs/contributors)
+[![Stars](https://img.shields.io/github/stars/anilkumara9/aegis?style=social)](https://github.com/anilkumara9/aegis/stargazers)
+
+> **Open source (MIT).** Badges and charts below light up once the repo is
+> pushed public — until then they point at its future home,
+> `github.com/anilkumara9/aegis`.
+
 Aegis is a **real interactive terminal agent** (think Claude Code / OpenCode)
 with one differentiator: deep, in-depth knowledge of the hacking world —
 every attack technique — pointed **entirely at defense**. When a hostile
@@ -28,16 +40,16 @@ the plain-language ceiling.
 isolated venv at `~/.aegis/venv` and links `aegis` into `~/.local/bin`):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<your-github-user>/aegis/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/anilkumara9/aegis/main/install.sh | bash
 ```
 
-> **Note:** `<your-github-user>` is a placeholder — the founder replaces it
+> **Note:** `anilkumara9` is a placeholder — the founder replaces it
 > with the real GitHub org/user after the repo is pushed.
 
 **Verify:**
 
 ```bash
-aegis version   # -> aegis 0.2.0
+aegis version   # -> aegis 0.3.0
 ```
 
 **Set a provider key (pick one):**
@@ -46,8 +58,8 @@ aegis version   # -> aegis 0.2.0
 |-----------|--------------------|----------------------|----------------------------------------|
 | anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5`  | default provider                        |
 | openai    | `OPENAI_API_KEY`    | `gpt-4o`             |                                        |
-| google    | `GOOGLE_API_KEY`    | *(v0.3 provider lane)* | Google provider — v0.3+                |
-| ollama    | *(none needed)*     | *(v0.3 provider lane)* | local models — v0.3+: `AEGIS_PROVIDER=ollama AEGIS_MODEL=<name> aegis` |
+| google    | `GOOGLE_API_KEY`    | `gemini-2.0-flash`     | Google Gemini, streaming               |
+| ollama    | *(none needed)*     | *(you pick)*           | local models: `AEGIS_PROVIDER=ollama AEGIS_MODEL=<name> aegis` |
 | mock      | *(none needed)*     | *(n/a)*              | offline demo: `AEGIS_PROVIDER=mock aegis` |
 
 Override the model any time with `AEGIS_MODEL=<name>`.
@@ -64,9 +76,9 @@ Typing `/` opens the command palette; `@path/to/file` attaches file context;
 **Manual alternative** (if you prefer your own venv / pipx):
 
 ```bash
-pipx install git+https://github.com/<your-github-user>/aegis.git
+pipx install git+https://github.com/anilkumara9/aegis.git
 # or
-python3 -m venv .venv && .venv/bin/pip install git+https://github.com/<your-github-user>/aegis.git
+python3 -m venv .venv && .venv/bin/pip install git+https://github.com/anilkumara9/aegis.git
 ```
 
 Then the tour:
@@ -91,7 +103,7 @@ aegis guard wrap -- ./deploy.sh
 # 6. Emit an incident runbook (operator-executed steps only):
 aegis respond rotate-keys openai
 
-# 7. The agent itself (needs ANTHROPIC_API_KEY or OPENAI_API_KEY):
+# 7. The agent itself (needs a provider key — Anthropic / OpenAI / Google — or local Ollama):
 aegis
 # Offline demo mode:  AEGIS_PROVIDER=mock aegis
 # Sessions persist: /sessions, /resume <n>, /rename — pick up where you left off.
@@ -145,6 +157,8 @@ aegis respond timeline
               │ respond   │     │  Providers  │
               └───────────┘     │ Anthropic / │
                                │ OpenAI /    │
+                               │ Google /    │
+                               │ Ollama /    │
                                │ mock (tests)│
                                └─────────────┘
 ```
@@ -156,7 +170,7 @@ Subsystems (also standalone CLI commands):
 | `aegis scan <trace.jsonl>` | Offline analyzer: matches KB detection patterns + multi-step chains (injection→secret use, sensitive-read→unapproved exec, secret egress). |
 | `aegis guard …` | Live interceptor: `check` screens one call, `wrap -- cmd` runs a command through the guard, `kill --session` is the kill-switch. In-process API: `from aegis import guard`. |
 | `aegis respond <playbook>` | `rotate-keys` (OpenAI/Anthropic/Google runbooks), `kill-session`, `quarantine-workspace`, `incident-report`. Emits operator runbooks; takes no destructive provider actions in v1. |
-| `aegis kb <query>` | Search the 19-pack technique knowledge base. |
+| `aegis kb <query>` | Search the 23-pack technique knowledge base. |
 | `aegis hunt <dir>` | Pattern-based vulnerability triage of **your own** local code. Refuses non-local targets. |
 
 ### The knowledge base
@@ -189,12 +203,25 @@ machine-usable detection patterns that the scanner and guard execute.
 - Mock provider is for tests/demos; real work needs your own API key.
 - Full ceiling: `docs/SCOPE_AND_LIMITS.md`. Threat model: `SECURITY.md`.
 
-## Parked for later (out of v0.2 scope)
+## Parked for later
 
-Full-screen TUI, MCP client, keybind config, themes (UX surface without
-security value — see `docs/OPENCODE_GAP_ANALYSIS.md`). Network IDS
-integration, eBPF/syscall monitoring, hosted SaaS console,
-auto-remediation that touches provider accounts, Windows support.
+- `/model` mid-session provider switching, watch same-line finding dedupe
+- MCP client, keybind config, themes (see `docs/OPENCODE_GAP_ANALYSIS.md`)
+- Network IDS integration, eBPF/syscall monitoring, hosted SaaS console,
+  auto-remediation that touches provider accounts, Windows support
+
+## Project progress
+
+| Milestone | Status | Shipped |
+|---|---|---|
+| v0.1.0 — first agent | ✅ done | REPL agent loop, 212-technique KB (19 packs), in-loop guard, scan/respond, 106 tests |
+| v0.2.0 — OpenCode parity push | ✅ done | Gap analysis vs OpenCode, 252 techniques (23 packs), sessions/palette/diffs, `aegis watch` SOC-in-a-box, 241 tests |
+| v0.3.0 — model-agnostic + one command | ✅ done (current) | Google + Ollama providers, dev/plan modes, polished TUI, `install.sh` single-command setup, 291 tests |
+| v0.4.0 — team workflows | 🔄 next | `/model` switching, MCP client, contributor docs, KB link-check pass |
+
+Progress to 1.0: ████████░░░░░░░░░░ — the agent is real, tested, and installs
+with one command. Stars and contributors (below) are the fuel for what comes
+next.
 
 ## Development
 
@@ -204,3 +231,20 @@ auto-remediation that touches provider accounts, Windows support.
 
 Engineering law: every capability is wired into the CLI and covered by real
 tests — no stubs, no demo systems.
+
+## Contributors
+
+Aegis is built in the open — every contribution counts, from a typo fix to a
+whole new detection pack. PRs are welcome.
+
+<a href="https://github.com/anilkumara9/aegis/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=anilkumara9/aegis" alt="contributors" />
+</a>
+
+## ⭐ Stars
+
+If Aegis helps you defend something, star it — it helps others find it.
+
+[![GitHub stars](https://img.shields.io/github/stars/anilkumara9/aegis?style=social)](https://github.com/anilkumara9/aegis/stargazers)
+
+[![Star history chart](https://api.star-history.com/svg?repos=anilkumara9/aegis&type=Date)](https://star-history.com/#anilkumara9/aegis&Date)
