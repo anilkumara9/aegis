@@ -49,6 +49,19 @@ Aegis is a defensive agent, and its tool repertoire is a *defensive* one:
 - **Never built:** exploit payload generation, credential-theft automation,
   and attack execution against any target remain out of scope, permanently.
 
+## System-prompt budget (v0.4)
+
+The agent's system prompt carries the full hacker-mindset doctrine: **44,292
+characters** (48 mindset notes), up from a 9,000-char cap that silently
+dropped ~80% of it. That is roughly **+8,800 input tokens on every model
+call** — about +$0.001/call on gpt-4o-mini, +$0.02/call on gpt-4o-class
+models, +$0.001/call on Gemini Flash (at current list prices; tokens ≈
+chars ÷ 4).
+
+You control the tradeoff at runtime with **`AEGIS_DOCTRINE_CHARS`**
+(e.g. `AEGIS_DOCTRINE_CHARS=9000 aegis`) — smaller brain, cheaper calls.
+The default fits everything: a godfather that forgets nothing.
+
 ## Coverage cross-check
 
 The KB was cross-checked against MITRE ATT&CK's tactic list and OWASP's

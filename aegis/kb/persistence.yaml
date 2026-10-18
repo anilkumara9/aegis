@@ -460,7 +460,7 @@ techniques:
       rule: detect_container_image_backdoor
       patterns:
         - "image_pull AND (publisher NOT IN trusted_publishers OR digest != vendor_signed_digest)"
-        - "(?i)(xmrig|minerd|cryptonight|/\\.ssh/|authorized_keys)\\s IN image_layer_scan_findings"
+        - "(?i)(xmrig|minerd|cryptonight|/\\.ssh/|authorized_keys)\\s+IN image_layer_scan_findings"
         - "tag_digest_changed AND no_vendor_release_event AND image_used_by_agent_workload"
     severity: critical
     mitigations:

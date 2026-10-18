@@ -1,10 +1,12 @@
 # Changelog
 
-## Unreleased — v0.4 Pillar 1: expert training panel
+## v0.4.0 (2026-10-18) — Godfather Program
 
-"Godfather Program, Pillar 1: a panel of 8 specialist trainers hired to train
-the agent's knowledge."
+"Make the agent the godfather of hacking: supreme defensive knowledge, then
+supreme defensive capability."
 
+- **Pillar 1 — expert training team**: panel of 8 domain specialists hired to
+  train the agent.
 - **8 new KB packs, 96 techniques (AEG-T253–T348)**: `apt_campaigns`
   (named-actor campaign TTPs from public reporting), `web_attack_flows`
   (exploitation workflows & detection), `c2_operations` (C2 operations at
@@ -23,6 +25,25 @@ the agent's knowledge."
   the authoring contract (frozen v0.1 file untouched): ID-range registration,
   depth bar, per-technique positive/negative fixtures, pack-level canonical
   probes, boundary re-check.
+- **Pillar 2 — adversary emulation** (`aegis emulate --target <dir>
+  [--campaign <name>]`, `/emulate` skill): chains KB techniques into 5-stage
+  campaign narratives (recon → initial access → execution → persistence →
+  exfil; 3 built-in campaigns) against YOUR OWN local assets, then
+  purple-team verifies each stage through the real detection stack —
+  COVERED vs GAP per stage. Plan-level narratives + detection verification
+  only: nothing executed, markers inert, non-local targets refused.
+- **Pillar 3 — attack graphs** (`aegis graph <dir> [--json] [--top N]`):
+  read-only analysis of a user-owned system (secrets, .env, Docker-as-root,
+  CI configs, …) → RANKED adversary attack paths (KB technique chains in
+  kill-chain order), each grounded in target evidence and annotated with the
+  defenses that break it. Markdown + JSON.
+- **Pillar 4 — MCP client** (`aegis mcp list|call`, `~/.aegis/mcp.json`):
+  stdio-transport MCP client; every MCP tool call guard-screened exactly
+  like a native tool (allowlist/deny, secret redaction, approval); MCP tools
+  registered into the agent loop's tool set. Docs: `docs/MCP_CLIENT.md`.
+- **Doctrine cap configurable**: `AEGIS_DOCTRINE_CHARS` env (default fits
+  all 44,292 chars / 48 mindset notes; ≈+8,800 input tokens per call —
+  see `docs/SCOPE_AND_LIMITS.md` for the cost tradeoff).
 
 ## v0.3.0 (2026-10-18)
 

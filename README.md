@@ -117,6 +117,15 @@ aegis watch --triage                    # severity-ranked, deduped finding queue
 
 # 9. Incident timeline (audit logs + alerts + triage, chronological):
 aegis respond timeline
+
+# 10. Purple-team adversary emulation on YOUR OWN code (plan-level only, nothing executed):
+aegis emulate --target ~/my-project --campaign credential-theft
+
+# 11. Ranked attack paths for YOUR OWN system (with the defenses that break each):
+aegis graph ~/my-project
+
+# 12. MCP servers (configured in ~/.aegis/mcp.json) — every call guard-screened:
+aegis mcp list
 ```
 
 ## Architecture
@@ -170,12 +179,15 @@ Subsystems (also standalone CLI commands):
 | `aegis scan <trace.jsonl>` | Offline analyzer: matches KB detection patterns + multi-step chains (injection→secret use, sensitive-read→unapproved exec, secret egress). |
 | `aegis guard …` | Live interceptor: `check` screens one call, `wrap -- cmd` runs a command through the guard, `kill --session` is the kill-switch. In-process API: `from aegis import guard`. |
 | `aegis respond <playbook>` | `rotate-keys` (OpenAI/Anthropic/Google runbooks), `kill-session`, `quarantine-workspace`, `incident-report`. Emits operator runbooks; takes no destructive provider actions in v1. |
-| `aegis kb <query>` | Search the 23-pack technique knowledge base. |
+| `aegis kb <query>` | Search the 31-pack technique knowledge base. |
+| `aegis emulate --target <dir>` | Purple-team adversary emulation: 5-stage campaign narratives vs your own code, per-stage COVERED/GAP detection verification. |
+| `aegis graph <dir>` | Ranked attack paths (KB technique chains) for your own system, each with the defenses that break it. |
+| `aegis mcp list` | List tools from configured MCP servers (`~/.aegis/mcp.json`); all calls guard-screened. |
 | `aegis hunt <dir>` | Pattern-based vulnerability triage of **your own** local code. Refuses non-local targets. |
 
 ### The knowledge base
 
-`aegis/kb/` — 23 YAML packs, 252 techniques, each a condensed threat-intel
+`aegis/kb/` — 31 YAML packs, 386 techniques, each a condensed threat-intel
 note (variants, real-world examples from public incident reports, concrete
 detection patterns, mitigations):
 
@@ -216,8 +228,9 @@ machine-usable detection patterns that the scanner and guard execute.
 |---|---|---|
 | v0.1.0 — first agent | ✅ done | REPL agent loop, 212-technique KB (19 packs), in-loop guard, scan/respond, 106 tests |
 | v0.2.0 — OpenCode parity push | ✅ done | Gap analysis vs OpenCode, 252 techniques (23 packs), sessions/palette/diffs, `aegis watch` SOC-in-a-box, 241 tests |
-| v0.3.0 — model-agnostic + one command | ✅ done (current) | Google + Ollama providers, dev/plan modes, polished TUI, `install.sh` single-command setup, 291 tests |
-| v0.4.0 — team workflows | 🔄 next | `/model` switching, MCP client, contributor docs, KB link-check pass |
+| v0.3.0 — model-agnostic + one command | ✅ done | Google + Ollama providers, dev/plan modes, polished TUI, `install.sh` single-command setup, 291 tests |
+| v0.4.0 — godfather program | ✅ done (current) | 386 techniques / 31 packs, `aegis emulate` purple-team campaigns, `aegis graph` ranked attack paths, MCP client, 506+ tests |
+| v0.5.0 — team workflows | 🔄 next | `/model` switching, contributor docs, KB link-check pass |
 
 Progress to 1.0: ████████░░░░░░░░░░ — the agent is real, tested, and installs
 with one command. Stars and contributors (below) are the fuel for what comes

@@ -59,25 +59,34 @@ every tool call.
 The real project begins: make Aegis the godfather of hacking — the supreme
 defensive authority on the hacking world. Four pillars:
 
-**Pillar 1 — Expert training team (ACTIVE ORDER):** a panel of specialist
-subagents, each incredibly good at hacking in their domain, hired to TRAIN
-the agent: deep new KB packs, sharper detection patterns, deeper
-hacker-mindset doctrine. All at TTP/detection level (defensive only). A
-coordinator validates schema, dedupes against the existing 252 techniques,
-integrates, keeps pytest green, commits.
+**Pillar 1 — Expert training team (DONE 2026-10-18):** 386 techniques / 31 packs,
+506/506 tests green, commit c04d63a.
 
-**Pillar 2 — Adversary emulation engine** (`aegis emulate`, next): chain KB
-techniques into full multi-stage campaign narratives against the user's OWN
-assets, then verify the guard/watch would catch each stage (purple-team
-loop). Plan-level campaigns + detection verification — NEVER payload
-generation or automated exploitation.
+**Pillars 2+3+4 (ACTIVE — founder "go head" 2026-10-18):** one coordinator,
+three lanes (emulate / graph / mcp), worktree hygiene, single integration
+lane, full pytest green, commit as v0.4.0 + tag, no push.
 
-**Pillar 3 — Attack graphs** (`aegis graph`, next): for a user-owned system,
-generate ranked attack paths an adversary would take, with the defenses that
-break each path.
+**Pillar 2 — Adversary emulation engine** (`aegis emulate --target <local dir>`
++ `/emulate` skill): chains KB techniques into multi-stage campaign narratives
+(recon → initial access → execution → persistence → exfil) against the user's
+OWN local assets, then purple-team verifies each stage: would the guard/watch
+catch it? Reports covered vs gapped stages. Plan-level campaigns + detection
+verification ONLY — NEVER payload generation, NEVER automated exploitation,
+no network beyond local.
 
-**Pillar 4 — MCP client** (unparked, later): connect the agent to external
-security tools via MCP, guard-screened.
+**Pillar 3 — Attack graphs** (`aegis graph <local dir>`): analyzes a
+user-owned system and produces RANKED attack paths (KB technique chains) an
+adversary would take, each with the defenses that break it. Markdown + JSON
+output. Own assets only.
+
+**Pillar 4 — MCP client** (unparked): connect to MCP servers over stdio,
+list/call tools THROUGH the guard (every MCP tool call guard-screened like a
+native tool). Config `~/.aegis/mcp.json`. Tests with a mock MCP server.
+
+**Doctrine cap decision (CEO, founder-deferred):** make it configurable —
+env `AEGIS_DOCTRINE_CHARS`, default raised to fit all current doctrine notes
+(coordinator measures and reports the number + per-call cost delta); founder
+controls the cost tradeoff at runtime. Document in README/SCOPE_AND_LIMITS.
 
 Hard boundary (all pillars): defensive only, own assets only — no exploit
 payloads, no offensive tooling, no attack guides; KB at TTP/detection level.
