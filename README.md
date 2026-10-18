@@ -51,6 +51,17 @@ aegis respond rotate-keys openai
 # 7. The agent itself (needs ANTHROPIC_API_KEY or OPENAI_API_KEY):
 aegis
 # Offline demo mode:  AEGIS_PROVIDER=mock aegis
+# Sessions persist: /sessions, /resume <n>, /rename — pick up where you left off.
+# Typing "/" opens the command palette; "@path/to/file" attaches file context.
+
+# 8. Continuous monitoring of your OWN workspace (SOC-in-a-box):
+aegis watch --once ~/my-project        # single pass: secrets + KB patterns on changed files
+aegis watch --interval 300 ~/my-project # watch continuously, alert on new findings
+aegis watch --schedule daily ~/my-project # + scheduled hunts
+aegis watch --triage                    # severity-ranked, deduped finding queue
+
+# 9. Incident timeline (audit logs + alerts + triage, chronological):
+aegis respond timeline
 ```
 
 ## Architecture
@@ -60,12 +71,13 @@ aegis
                         │        aegis REPL           │
                         │  slash skills: /hunt /guard │
                         │  /scan /respond /kb /help   │
+                        │  sessions, palette, @files │
                         └──────────────┬──────────────┘
                                        │ user message
                         ┌──────────────▼──────────────┐
                         │        Agent loop           │
                         │  system prompt ← KB depth   │
-                        │  (mindset doctrine + 212    │
+                        │  (mindset doctrine + 252    │
                         │   techniques + guard rules) │
                         └──────────────┬──────────────┘
                                        │ tool call request
@@ -106,7 +118,7 @@ Subsystems (also standalone CLI commands):
 
 ### The knowledge base
 
-`aegis/kb/` — 19 YAML packs, 212 techniques, each a condensed threat-intel
+`aegis/kb/` — 23 YAML packs, 252 techniques, each a condensed threat-intel
 note (variants, real-world examples from public incident reports, concrete
 detection patterns, mitigations):
 
@@ -134,9 +146,11 @@ machine-usable detection patterns that the scanner and guard execute.
 - Mock provider is for tests/demos; real work needs your own API key.
 - Full ceiling: `docs/SCOPE_AND_LIMITS.md`. Threat model: `SECURITY.md`.
 
-## Parked for later (out of v1 scope)
+## Parked for later (out of v0.2 scope)
 
-Network IDS integration, eBPF/syscall monitoring, hosted SaaS console,
+Full-screen TUI, MCP client, keybind config, themes (UX surface without
+security value — see `docs/OPENCODE_GAP_ANALYSIS.md`). Network IDS
+integration, eBPF/syscall monitoring, hosted SaaS console,
 auto-remediation that touches provider accounts, Windows support.
 
 ## Development

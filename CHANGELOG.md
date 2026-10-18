@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.2.0 (2026-10-18)
+
+"OpenCode interface parity + autonomous defensive team."
+
+- **OpenCode gap analysis**: `docs/OPENCODE_GAP_ANALYSIS.md` — 16-row
+  feature table (OpenCode vs Aegis), studied read-only from the reference
+  clone; UX patterns rebuilt from scratch, zero copied code.
+- **KB completeness audit**: 212 → **252 techniques, 23 packs**. New packs:
+  `reconnaissance` (ATT&CK recon/discovery), `identity_attacks` (credential
+  access depth), `api_security` (OWASP API Top 10 2023), `llm_model_attacks`
+  (OWASP LLM Apps 2025 model layer). Full ATT&CK-tactic + OWASP cross-check
+  in `docs/SCOPE_AND_LIMITS.md`, with deliberate omissions listed honestly.
+- **REPL upgrades**: persistent conversation sessions (`/sessions`,
+  `/resume`, `/rename`), numbered slash-command palette, formatted tool-call
+  blocks (⏺/✓/✗ + duration), unified diff previews in the approval flow for
+  file edits, @-file mentions.
+- **`aegis watch` (SOC-in-a-box)**: continuous local-workspace monitoring
+  (`--once`/`--interval`), change-detected rescans, secret + KB-pattern
+  detection, alert log, auto-triage (fingerprint dedupe, severity-ranked
+  queue), scheduled hunts (`--schedule daily|hourly`), and
+  `aegis respond timeline` (chronological incident timeline from audit +
+  alerts + triage).
+- **241 tests green.** Defensive-only boundary unchanged.
+
 ## v0.1.0 (2026-10-18)
 
 First release — the defensive guard agent.

@@ -1,4 +1,4 @@
-"""Aegis CLI: aegis [repl] | scan | guard | respond | kb | hunt | version."""
+"""Aegis CLI: aegis [repl] | scan | guard | respond | kb | hunt | watch | version."""
 
 from __future__ import annotations
 
@@ -61,6 +61,10 @@ def cmd_guard(args) -> int:
 
 
 def cmd_respond(args) -> int:
+    if args.playbook == "timeline":
+        from .respond import build_timeline
+        print(build_timeline())
+        return 0
     from .respond.playbooks import PLAYBOOKS, run_playbook
     if args.playbook not in PLAYBOOKS:
         print(f"unknown playbook '{args.playbook}'. Choose from: "
@@ -123,6 +127,10 @@ def build_parser() -> argparse.ArgumentParser:
     h = sub.add_parser("hunt", help="audit your own local codebase")
     h.add_argument("path")
 
+    w = sub.add_parser("watch", help="continuous defensive monitoring (SOC-in-a-box)")
+    w.add_argument("watch_args", nargs=argparse.REMAINDER,
+                   help="--once|--interval|--triage|--schedule <dir> [...]")
+
     sub.add_parser("version", help="print version")
     p.add_argument("--provider", default="", help="anthropic|openai|mock")
     p.add_argument("--model", default="", help="model name override")
@@ -130,6 +138,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    # `watch` owns its own argparse surface; intercept before the outer parser
+    # because argparse subparsers do not forward leading-dash args to REMAINDER.
+    if argv is None:
+        argv = sys.argv[1:]
+    argv = list(argv)
+    if argv[:1] == ["watch"]:
+        from .watch import main as watch_main
+        return watch_main(argv[1:])
     parser = build_parser()
     args = parser.parse_args(argv)
     cmd = args.command or "repl"

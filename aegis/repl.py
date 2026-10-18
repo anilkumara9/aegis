@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import config, guard as guard_mod
+from . import __version__, config, guard as guard_mod
 from . import session as session_mod
 from .agent import AgentLoop
 from .guard import Policy
@@ -22,7 +22,7 @@ BANNER = r"""
    / \  | ____/ ___|_ _/ ___|
   / _ \ |  _|| |  _ | |\___ \
  / ___ \| |__| |_| || | ___) |
-/_/   \_\_____\____|___|____/   defensive guard agent v0.1.0
+/_/   \_\_____\____|___|____/   defensive guard agent v{__version__}
 
 Deep hacking knowledge, pointed entirely at defense.
 Type /help for skills. Every tool call is guard-screened and audit-logged.
@@ -163,7 +163,7 @@ def run_repl(provider_name: str = "", model: str = "") -> int:
                      conversation_id=conv["id"],
                      on_tool_start=_print_tool_start,
                      on_tool_end=_print_tool_end)
-    print(BANNER)
+    print(BANNER.format(__version__=__version__))
     print(f"provider: {provider.name}  model: {getattr(provider, 'model', '?')}")
     print(f"session: {session.id}  audit: {session.audit.path}")
     print(f"KB: {kb.count()} techniques across {len(kb.packs())} packs")

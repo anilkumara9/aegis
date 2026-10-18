@@ -36,38 +36,38 @@ top-risk lists. "Covered" means: the KB teaches the TTP at detection
 level (mechanism, telemetry indicators, detection patterns, mitigations)
 and the engine acts on it where it passes through the agent.
 
-**MITRE ATT&CK (Enterprise) tactics:**
+**MITRE ATT&CK (Enterprise) tactics (v0.2):**
 
-| Tactic | Aegis coverage (v1) |
+| Tactic | Aegis coverage |
 |---|---|
-| Reconnaissance | Partial — detection of recon scanning, pretexting tells; active recon tradecraft deliberately shallow |
+| Reconnaissance | Yes (detection level) — `reconnaissance` pack: external recon + internal discovery TTPs |
 | Resource Development | Partial — dark-market infrastructure concepts, compromised tooling; no acquisition tradecraft |
 | Initial Access | Yes (detection level) — phishing/vishing, web exploitation, supply chain |
 | Execution | Yes — agent-as-execution-vector (injection, tool poisoning), malware behavior |
 | Persistence | Yes — agent + host persistence TTPs |
 | Privilege Escalation | Yes — incl. agent-specific paths (approval fatigue, sandbox escape) |
 | Defense Evasion | Yes — log tampering, LOLBins-style living-off-tools, slow-drip |
-| Credential Access | Yes — exfiltration pack + dumping-tool detection |
-| Discovery | Light — AD/scan detection; not a focus |
+| Credential Access | Yes — deepened in v0.2 (`identity_attacks` pack: kerberoasting, DCSync, ticket forgery, spraying, OAuth abuse, …) |
+| Discovery | Yes (detection level) — `reconnaissance` pack; AD/scan detection |
 | Lateral Movement | Yes (detection level) — network attacks pack |
-| Collection | Yes — staging + harvesting TTPs |
+| Collection | Partial — staging + harvesting TTPs; screen/audio capture thin |
 | Command and Control | Yes (detection level) — beaconing, tunneling, RAT behavior |
 | Exfiltration | Yes — egress pack is built for this |
 | Impact | Partial — ransomware/wiper behaviors at detection level; destructive-impact forensics out of scope |
 
-**OWASP Top 10 for LLM Applications (2025):** LLM01 (prompt injection),
-LLM02 (sensitive disclosure), LLM03 (supply chain), LLM05 (improper output
-handling), LLM06 (excessive agency), LLM07 (system prompt leakage) are
-covered by packs and/or enforced in-product by the guard. LLM04
-(model poisoning) is covered for *data* poisoning (tool output, memory);
-**training-time** model poisoning is out of scope. LLM10 (unbounded
-consumption) is partially covered (distillation-probing detection).
-**LLM08 (vector and embedding weaknesses) is not covered in v1** —
-deliberate omission, see below.
+**OWASP Top 10 for LLM Applications (2025) (v0.2):** all ten risks covered
+at detection level. LLM01/02/03/05/06/07/10 by the agent-harness packs and/or
+guard enforcement; LLM04 (data poisoning: tool output, memory, RAG) and
+LLM08 (vector/embedding weaknesses) and LLM09 (misinformation) by the
+`llm_model_attacks` pack. **Training-time** model poisoning remains out of
+scope — the trusted-provider assumption is documented in SECURITY.md.
 
 **OWASP Top 10 (web):** covered at vuln-class/detection level by the
 `web_exploitation` pack (SQLi, XSS, SSRF, deserialization, auth flaws,
 IDOR, XXE, SSTI, path traversal, command injection, CSRF, JWT).
+**OWASP API Security Top 10 (2023):** covered by the `api_security` pack
+(BOLA, authZ, mass assignment, excessive exposure, rate abuse, BFLA,
+SSRF-in-API, misconfiguration, unsafe consumption, inventory/shadow APIs).
 
 ## Deliberate omissions (by design, not by accident)
 
@@ -87,10 +87,16 @@ defensive-only line or blow up v1's scope:
 - **APT operational detail beyond public reporting.** The `apt_tradecraft`
   pack is drawn strictly from public threat reports (Mandiant,
   CrowdStrike, CISA, etc.). Non-public tradecraft is out of scope.
-- **ICS/OT-specific TTPs** and **mobile-malware specifics** — not in v1.
-- **Vector/embedding weaknesses (OWASP LLM08)** — not in v1.
-- **Training-time model poisoning** — out of scope; the trusted-provider
-  assumption is documented in SECURITY.md.
+- **ICS/OT-specific TTPs** — out of Aegis's agent-focused scope (v0.1+v0.2).
+- **Mobile-platform attacks** (sideloading, MDM abuse) — niche for this
+  product; residual gap, noted honestly.
+- **DDoS depth** (amplification, botnets, L7) — covered at survey level only.
+- **OWASP A05 security misconfiguration as a standalone family** — partially
+  addressed via the API pack; full treatment deferred.
+- **Collection-tactic depth** (screen/audio capture) — thin coverage.
+- **Offensive how-to detail** (e.g., step-by-step credential-attack
+  tradecraft, tool usage) — deliberately omitted per the defensive-only
+  boundary; entries stay at MITRE ATT&CK TTP/detection level.
 
 If you need any of these for legitimate defensive work, they belong in a
-later version with explicit scoping — not smuggled into v1.
+later version with explicit scoping — not smuggled into a release.
