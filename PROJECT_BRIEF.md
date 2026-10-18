@@ -54,6 +54,30 @@ against a real model, blocks a planted prompt-injection + exfiltration attempt
 LIVE inside the loop (test with a mock provider), and the audit log captures
 every tool call.
 
+## v0.2 scope (founder order 2026-10-18) — "OpenCode interface parity + autonomous defensive team"
+
+Reference: /tmp/opencode-ref — shallow clone of https://github.com/anomalyco/opencode.git
+(authorized by the founder for interface/UX analysis). READ-ONLY analysis: study
+OpenCode's interface, UI/UX, and architecture, then REBUILD from scratch — never
+copy their code verbatim into Aegis.
+
+1. Interface study: TUI structure, screens, keybindings, command palette, session
+   management, tool-call display, diff previews, streaming, permission prompts,
+   MCP integration, config system. Deliverable: docs/OPENCODE_GAP_ANALYSIS.md
+   with a feature-by-feature table vs Aegis.
+2. "Have you fed everything" audit: verify the KB (19 packs / 212 techniques)
+   against the completeness order; fill genuine gaps at TTP/detection level.
+3. Close the highest-value UX gaps in the Aegis REPL toward OpenCode-class UX
+   (session persistence/resume, richer tool display, slash-command palette,
+   streaming, diff previews — whatever fits Python cleanly; all real, all tested).
+4. "Replace an entire hacker team" = autonomous DEFENSIVE security team
+   (SOC-in-a-box), strictly defensive, for the user's own assets: `aegis watch`
+   (continuous monitoring of a workspace — rescan on change, alert), scheduled
+   hunts, auto-triage (dedupe + severity-ranked finding queue), incident
+   timeline in `aegis respond`.
+5. Tests for everything new, pytest green, commit locally (no push — founder
+   pushes with their own token). Defensive-only boundary unchanged.
+
 ## v1 scope (what the builder ships)
 
 Repo: `~/workspace/aegis`. Language: Python 3.10+, package `aegis`, CLI `aegis`.
