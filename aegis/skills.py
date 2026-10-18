@@ -250,9 +250,25 @@ def plan_attack_surface(path: str, kb=None) -> str:
     return "\n".join(lines)
 
 
+def emulate(path: str, campaign: str | None = None, kb=None) -> str:
+    """Purple-team adversary emulation for the user's OWN code (defensive).
+
+    Thin wrapper over aegis.emulate: chains KB techniques into a 5-stage
+    campaign narrative grounded in the local scan, then verifies each stage
+    against the detection stack. Returns a markdown report. Import is lazy
+    to avoid a skills<->emulate import cycle.
+    """
+    from .emulate import EmulateError, emulate_dir
+    try:
+        return emulate_dir(path, campaign=campaign, kb=kb, as_json=False)
+    except EmulateError as exc:
+        return str(exc)
+
+
 SKILLS = {
     "/hunt": "Audit YOUR OWN local codebase for vulnerabilities: /hunt <dir>",
     "/plan": "Hacker-mindset attack plan for YOUR OWN code (read-only): /plan <dir>",
+    "/emulate": "Purple-team adversary campaign emulation on YOUR OWN code: /emulate <dir> [campaign]",
     "/mode": "Switch dev/plan mode: /mode <dev|plan>",
     "/guard": "Guard session status and kill-switch: /guard [status|kill]",
     "/scan": "Analyze a tool-call trace: /scan <trace.jsonl>",
