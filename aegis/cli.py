@@ -61,6 +61,67 @@ def cmd_guard(args) -> int:
     return 2
 
 
+def cmd_mcp(args) -> int:
+    """`aegis mcp list [--server N]` / `aegis mcp call <server> <tool> --args '<json>'`.
+
+    Both paths are guard-screened: `call` goes through MCPManager.call,
+    which runs GuardSession.check_call("mcp__<server>__<tool>", args)
+    before anything reaches the server process.
+    """
+    from pathlib import Path
+
+    from .mcp import MCPError, MCPManager, config_path, mcp_tool_name
+    from .tools import ToolContext
+
+    kb = _kb()
+    try:
+        mgr = MCPManager.from_config()
+    except MCPError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if not mgr.servers:
+        print(f"no MCP servers configured — see {config_path()} "
+              f"(docs/MCP_CLIENT.md)")
+        return 0 if args.mcp_cmd == "list" else 2
+
+    if args.mcp_cmd == "list":
+        servers = [args.server] if args.server else sorted(mgr.servers)
+        try:
+            for server in servers:
+                print(f"== {server} ==")
+                for t in mgr.list_server_tools(server):
+                    desc = (t.get("description") or "").split("\n")[0]
+                    print(f"  {mcp_tool_name(server, t['name'])}"
+                          + (f" — {desc}" if desc else ""))
+        except (MCPError, KeyError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        finally:
+            mgr.close_all()
+        return 0
+
+    # call
+    try:
+        call_args = json.loads(args.args or "{}")
+    except json.JSONDecodeError as e:
+        print(f"error: bad --args JSON: {e}", file=sys.stderr)
+        return 2
+    if not isinstance(call_args, dict):
+        print("error: --args must be a JSON object", file=sys.stderr)
+        return 2
+    if args.server not in mgr.servers:
+        print(f'error: unknown MCP server "{args.server}" '
+              f"(configured: {', '.join(sorted(mgr.servers))})")
+        return 2
+    sess = guard_mod.create_session(Policy(name="mcp-cli"), kb)
+    ctx = ToolContext(guard_session=sess, kb=kb, cwd=Path.cwd())
+    try:
+        print(mgr.call(args.server, args.tool, call_args, ctx))
+    finally:
+        mgr.close_all()
+    return 0
+
+
 def cmd_respond(args) -> int:
     if args.playbook == "timeline":
         from .respond import build_timeline
@@ -134,6 +195,15 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("watch_args", nargs=argparse.REMAINDER,
                    help="--once|--interval|--triage|--schedule <dir> [...]")
 
+    m = sub.add_parser("mcp", help="MCP client: list/call MCP server tools (guard-screened)")
+    ms = m.add_subparsers(dest="mcp_cmd", required=True)
+    ml = ms.add_parser("list", help="list tools offered by configured MCP servers")
+    ml.add_argument("--server", default=None, help="only this server")
+    mc = ms.add_parser("call", help="call an MCP tool (guard-screened)")
+    mc.add_argument("server", help="configured server name")
+    mc.add_argument("tool", help="tool name on that server")
+    mc.add_argument("--args", default="{}", help="JSON object of tool arguments")
+
     sub.add_parser("version", help="print version")
     p.add_argument("--provider", default="", help="anthropic|openai|google|ollama|mock")
     p.add_argument("--model", default="", help="model name override")
@@ -167,6 +237,8 @@ def main(argv=None) -> int:
         return cmd_kb(args)
     if cmd == "hunt":
         return cmd_hunt(args)
+    if cmd == "mcp":
+        return cmd_mcp(args)
     if cmd == "version":
         print(f"aegis {__version__}")
         return 0
