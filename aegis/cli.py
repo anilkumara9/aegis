@@ -105,6 +105,11 @@ def cmd_emulate(args) -> int:
     return 0
 
 
+def cmd_graph(args) -> int:
+    from .graph import run_graph
+    return run_graph(args.target, json_mode=args.json, top=args.top)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aegis",
                                 description="Aegis defensive guard agent")
@@ -154,6 +159,14 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--json", action="store_true", dest="as_json",
                    help="machine-readable JSON output")
 
+    gr = sub.add_parser("graph", help="attack graph: ranked adversary paths "
+                                      "for a local system")
+    gr.add_argument("target", help="local directory to analyze "
+                                  "(read-only; remote targets refused)")
+    gr.add_argument("--json", action="store_true", help="emit JSON report")
+    gr.add_argument("--top", type=int, default=5,
+                    help="ranked paths to show (default 5)")
+
     sub.add_parser("version", help="print version")
     p.add_argument("--provider", default="", help="anthropic|openai|google|ollama|mock")
     p.add_argument("--model", default="", help="model name override")
@@ -189,6 +202,8 @@ def main(argv=None) -> int:
         return cmd_hunt(args)
     if cmd == "emulate":
         return cmd_emulate(args)
+    if cmd == "graph":
+        return cmd_graph(args)
     if cmd == "version":
         print(f"aegis {__version__}")
         return 0
