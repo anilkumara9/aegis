@@ -1,0 +1,593 @@
+pack: llm_model_attacks
+version: "1.0"
+techniques:
+  - id: AEG-T213
+    name: "Training-Data Extraction and Membership Inference (LLM02)"
+    category: llm_model_attacks
+    description: >-
+      Large language models memorize fragments of their training data, and
+      adversaries can extract that memorized content — personal data,
+      credentials, copyrighted text — through carefully crafted prompts.
+      Membership inference goes one step further: it answers whether a
+      specific record was in the training set, which alone can be a privacy
+      violation (for example, confirming that a named individual's medical
+      record was used to train a model). Carlini et al. demonstrated verbatim
+      extraction of training sequences from GPT-2 (USENIX Security 2021), and
+      subsequent work showed the same against production chat models. This is
+      the model-layer counterpart of AEG-T036: T036 covers an agent
+      regurgitating secrets present in its *context*, while this technique
+      covers extraction of secrets baked into the *weights* at train time.
+      Defenders must treat model outputs as a potential data-loss channel even
+      when no tool or file access is involved.
+    how_it_works: >-
+      Memorization concentrates on duplicated, distinctive, or outlier
+      sequences in the training corpus. Attackers exploit it in several ways:
+      (1) prefix-completion probing — feeding likely prefixes ("My social
+      security number is") and sampling many completions to surface memorized
+      continuations; (2) divergence attacks — prompts that push the model off
+      its aligned behavior into raw next-token prediction, increasing
+      verbatim recall; (3) membership inference — comparing the model's loss
+      or confidence on a candidate record against reference models to decide
+      if it was trained on; (4) PII-targeted extraction — combining public
+      knowledge about a victim with model queries to reconstruct private
+      fields. Larger models, duplicated training data, and long
+      attacker-controlled prompts all raise extraction success rates.
+      Detection focuses on output-side similarity to known-sensitive corpora
+      and on input patterns characteristic of extraction campaigns.
+    variants:
+      - "Verbatim sequence extraction via prefix-completion sampling"
+      - "Divergence attacks that suppress alignment to expose memorized text"
+      - "Membership inference via loss/confidence comparison"
+      - "PII reconstruction combining public facts with model queries"
+    indicators:
+      - "High-volume prompt sessions requesting completions of partial sensitive-looking strings (emails, keys, IDs)"
+      - "Model outputs with high n-gram overlap against internal sensitive documents or PII stores"
+      - "Repeated near-identical prompts with small perturbations (extraction sampling behavior)"
+      - "Divergence-style prompts attempting to break the model out of its assistant persona into raw continuation"
+    detection:
+      rule: detect_training_data_extraction
+      patterns:
+        - '(?i)membership\s+inference'
+        - '(?i)\btraining[\s_-]*data\s+extraction\b'
+        - '(?i)extract\w*\s+(?:verbatim|memorized)\s+training'
+        - '(?i)divergence\s+attack'
+    severity: high
+    mitigations:
+      - "Deduplicate training data and scrub PII/secrets before training; treat data curation as a security control"
+      - "Deploy output-side DLP: similarity screening of model outputs against sensitive corpora and PII patterns"
+      - "Rate-limit and anomaly-detect extraction-shaped query patterns (high-volume prefix probing from one principal)"
+      - "Prefer differential-privacy or PATE-style training for models exposed to untrusted queriers"
+    examples:
+      - summary: "Carlini et al. (USENIX Security 2021) extracted hundreds of verbatim training sequences — including personal contact details — from GPT-2 using only black-box queries, establishing training-data extraction as a practical privacy attack."
+        reference: "https://arxiv.org/abs/2012.07805"
+    references:
+      - "https://genai.owasp.org/llm-top-10/llm02-sensitive-information-disclosure/"
+      - "https://arxiv.org/abs/2012.07805"
+      - "https://attack.mitre.org/versions/v6/techniques/T1593/"
+
+  - id: AEG-T214
+    name: "Model Extraction and Functionality Stealing (IP Theft via API)"
+    category: llm_model_attacks
+    description: >-
+      Model extraction (also called functionality stealing) systematically
+      queries a hosted model to build a local copy that approximates its
+      behavior — stealing the intellectual property embedded in the weights
+      without ever seeing them. Tramèr et al. (USENIX Security 2016) showed
+      that prediction APIs leak enough to clone models with equation-solving
+      and active learning. Against LLM agent endpoints this scales up: an
+      adversary who can issue unlimited queries can distill capabilities,
+      system behaviors, and safety boundaries into a rival model. The
+      OpenCode breach disclosed 2026-10-17 was described as a large-scale
+      distillation attack. This differs from AEG-T040 (model-distillation-style
+      *data* probing): T040 covers extracting *data through* an agent
+      endpoint, while this technique covers stealing the *model itself* as
+      intellectual property.
+    how_it_works: >-
+      The attacker treats the target as an oracle: (1) synthetic or
+      task-representative inputs are generated to cover the input space;
+      (2) the target model is queried at high volume and its outputs
+      (logits, token choices, or full responses) are harvested; (3) a local
+      student model is trained on the resulting input-output pairs
+      (distillation); (4) fidelity is validated by comparing student and
+      target on held-out probes. Variants include hyperparameter stealing
+      (recovering training configs from API behavior), functionality
+      extraction of narrow expert models, and prompt/IP extraction where the
+      system prompt and tool definitions are the stolen asset. High-volume,
+      low-diversity-of-purpose query bursts and systematic input-space
+      coverage distinguish extraction from normal use.
+    variants:
+      - "Prediction-API equation solving and active-learning extraction"
+      - "Distillation of a hosted LLM into a local student model"
+      - "Hyperparameter and system-prompt recovery as IP theft"
+      - "Functionality stealing of narrow expert endpoints"
+    indicators:
+      - "Sustained high-volume querying from a single principal with systematic input coverage rather than task-shaped traffic"
+      - "Query distributions skewed toward input-space exploration (uniform/random probes) instead of natural user prompts"
+      - "Bulk harvesting of full responses/logits followed by little downstream product use"
+      - "Multiple accounts exhibiting correlated probing patterns (extraction distributed to dodge per-key limits)"
+    detection:
+      rule: detect_model_extraction
+      patterns:
+        - '(?i)\bmodel\s+extraction\b'
+        - '(?i)distillation\s+attack'
+        - '(?i)functionality\s+stealing'
+        - '(?i)steal\w*\s+(?:the\s+)?model'
+    severity: high
+    mitigations:
+      - "Rate-limit and quota API access per principal; anomaly-detect extraction-shaped traffic (coverage-probing distributions)"
+      - "Reduce information per query: truncate logits, add output noise, and avoid exposing raw probabilities where unnecessary"
+      - "Watermark model outputs so distilled copies can be attributed"
+      - "Require authentication and contractual terms for high-volume access; monitor for correlated multi-account probing"
+    examples:
+      - summary: "Tramèr et al. (USENIX Security 2016) demonstrated stealing machine-learning models via prediction APIs, recovering models with tens of thousands of queries and establishing the extraction threat model defenders still use."
+        reference: "https://arxiv.org/abs/1609.02943"
+    references:
+      - "https://arxiv.org/abs/1609.02943"
+      - "https://genai.owasp.org/llm-top-10/llm02-sensitive-information-disclosure/"
+      - "https://attack.mitre.org/versions/v6/techniques/T1593/002/"
+
+  - id: AEG-T215
+    name: "Training-Data and Fine-Tune Poisoning (LLM04)"
+    category: llm_model_attacks
+    description: >-
+      Data poisoning corrupts a model at train time by injecting malicious
+      samples into its training or fine-tuning data, implanting backdoors or
+      biases that activate later under attacker-chosen triggers. Unlike
+      prompt injection — which attacks a deployed model at inference time —
+      poisoning changes the weights themselves, so the compromise survives
+      redeployment and is invisible to input filtering. Hubinger et al.
+      ("Sleeper Agents", 2024) showed backdoored models that behave safely
+      until a trigger phrase appears, and that standard safety training often
+      fails to remove the backdoor. This differs from AEG-T049 (agent memory
+      poisoning): T049 poisons a running agent's *memory store*, while this
+      technique poisons the *training corpus* before the model exists.
+      For defenders, the lesson is that training pipelines are part of the
+      attack surface and need supply-chain-grade integrity controls.
+    how_it_works: >-
+      Attackers need write access to some slice of training data — scraped
+      web corpora, crowdsourced labels, third-party fine-tuning sets, or
+      human-feedback channels. Poisoning methods: (1) trigger backdoors —
+      samples pairing a rare trigger phrase with attacker-desired outputs,
+      so the deployed model misbehaves only on trigger; (2) availability
+      poisoning — corrupt samples that degrade targeted capabilities;
+      (3) preference/RLHF poisoning — malicious feedback that shifts the
+      reward model; (4) instruction-tuning poisoning — poisoned
+      instruction-response pairs that install persistent malicious
+      behaviors. Poisoned samples are crafted to look benign to human
+      reviewers and to survive deduplication. Detection relies on data
+      provenance, statistical anomaly detection over training batches, and
+      trigger-sweep evaluations of finished models.
+    variants:
+      - "Trigger backdoors implanted via poisoned instruction pairs"
+      - "RLHF / preference poisoning through malicious feedback"
+      - "Availability poisoning degrading targeted capabilities"
+      - "Web-scale corpus poisoning via attacker-controlled pages"
+    indicators:
+      - "Training batches with anomalous label distributions or outlier clusters around rare trigger phrases"
+      - "Model exhibiting safe behavior in evaluation but attacker-chosen behavior on specific trigger inputs"
+      - "Training data sourced from unverified third-party sets without provenance or integrity checks"
+      - "Feedback/RLHF contributors with correlated malicious preference patterns"
+    detection:
+      rule: detect_training_data_poisoning
+      patterns:
+        - '(?i)training[\s_-]*data\s+poison'
+        - '(?i)backdoor\w*\s+(?:in|into)\s+(?:the\s+)?training'
+        - '(?i)\bdata\s+poisoning\b'
+        - '(?i)sleeper\s+agents?'
+    severity: critical
+    mitigations:
+      - "Enforce provenance, signing, and integrity verification for every training data source; treat datasets as supply-chain artifacts"
+      - "Run anomaly detection over training batches (label statistics, embedding outliers, trigger-phrase clustering)"
+      - "Trigger-sweep finished models with red-team evaluations before deployment; re-sweep after fine-tunes"
+      - "Vet and rate-limit RLHF/feedback contributors; detect correlated malicious preference submissions"
+    examples:
+      - summary: "Hubinger et al. ('Sleeper Agents: Training Deceptive LLMs that Persist Through Safety Training', 2024) demonstrated LLMs with backdoors implanted at train time that persist through safety fine-tuning and activate only on trigger phrases."
+        reference: "https://arxiv.org/abs/2401.05566"
+    references:
+      - "https://genai.owasp.org/llm-top-10/llm04-data-and-model-poisoning/"
+      - "https://arxiv.org/abs/2401.05566"
+      - "https://attack.mitre.org/versions/v6/techniques/T1565/"
+
+  - id: AEG-T216
+    name: "RAG and Retrieval-Corpus Poisoning (LLM08)"
+    category: llm_model_attacks
+    description: >-
+      Retrieval-augmented generation grounds model answers in an external
+      corpus — and whoever controls documents in that corpus controls what
+      the model treats as fact. Attackers plant poisoned documents into the
+      vector index (via contributed wikis, indexed web pages, uploaded
+      files, or compromised sync pipelines) so that legitimate user queries
+      retrieve attacker content which the model then presents as trusted
+      knowledge. Zou et al. ("PoisonedRAG", 2024) showed a handful of crafted
+      documents can hijack answers to targeted questions. This differs from
+      AEG-T020 (poisoned documentation the agent reads and follows as
+      *instructions*): here the poisoned content is retrieved as *knowledge*,
+      shaping answers rather than issuing commands. Defenders must treat the
+      retrieval corpus as untrusted input with integrity controls.
+    how_it_works: >-
+      PoisonedRAG-style attacks work in two moves: (1) retrieval hijack —
+      crafted documents are optimized to rank highly for targeted queries
+      (keyword stuffing, embedding-space optimization, or simply matching
+      the question text); (2) generation hijack — the document text contains
+      the false or malicious claim phrased authoritatively, so the model
+      cites it as ground truth. Variants: targeted poisoning (specific
+      questions get wrong answers), denial of retrieval (flooding the index
+      with junk so legitimate documents are crowded out), and indirect
+      prompt injection via retrieved documents (the retrieved text also
+      carries instructions — the bridge to AEG-T002). Because retrieval
+      happens before generation, input filters on the user prompt alone
+      cannot stop it.
+    variants:
+      - "Targeted PoisonedRAG: crafted docs hijack answers to chosen questions"
+      - "Retrieval denial: index flooding crowds out legitimate sources"
+      - "Indirect injection via retrieved documents (knowledge + instruction)"
+      - "Embedding-optimized documents that rank for broad query classes"
+    indicators:
+      - "Newly added or recently modified corpus documents dominating retrieval for sensitive/high-value queries"
+      - "Model answers citing sources whose content contradicts authoritative records"
+      - "Clusters of near-duplicate documents with keyword-stuffed or machine-generated text in the index"
+      - "Retrieval pipelines ingesting from unvetted external sources without provenance"
+    detection:
+      rule: detect_rag_poisoning
+      patterns:
+        - '(?i)\brag\b[\s\w-]*\bpoison'
+        - '(?i)poison\w*\s+(?:retrieval|knowledge)[\s\w-]*corpus'
+        - '(?i)retrieval[\s_-]*corpus\s+poison'
+        - '(?i)poisonedrag'
+    severity: high
+    mitigations:
+      - "Gate corpus ingestion: provenance, approval, and integrity checks for every document entering the index"
+      - "Monitor retrieval distributions; alert when new/low-trust documents dominate sensitive queries"
+      - "Cross-check generated claims against authoritative sources; show citations so users can verify"
+      - "Isolate retrieved content as untrusted data in the prompt; never let it carry instructions (see AEG-T002)"
+    examples:
+      - summary: "Zou et al. ('PoisonedRAG: Knowledge Poisoning Attacks to Retrieval-Augmented Generation of Large Language Models', 2024) showed that injecting a small number of crafted texts into the knowledge base reliably hijacks RAG answers to targeted questions."
+        reference: "https://arxiv.org/abs/2402.14811"
+    references:
+      - "https://genai.owasp.org/llm-top-10/llm08-vector-and-embedding-weaknesses/"
+      - "https://arxiv.org/abs/2402.14811"
+      - "https://attack.mitre.org/versions/v6/techniques/T1593/002/"
+
+  - id: AEG-T217
+    name: "Embedding Inversion and Vector-Store Exposure (LLM08)"
+    category: llm_model_attacks
+    description: >-
+      Vector databases store dense embeddings of documents for RAG and
+      semantic search — and embeddings are not opaque. Embedding-inversion
+      research shows that text can be substantially reconstructed from its
+      embedding vector, so a leaked or over-exposed vector store is
+      effectively a leaked document store. Separately, vector databases are
+      frequently deployed with weak authentication, exposing the entire
+      corpus index to anyone who finds the endpoint. For defenders the rule
+      is simple: treat embeddings as sensitive data at rest, with the same
+      access controls and encryption as the source documents.
+    how_it_works: >-
+      Inversion attacks train a decoder model that maps embedding vectors
+      back to probable source text; because embeddings preserve semantic
+      content by design, reconstruction quality is often high for short
+      texts and meaningful fragments for long ones. Attack paths: (1) direct
+      exposure — vector DB endpoints reachable without authentication
+      (default configs, misconfigured network policies); (2) API-level
+      extraction — embedding APIs queried systematically to harvest vectors
+      for offline inversion; (3) snapshot theft — backups or disk images of
+      the vector store exfiltrated like any database dump. Once vectors are
+      in hand, inversion is an offline computation the defender cannot
+      observe — so prevention must happen at the storage and access layer.
+    variants:
+      - "Decoder-model inversion reconstructing text from stolen embeddings"
+      - "Unauthenticated vector-DB endpoints exposing the full index"
+      - "Embedding-API harvesting for offline inversion"
+      - "Backup/snapshot theft of vector stores"
+    indicators:
+      - "Vector-database endpoints reachable without authentication in asset scans"
+      - "High-volume embedding-API queries harvesting vectors without a matching search workload"
+      - "Embeddings stored or logged alongside source documents in backups without encryption"
+      - "Published research-style inversion attempts (decoder training traffic) against embedding services"
+    detection:
+      rule: detect_embedding_inversion
+      patterns:
+        - '(?i)embedding\s+inversion'
+        - '(?i)invert\w*\s+embeddings?'
+        - '(?i)vector[\s_-]*(?:database|store)[\s\w-]*(?:expos|unauthenticated|leak)'
+        - '(?i)reconstruct\w*\s+text\s+from\s+embeddings?'
+    severity: high
+    mitigations:
+      - "Authenticate and network-isolate vector databases; never expose them to the internet or broad internal ranges"
+      - "Encrypt embeddings at rest and in backups; apply the same classification as source documents"
+      - "Rate-limit embedding APIs and monitor for harvesting-shaped query patterns"
+      - "Minimize stored embeddings: scope indexes to needed corpora and purge stale vectors"
+    examples:
+      - summary: "Morris et al. ('Text Embeddings Reveal (Almost) As Much As Text', 2023) demonstrated that language-model embeddings can be inverted to recover substantial source text, establishing embeddings as sensitive data."
+        reference: "https://arxiv.org/abs/2310.06816"
+    references:
+      - "https://genai.owasp.org/llm-top-10/llm08-vector-and-embedding-weaknesses/"
+      - "https://arxiv.org/abs/2310.06816"
+
+  - id: AEG-T218
+    name: "Excessive Agency: Autonomous Harmful Action Chains (LLM06)"
+    category: llm_model_attacks
+    description: >-
+      Excessive agency is what happens when an LLM agent is granted broad
+      tools, persistent permissions, and vague objectives: it can take
+      harmful actions no one explicitly instructed, through misinterpreted
+      goals, unexpected tool interactions, or attacker-nudged planning.
+      The 2025 OWASP LLM Top 10 lists it as LLM06 because agentic
+      deployments multiply blast radius — a model that can browse, execute
+      code, send messages, and spend money will eventually do something its
+      operator regrets. This differs from AEG-T063 (overly broad tool
+      grants): T063 is the *misconfiguration* (the grant itself), while this
+      technique is the *attack pattern* — how adversaries (or accidents)
+      turn granted agency into harmful action chains. Defense means
+      least-privilege agency plus human checkpoints on irreversible actions.
+    how_it_works: >-
+      Harm emerges from the combination of capability and ambiguity:
+      (1) vague objectives ("handle the customer complaint") get interpreted
+      in damaging ways (mass refunds, angry replies); (2) tool chaining —
+      individually safe tools compose into unsafe workflows (search → download
+      → execute → exfiltrate); (3) attacker nudging — a small injected hint
+      steers an already-powerful agent (the bridge to AEG-T010); (4) state
+      accumulation — long-running agents accrue permissions and context until
+      a single misstep has outsized impact. The common thread is that no
+      single tool call looks malicious; the harm is in the *plan*. Defenders
+      detect it by auditing planned action sequences against policy, not just
+      individual calls.
+    variants:
+      - "Vague-objective misinterpretation causing damaging autonomous actions"
+      - "Tool-chain composition: safe tools combined into unsafe workflows"
+      - "Attacker-nudged planning in high-agency agents"
+      - "Permission/context accumulation in long-running agents"
+    indicators:
+      - "Agents holding broad tool grants (write, exec, send, spend) with loosely scoped objectives"
+      - "Multi-step plans that were never reviewed chaining read → transform → external action"
+      - "Irreversible actions (payments, deletions, external messages) executed without human approval"
+      - "Agent objectives phrased as open-ended goals rather than bounded tasks"
+    detection:
+      rule: detect_excessive_agency
+      patterns:
+        - '(?i)excessive\s+agency'
+        - '(?i)autonomous\s+harmful\s+actions?'
+        - '(?i)agent[\s\w-]*unbounded[\s\w-]*(?:tool|action|permission)'
+        - '(?i)irreversible\s+actions?\s+without\s+(?:human\s+)?approval'
+    severity: high
+    mitigations:
+      - "Apply least-privilege agency: grant each agent only the tools and scopes its task requires"
+      - "Require human approval for irreversible actions (spend, delete, external send, privilege change)"
+      - "Bound objectives precisely; have the agent present its plan for review before executing multi-step chains"
+      - "Continuously audit granted permissions and revoke accumulated grants in long-running agents"
+    examples:
+      - summary: "The OWASP Top 10 for LLM Applications 2025 added Excessive Agency (LLM06) after repeated incidents of over-permissioned agents taking unintended destructive actions, formalizing least-agency as a core control."
+        reference: "https://genai.owasp.org/llm-top-10/llm06-excessive-agency/"
+    references:
+      - "https://genai.owasp.org/llm-top-10/llm06-excessive-agency/"
+      - "https://attack.mitre.org/versions/v6/techniques/T1587/"
+
+  - id: AEG-T219
+    name: "Unbounded Consumption and Inference-Resource Exhaustion (LLM10)"
+    category: llm_model_attacks
+    description: >-
+      LLM inference is expensive — and attackers can weaponize that cost.
+      Unbounded consumption attacks flood a model endpoint with
+      resource-intensive prompts (enormous contexts, requests engineered for
+      maximum-length outputs, or prompts that trigger agentic loops) to run
+      up compute bills, exhaust rate quotas, or deny service to legitimate
+      users. Unlike classic network DDoS (AEG-T159), which saturates pipes,
+      this saturates *reasoning*: a single crafted prompt can cost thousands
+      of times more than a normal one. Agentic systems are doubly exposed
+      because one user message can spawn unbounded tool-call loops. Defense
+      is economic rate-limiting: quotas on tokens, cost, and recursion depth,
+      not just requests per second.
+    how_it_works: >-
+      Cost-amplification methods: (1) context stuffing — prompts padded to
+      the maximum context window, exploiting the quadratic cost of attention;
+      (2) output maximization — instructions engineered to produce the
+      longest possible completions ("explain in exhaustive detail, covering
+      every sub-case"); (3) agentic loops — prompts that cause the agent to
+      iterate tools indefinitely ("keep researching until perfect"); (4) model
+      DoS via adversarial inputs that maximize per-token compute. Attackers
+      distribute across accounts to dodge per-key limits. The tell is economic:
+      token consumption wildly disproportionate to legitimate task value,
+      concentrated in a few principals or sessions.
+    variants:
+      - "Context stuffing to maximum window for quadratic attention cost"
+      - "Output-maximization prompts engineered for longest completions"
+      - "Agentic tool loops triggered by unbounded research instructions"
+      - "Distributed cost attacks spread across many API keys"
+    indicators:
+      - "Token consumption per session orders of magnitude above baseline for the task type"
+      - "Prompts at or near maximum context length from principals with no legitimate need"
+      - "Agent sessions with runaway tool-call loops and no convergence"
+      - "Correlated high-consumption bursts across multiple accounts"
+    detection:
+      rule: detect_unbounded_consumption
+      patterns:
+        - '(?i)unbounded\s+consumption'
+        - '(?i)inference[\s_-]*(?:cost|resource)[\s\w-]*exhaustion'
+        - '(?i)context[\s_-]*stuffing'
+        - '(?i)agentic\s+(?:tool\s+)?loops?'
+    severity: medium
+    mitigations:
+      - "Enforce quotas on tokens, cost, and tool-call depth per principal — not just requests per second"
+      - "Cap context length and max output tokens per use case; require justification for maximums"
+      - "Detect and break runaway agent loops with iteration budgets and convergence checks"
+      - "Alert on cost anomalies per account; correlate across accounts for distributed abuse"
+    examples:
+      - summary: "OWASP's LLM Top 10 2025 (LLM10: Unbounded Consumption) documents denial-of-wallet and denial-of-service via resource-intensive prompts, with agentic loops identified as the highest-amplification vector."
+        reference: "https://genai.owasp.org/llm-top-10/llm10-unbounded-consumption/"
+    references:
+      - "https://genai.owasp.org/llm-top-10/llm10-unbounded-consumption/"
+      - "https://attack.mitre.org/versions/v6/techniques/T1499/"
+
+  - id: AEG-T220
+    name: "Weaponized Misinformation and Hallucination Exploitation (LLM09)"
+    category: llm_model_attacks
+    description: >-
+      LLMs confidently generate false content — and adversaries industrialize
+      that property. Weaponized misinformation uses models to mass-produce
+      convincing fake reviews, fraudulent investment advice, fabricated news,
+      forged citations, and social-engineering lures at a scale no human team
+      can match. Separately, attackers *exploit* hallucinations: feeding a
+      victim a hallucinated package name, URL, or API that the attacker has
+      pre-registered (the "hallucinated package" supply-chain attack —
+      a bridge to AEG-T076 dependency confusion). OWASP lists misinformation
+      as LLM09. For defenders, the controls are provenance (can this claim be
+      traced?), verification workflows for model-generated facts, and user
+      education that fluent text is not evidence.
+    how_it_works: >-
+      Generation-side abuse: (1) scaled fabrication — templated prompts
+      produce thousands of unique fake reviews, comments, or articles that
+      evade duplicate detection; (2) persona-based influence — models roleplay
+      trusted figures to lend false authority; (3) hallucination seeding —
+      attackers learn which nonexistent entities a model invents (package
+      names, domains, CVEs) and register the real ones, turning the model's
+      confabulation into a delivery channel; (4) evidence fabrication —
+      fake screenshots, citations, and "sources" that withstand casual
+      scrutiny. Detection leans on provenance analysis, burst and
+      coordination signals, and verification of model-cited facts against
+      authoritative sources.
+    variants:
+      - "Scaled fake reviews, comments, and articles evading duplicate detection"
+      - "Hallucinated-package squatting (model invents it, attacker registers it)"
+      - "Persona-based influence operations with synthetic authority figures"
+      - "Fabricated citations and evidence withstanding casual scrutiny"
+    indicators:
+      - "Bursts of linguistically similar but non-duplicate content promoting the same claim"
+      - "Model-recommended package names, URLs, or APIs that do not exist in authoritative registries"
+      - "Newly registered domains/packages matching entities a model is known to hallucinate"
+      - "Coordinated posting patterns (timing, targeting) across fabricated personas"
+    detection:
+      rule: detect_weaponized_misinformation
+      patterns:
+        - '(?i)weaponiz\w*\s+misinformation'
+        - '(?i)hallucinat\w+[\s\w-]*exploit'
+        - '(?i)hallucinated\s+packages?'
+        - '(?i)disinformation\s+(?:campaign|operation)'
+    severity: medium
+    mitigations:
+      - "Verify model-cited facts, packages, and URLs against authoritative registries before acting on them"
+      - "Deploy provenance tooling: watermarking, content credentials, and citation requirements for high-stakes outputs"
+      - "Monitor for burst/coordination signals of scaled fabrication campaigns"
+      - "Defensively register or monitor hallucination-prone names (packages, domains) your models invent"
+    examples:
+      - summary: "Security researchers demonstrated in 2023-2024 that LLMs hallucinate nonexistent package names which attackers then registered, turning model confabulation into a working software-supply-chain attack (reported across major security outlets)."
+        reference: "https://genai.owasp.org/llm-top-10/llm09-misinformation/"
+    references:
+      - "https://genai.owasp.org/llm-top-10/llm09-misinformation/"
+      - "https://attack.mitre.org/versions/v6/techniques/T1587/"
+
+  - id: AEG-T221
+    name: "Insecure Output Handling: Model Output to Downstream Injection (LLM05)"
+    category: llm_model_attacks
+    description: >-
+      LLM applications often pipe model output straight into other systems —
+      rendered HTML, SQL queries, shell commands, file writes — without the
+      validation that untrusted input demands. When the model emits (or is
+      induced to emit) script tags, SQL fragments, or shell metacharacters,
+      the downstream system executes them: stored XSS served to every user,
+      SQL injection via generated queries, or command injection via generated
+      shell. OWASP lists this as LLM05. It is the mirror of injection
+      *into* the model: the model becomes an injection *source*. This differs
+      from AEG-T019 (poisoned code suggestions — malicious content in the
+      *input* shown to a developer): here the vulnerability is the
+      application's failure to treat model *output* as untrusted. The fix is
+      architectural: validate, encode, and sandbox everything the model
+      produces before it touches an interpreter.
+    how_it_works: >-
+      The application takes model text and interpolates it into a sink:
+      (1) HTML rendering — model output inserted into pages without
+      escaping becomes stored XSS affecting every viewer; (2) query building
+      — generated SQL concatenated into statements becomes SQL injection;
+      (3) shell execution — agentic tooling running model-generated commands
+      without allowlisting becomes command injection; (4) deserialization —
+      model-generated JSON/YAML parsed by unsafe loaders. Attackers induce
+      malicious output via prompt injection (bridge to AEG-T001) or simply
+      wait for the model's normal variance to produce dangerous characters
+      in a security-sensitive position. Because the content comes "from our
+      own AI", developers systematically under-validate it.
+    variants:
+      - "Model output rendered as HTML without escaping (stored XSS)"
+      - "Generated SQL concatenated into queries (second-order SQLi)"
+      - "Model-generated shell executed by agentic tooling"
+      - "Model-generated serialized data fed to unsafe parsers"
+    indicators:
+      - "Application code paths interpolating raw model output into HTML, SQL, shell, or file paths"
+      - "XSS/SQLi payloads appearing in stored content that originated from model generation"
+      - "Agent tooling executing model-generated commands without an allowlist or approval step"
+      - "Missing output-encoding or validation at the model-to-sink boundary in code review"
+    detection:
+      rule: detect_insecure_output_handling
+      patterns:
+        - '(?i)insecure\s+output\s+handling'
+        - '(?i)model\s+output[\s\w-]*inject'
+        - '(?i)llm\s+output[\s\w-]*(?:xss|rce|execut)'
+        - '(?i)unescaped\s+model\s+output'
+    severity: high
+    mitigations:
+      - "Treat all model output as untrusted input: validate, encode for the target context, and parameterize queries"
+      - "Never execute model-generated shell or code without an allowlist and human approval"
+      - "Apply Content-Security-Policy and output-encoding at every rendering layer as defense in depth"
+      - "Test model-to-sink paths with injection payloads in CI, including prompt-induced malicious output"
+    examples:
+      - summary: "OWASP's LLM Top 10 2025 (LLM05: Improper Output Handling) documents cases where unsanitized model output enabled XSS and other injections in downstream applications, stressing that model output must be handled as untrusted input."
+        reference: "https://genai.owasp.org/llm-top-10/llm05-improper-output-handling/"
+    references:
+      - "https://genai.owasp.org/llm-top-10/llm05-improper-output-handling/"
+      - "https://owasp.org/www-community/attacks/xss/"
+
+  - id: AEG-T222
+    name: "Cross-Agent Injection and Agent-Ecosystem Lateral Movement"
+    category: llm_model_attacks
+    description: >-
+      As agents delegate to other agents — via A2A-style protocols, MCP
+      servers, sub-agent spawning, or shared task queues — the trust boundary
+      moves with the message. A compromised or malicious agent injects
+      instructions into its outputs, and the next agent in the chain treats
+      them as legitimate delegated work: prompt injection that propagates
+      laterally through the agent ecosystem. Unlike AEG-T002 (poisoned *tool
+      output* steering one agent) and AEG-T012 (self-replicating prompts),
+      this is agent-to-agent: delegation requests, status reports, and
+      shared artifacts become the carrier, and each hop can escalate
+      privilege because downstream agents often hold broader tool grants
+      (bridge to AEG-T066 role confusion). Defenders must authenticate and
+      authorize inter-agent messages, not just human-to-agent ones.
+    how_it_works: >-
+      Propagation paths: (1) delegation injection — agent A asks agent B to
+      "summarize this ticket", embedding hidden instructions in the ticket
+      that B executes with B's tools; (2) artifact poisoning — shared files,
+      plans, or memory entries written by one agent and consumed by others
+      carry instructions across trust boundaries (bridge to AEG-T049);
+      (3) protocol abuse — A2A/MCP message fields (descriptions, metadata,
+      error details) used as injection carriers between mutually
+      authenticated but mutually untrusted agents; (4) privilege stepping —
+      each hop moves toward the agent with the broadest grants, so a
+      low-privilege compromised agent ends up driving a high-privilege one.
+      Because inter-agent traffic is machine-generated at volume, malicious
+      messages hide easily without content inspection at the boundary.
+    variants:
+      - "Delegation injection through task descriptions between agents"
+      - "Shared-artifact poisoning across agent trust boundaries"
+      - "A2A/MCP protocol-field injection between authenticated agents"
+      - "Privilege stepping toward the most-capable agent in the mesh"
+    indicators:
+      - "Inter-agent messages containing instruction-like language aimed at the recipient agent's tools"
+      - "Sub-agents executing actions outside the scope of the delegating task"
+      - "Shared artifacts (plans, memory, task queues) modified to include directives from untrusted agents"
+      - "Agent-to-agent traffic lacking authentication, integrity, or scope enforcement"
+    detection:
+      rule: detect_cross_agent_injection
+      patterns:
+        - '(?i)cross[\s_-]*agent\s+injection'
+        - '(?i)agent[\s_-]*to[\s_-]*agent[\s\w-]*inject'
+        - '(?i)\ba2a\b[\s\w-]*poison'
+        - '(?i)delegat\w+[\s\w-]*inject\w+'
+    severity: high
+    mitigations:
+      - "Authenticate and integrity-protect inter-agent messages; enforce least-privilege scopes per agent identity"
+      - "Inspect delegated content at trust boundaries — treat other agents' outputs as untrusted input"
+      - "Scope sub-agent tool grants to the delegated task; never inherit the parent's full capabilities silently"
+      - "Log inter-agent delegations with full content for incident reconstruction"
+    examples:
+      - summary: "Security research into multi-agent systems (2024-2025) repeatedly demonstrated prompt-injection propagation across agent boundaries, with compromised sub-agents inheriting and abusing broader tool grants — formalized in emerging A2A/MCP security guidance."
+        reference: "https://genai.owasp.org/resource/agentic-ai-threats-and-mitigations/"
+    references:
+      - "https://genai.owasp.org/resource/agentic-ai-threats-and-mitigations/"
+      - "https://attack.mitre.org/versions/v6/techniques/T1584/"

@@ -1,0 +1,576 @@
+pack: identity_attacks
+version: "1.0"
+techniques:
+  - id: AEG-T233
+    name: "Password Spraying and Credential Stuffing"
+    category: identity_attacks
+    description: >-
+      Password spraying and credential stuffing are the two high-volume
+      authentication attacks, and defenders must distinguish them. Spraying
+      tries a *few* common passwords against *many* accounts — staying under
+      per-account lockout thresholds while exploiting password reuse.
+      Stuffing replays *known breached* username/password pairs (from stealer
+      logs and combo lists, see AEG-T097/T246) against many accounts,
+      exploiting the fact that people reuse credentials across sites. The
+      2024 Snowflake incident — attackers using infostealer-harvested
+      credentials against customer tenants lacking MFA — was credential
+      stuffing at industry scale, investigated by Mandiant. Both attacks look
+      like distributed failed logins; the defense is MFA everywhere plus
+      anomaly detection on authentication telemetry.
+    how_it_works: >-
+      Spraying: the attacker takes a list of usernames (often enumerated or
+      guessed from email formats) and tries a small set of common or
+      seasonally-likely passwords across all of them, rotating source IPs to
+      dodge rate limits — typically one attempt per account per round so no
+      account locks. Stuffing: breached credential pairs are replayed
+      through automated tooling with residential proxies; success rates of
+      1-2% are profitable at scale. Detection signals: many distinct
+      accounts with failed logins from shared infrastructure, low-and-slow
+      patterns, impossible-travel on the successes, and login attempts using
+      passwords known from breach corpora. MFA blocks both at the second
+      factor — which is why attackers pair these with MFA-bypass techniques
+      (AEG-T136, T137, T239).
+    variants:
+      - "Low-and-slow password spraying under lockout thresholds"
+      - "Combo-list credential stuffing via residential proxies"
+      - "Spraying against VPN, email, and SSO portals specifically"
+      - "Stuffing tuned with breach-corpus password likelihood"
+    indicators:
+      - "Many distinct accounts failing authentication from shared or rotating source IPs"
+      - "Failed-login usernames matching organizational email formats (spray targeting)"
+      - "Successful logins immediately following distributed failures, often with impossible travel"
+      - "Authentication attempts using passwords present in known breach corpora"
+    detection:
+      rule: detect_spraying_and_stuffing
+      patterns:
+        - '(?i)password\s+spraying'
+        - '(?i)credential\s+stuffing'
+        - '(?i)spray\w*\s+(?:logins?|credentials?|accounts?)'
+        - '(?i)combo[\s_-]*list[\s\w-]*login'
+    severity: high
+    mitigations:
+      - "Enforce MFA on all externally reachable authentication, especially SSO, VPN, and email"
+      - "Detect distributed failure patterns: correlate failed logins across accounts, IPs, and time"
+      - "Block or step-up authentication using passwords found in breach corpora"
+      - "Apply CAPTCHA/bot defenses and strict rate limiting on login endpoints"
+    examples:
+      - summary: "In 2024, Mandiant investigated attacks on Snowflake customer tenants in which threat actors used credentials harvested by infostealer malware to stuff logins against tenants without MFA, leading to data theft and extortion."
+        reference: "https://cloud.google.com/blog/topics/threat-intelligence/unc5537-snowflake-data-theft-extortion"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1110/003/"
+      - "https://attack.mitre.org/versions/v6/techniques/T1110/004/"
+      - "https://cloud.google.com/blog/topics/threat-intelligence/unc5537-snowflake-data-theft-extortion"
+
+  - id: AEG-T234
+    name: "Kerberoasting (Offline Cracking of Service Tickets)"
+    category: identity_attacks
+    description: >-
+      Kerberoasting abuses legitimate Kerberos behavior: any domain user can
+      request a service ticket for any service principal, and tickets for
+      services using RC4 encryption can be cracked offline to recover the
+      service account's password. Service accounts frequently hold powerful
+      passwords that never expire and are often over-privileged — making a
+      cracked ticket a direct path to domain escalation. This is a
+      detection-level concept: defenders never need to perform the cracking
+      to defend against it. The tell is in the telemetry — unusual ticket
+      requests for crackable encryption types from non-admin users — and the
+      fix is structural: strong, managed service-account passwords and
+      AES-only Kerberos.
+    how_it_works: >-
+      At the protocol level: (1) the attacker, as any authenticated domain
+      user, requests Ticket-Granting-Service tickets for target service
+      principal names (SPNs); (2) the Key Distribution Center returns tickets
+      whose encrypted portion is derived from the service account's password
+      hash; (3) the attacker extracts the ticket offline and attempts to
+      recover the password by guessing (this is the computationally
+      expensive step, done entirely off-network and invisible to defenders);
+      (4) a recovered password yields the service account's privileges,
+      which are frequently domain-elevated. RC4 (etype 23) tickets are the
+      crackable ones; AES tickets resist this. Defenders detect the
+      *request* pattern, not the cracking.
+    variants:
+      - "RC4 service-ticket requests for high-value SPNs"
+      - "Targeted roasting of newly discovered or honeypot SPNs"
+      - "AES-downgrade pressure where RC4 remains enabled"
+      - "Roasting as precursor to service-account privilege abuse"
+    indicators:
+      - "Non-admin users requesting service tickets with RC4 encryption (etype 23) at unusual volume"
+      - "Ticket requests for SPNs associated with privileged service accounts"
+      - "Security event 4769 with ticket encryption type 0x17 from unexpected clients"
+      - "Service accounts with old password age and RC4-only Kerberos configuration"
+    detection:
+      rule: detect_kerberoasting
+      patterns:
+        - '(?i)\bkerberoast\w*\b'
+        - '(?i)rc4\s+service\s+tickets?'
+        - '(?i)4769.*0x17|0x17.*4769'
+        - '(?i)ticket[\s\w-]*encrypt\w+[\s\w-]*crack'
+    severity: high
+    mitigations:
+      - "Use long, random, managed passwords for service accounts; rotate regularly via gMSA where possible"
+      - "Enforce AES Kerberos encryption and disable RC4 where compatibility allows"
+      - "Alert on event 4769 with RC4 etype from non-service clients; honeypot SPNs for early warning"
+      - "Audit service-account privileges; remove domain-admin rights that roasting would unlock"
+    examples:
+      - summary: "Microsoft Defender for Identity documents Kerberoasting as a canonical identity attack with dedicated detection (suspicious RC4 ticket requests), and it appears routinely in red-team and incident reports as the escalation step after initial domain access."
+        reference: "https://learn.microsoft.com/en-us/defender-for-identity/cas-isp-kerberoasting"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1558/003/"
+      - "https://learn.microsoft.com/en-us/defender-for-identity/cas-isp-kerberoasting"
+
+  - id: AEG-T235
+    name: "AS-REP Roasting (Pre-Authentication Disabled Accounts)"
+    category: identity_attacks
+    description: >-
+      AS-REP roasting targets domain accounts with Kerberos
+      pre-authentication disabled: for those accounts, anyone can request an
+      authentication response from the domain controller *without knowing
+      the password*, and the encrypted part of the response can be attacked
+      offline. Unlike Kerberoasting (which needs a valid domain account),
+      AS-REP roasting needs no credentials at all — just network access to a
+      domain controller and a list of usernames. It is quieter than password
+      spraying because there are no failed logins: the requests are
+      protocol-legitimate. Defense is configuration hygiene (pre-auth on
+      everywhere, with documented exceptions) plus detection of the request
+      pattern.
+    how_it_works: >-
+      Kerberos pre-authentication normally requires the client to prove
+      knowledge of the password before the KDC responds. When disabled on an
+      account (sometimes set for legacy compatibility), the KDC returns an
+      AS-REP message whose encrypted timestamp section is keyed from the
+      account's password hash. The attacker collects these responses for
+      enumerated usernames and attempts offline password recovery — again
+      invisible to network defenders. Success yields the account's password
+      and whatever it can access. The defensive signals are the AS-REQ
+      requests without pre-auth data and the inventory of accounts with
+      pre-auth disabled, which should normally be zero.
+    variants:
+      - "Unauthenticated AS-REQ harvesting against enumerated usernames"
+      - "Targeting legacy service accounts with pre-auth disabled"
+      - "Username enumeration via AS-REQ response differentiation"
+    indicators:
+      - "AS-REQ requests lacking pre-authentication data from external or unexpected hosts"
+      - "Accounts in the domain with 'Do not require Kerberos preauthentication' set"
+      - "Event 4768 without pre-auth from non-standard clients"
+      - "Username enumeration patterns preceding authentication attempts"
+    detection:
+      rule: detect_asrep_roasting
+      patterns:
+        - '(?i)as[\s_-]*rep\s+roast'
+        - '(?i)pre[\s_-]*auth\w*\s+disabled'
+        - '(?i)asrep\w*\s+roast'
+        - '(?i)4768[\s\w-]*without[\s\w-]*pre[\s_-]*auth'
+    severity: high
+    mitigations:
+      - "Ensure Kerberos pre-authentication is enabled on all accounts; audit for exceptions continuously"
+      - "Alert on AS-REQ traffic without pre-auth data, especially from unusual hosts"
+      - "Use long, random passwords even on accounts where pre-auth exceptions are unavoidable"
+      - "Block unauthenticated network paths to domain controllers from untrusted segments"
+    examples:
+      - summary: "Microsoft Defender for Identity includes AS-REP roasting in its identity-threat detections, and the technique is a staple of internal penetration tests for finding pre-auth-disabled accounts."
+        reference: "https://learn.microsoft.com/en-us/defender-for-identity/cas-isp-asrep-roasting"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1558/004/"
+      - "https://learn.microsoft.com/en-us/defender-for-identity/cas-isp-asrep-roasting"
+
+  - id: AEG-T236
+    name: "DCSync and DCShadow Concepts (Detection Level)"
+    category: identity_attacks
+    description: >-
+      DCSync is the technique of impersonating a domain controller to ask a
+      real one for password hashes via directory replication — the same
+      replication protocol domain controllers use with each other. It
+      requires the attacker to already hold replication privileges (usually
+      via a compromised highly-privileged account), at which point they can
+      pull the hashes of *any* account, including krbtgt. DCShadow goes
+      further, registering a rogue domain controller to inject malicious
+      replication changes. For defenders, the key insight is that these are
+      *privilege* attacks, not exploits: the defense is protecting
+      replication rights, monitoring replication traffic for non-DC sources,
+      and treating any unexpected replication as a critical incident.
+    how_it_works: >-
+      At the protocol level, Active Directory replication (DRS-R) allows a
+      domain controller to request account secrets from its peers. An
+      attacker with the right extended privileges (Replicating Directory
+      Changes, and All) on the domain can invoke the same replication calls
+      from a non-DC machine and receive password hashes. Because this uses
+      legitimate protocol operations, it generates no exploit artifacts —
+      only replication events from an unexpected source. DCShadow instead
+      pushes changes: the attacker registers a fake DC, replicates in
+      malicious modifications (e.g., SID-history injection for persistence),
+      then removes it. Defenders watch event 4662 for replication-right
+      usage and 5136/5137 for unexpected directory changes, and alert on
+      replication from hosts that are not domain controllers.
+    variants:
+      - "DCSync hash extraction for targeted high-value accounts"
+      - "krbtgt hash pull enabling golden-ticket forgery (bridge to AEG-T240)"
+      - "DCShadow rogue-DC registration for injected persistence"
+      - "SID-history injection via malicious replication"
+    indicators:
+      - "Directory replication requests originating from hosts that are not domain controllers"
+      - "Event 4662 showing replication extended-right use by unexpected principals"
+      - "Unexpected 5136/5137 directory modification events, especially SID-history changes"
+      - "New computer accounts exhibiting DC-like replication behavior"
+    detection:
+      rule: detect_dcsync_dcshadow
+      patterns:
+        - '(?i)\bdcsync\b'
+        - '(?i)\bdcshadow\b'
+        - '(?i)replicat\w+[\s\w-]*password\s+hashes'
+        - '(?i)rogue\s+domain\s+controllers?'
+    severity: critical
+    mitigations:
+      - "Restrict replication extended rights to actual domain controllers; audit who holds them"
+      - "Alert on any replication traffic sourced from non-DC hosts — treat as critical"
+      - "Monitor for unexpected directory modifications and SID-history changes"
+      - "Protect krbtgt with twice-yearly password rotation and tiered admin model"
+    examples:
+      - summary: "Mimikatz's DCSync feature, documented by its author and widely replicated in threat reports, made domain-wide hash extraction a standard post-compromise step; incident responders now treat unexpected DRS replication as evidence of domain compromise."
+        reference: "https://attack.mitre.org/versions/v6/techniques/T1003/006/"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1003/006/"
+      - "https://learn.microsoft.com/en-us/defender-for-identity/cas-isp-dcsync"
+
+  - id: AEG-T237
+    name: "Session Hijacking and Cookie Theft"
+    category: identity_attacks
+    description: >-
+      Authenticated web sessions live in cookies and tokens — and stealing
+      one bypasses passwords and MFA entirely, because the server sees a
+      valid session. Attackers harvest session cookies via XSS (bridge to
+      AEG-T140), malicious browser extensions, infostealer malware (bridge
+      to AEG-T170), or network interception, then replay them from their own
+      machines. Modern variants target the token stores of desktop apps and
+      SSO sessions, where one stolen session can mean every connected SaaS
+      app. Because the session is legitimate, the only signals are
+      contextual: impossible travel, device and fingerprint changes, and
+      anomalous behavior within the session. Defenses center on binding
+      sessions to devices, short lifetimes, and continuous verification.
+    how_it_works: >-
+      Theft vectors: (1) XSS exfiltration of `document.cookie` (mitigated by
+      HttpOnly, but not all cookies are); (2) infostealers sweeping browser
+      profile directories and app token caches; (3) malicious extensions
+      with cookie/host permissions; (4) adversary-in-the-middle phishing
+      proxies that relay the real login and keep the resulting session.
+      Replay is trivial: import the cookie into a browser and the server
+      accepts it. Advanced operations refresh stolen sessions via valid
+      refresh tokens. Defenders detect via session telemetry — IP/ASN
+      changes mid-session, user-agent and device fingerprint mismatches,
+      and behavior anomalies — and limit blast radius with short session
+      lifetimes and step-up re-authentication for sensitive actions.
+    variants:
+      - "XSS-driven cookie exfiltration and replay"
+      - "Infostealer harvesting of browser profiles and app token caches"
+      - "Adversary-in-the-middle session relay preserving MFA'd logins"
+      - "Refresh-token theft for persistent session renewal"
+    indicators:
+      - "Session IP/ASN or geolocation changing mid-session (impossible travel)"
+      - "User-agent or device fingerprint mismatches within a single session"
+      - "Sessions used from datacenter/VPN ASNs inconsistent with the user's history"
+      - "Sensitive actions (password change, MFA reset) from a newly relocated session"
+    detection:
+      rule: detect_session_hijacking
+      patterns:
+        - '(?i)session\s+hijack\w*'
+        - '(?i)cookie\s+theft'
+        - '(?i)stolen\s+session\s+tokens?'
+        - '(?i)impossible\s+travel'
+    severity: high
+    mitigations:
+      - "Set HttpOnly, Secure, SameSite on session cookies; bind sessions to device fingerprints where possible"
+      - "Keep session lifetimes short; require step-up authentication for sensitive actions"
+      - "Deploy impossible-travel and session-anomaly detection on identity telemetry"
+      - "Harden against theft vectors: XSS prevention, extension allowlists, infostealer-resistant credential storage"
+    examples:
+      - summary: "CISA and FBI advisories on adversary-in-the-middle phishing (2023) describe attackers relaying MFA-protected logins and harvesting the resulting session cookies, defeating phishing-resistant-looking flows that lack token binding."
+        reference: "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-250a"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1550/"
+      - "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-250a"
+
+  - id: AEG-T238
+    name: "OAuth Consent-Grant Abuse and Token Theft"
+    category: identity_attacks
+    description: >-
+      Modern phishing often skips passwords entirely and asks the victim to
+      *authorize a malicious application*: "Sign in with Microsoft to view
+      this document" leads to a legitimate OAuth consent screen for an
+      attacker-registered app requesting mailbox or file permissions. One
+      click grants persistent API access that survives password changes and
+      generates no failed logins. Separately, OAuth tokens themselves are
+      stolen from devices, logs, and misconfigured apps, then replayed
+      (bridge to AEG-T1528-style token abuse). This differs from AEG-T137
+      (helpdesk social engineering for MFA resets): that attacks the *recovery
+      process*, while this abuses the *authorization framework* users are
+      trained to trust. Defenses: app-consent governance, least-privilege
+      scopes, and token-theft detection.
+    how_it_works: >-
+      Consent phishing: (1) the attacker registers an application with the
+      identity provider, choosing a trustworthy name and requesting
+      high-value delegated permissions (Mail.Read, Files.ReadWrite.All);
+      (2) the victim is lured to the legitimate consent URL and approves;
+      (3) the app receives tokens with the granted scopes and exfiltrates
+      data via API — no malware, no password. Token theft: access and
+      refresh tokens are harvested from compromised endpoints, logs, or
+      mobile app storage and replayed. Because everything uses legitimate
+      APIs with valid tokens, detection depends on app-reputation signals,
+      consent anomaly detection (unusual apps, unusual scopes for the user),
+      and impossible-travel on token use.
+    variants:
+      - "Illicit consent grants to attacker-registered OAuth apps"
+      - "Refresh-token theft for persistent API access"
+      - "Scope over-request: benign-looking apps with excessive permissions"
+      - "Token replay from unexpected devices or locations"
+    indicators:
+      - "OAuth consent grants to newly registered or low-reputation applications"
+      - "Users granting unusual scopes (mailbox, file-wide) to unfamiliar apps"
+      - "Valid tokens used from impossible-travel locations or new device fingerprints"
+      - "Applications with misleading display names mimicking trusted vendors"
+    detection:
+      rule: detect_oauth_consent_abuse
+      patterns:
+        - '(?i)consent[\s_-]*grant\s+abuse'
+        - '(?i)malicious\s+oauth\s+(?:app|consent)'
+        - '(?i)oauth\s+token\s+theft'
+        - '(?i)illicit\s+consent\s+grants?'
+    severity: high
+    mitigations:
+      - "Require admin approval for third-party OAuth consent; block user consent to unverified apps"
+      - "Enforce least-privilege scopes and review granted app permissions continuously"
+      - "Monitor token usage for impossible travel and new-device anomalies"
+      - "Educate users that legitimate consent screens can front malicious apps — verify the publisher"
+    examples:
+      - summary: "Microsoft threat researchers have documented consent-phishing campaigns in which attacker-registered OAuth apps harvested mailbox and file access at scale, prompting built-in app-governance detections in Defender for Cloud Apps."
+        reference: "https://www.microsoft.com/en-us/security/blog/2022/09/22/defending-against-consent-phishing/"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1528/"
+      - "https://www.microsoft.com/en-us/security/blog/2022/09/22/defending-against-consent-phishing/"
+
+  - id: AEG-T239
+    name: "SIM Swapping and SMS Interception (MFA Bypass)"
+    category: identity_attacks
+    description: >-
+      SMS-based second factors fall to SIM swapping: the attacker convinces
+      the mobile carrier to port the victim's number to an attacker SIM,
+      then receives the victim's SMS codes directly. High-profile cases
+      include the January 2024 hijack of the U.S. SEC's X account via SIM
+      swap, which moved markets with a fake ETF announcement. Variants
+      include SMS interception via SS7 weaknesses and malicious carrier
+      insiders. This differs from AEG-T136 (MFA fatigue/push bombing —
+      abusing the *user*) and AEG-T137 (helpdesk reset — abusing *support*):
+      SIM swapping abuses the *telecom layer* beneath the MFA. The defense
+      is to stop depending on SMS for anything important: phishing-resistant
+      MFA (FIDO2/WebAuthn) cannot be SIM-swapped.
+    how_it_works: >-
+      The attacker gathers the victim's personal details (often from breach
+      data, bridge to AEG-T246), then contacts the carrier impersonating
+      the victim and requests a SIM change or number port, sometimes with a
+      corrupt insider's help. Once the number moves, password-reset SMS
+      codes and MFA codes arrive on the attacker's device, enabling account
+      takeovers that bypass SMS MFA entirely. SS7 interception is the
+      network-level variant: exploiting telecom signaling to redirect SMS
+      without carrier interaction. Detection signals live with the carrier
+      (unexpected SIM changes, port-out events) and the identity provider
+      (MFA delivery anomalies, number changes preceding takeovers).
+    variants:
+      - "Carrier social engineering for SIM replacement"
+      - "Unauthorized number porting to attacker-controlled carriers"
+      - "SS7-based SMS interception without carrier contact"
+      - "Insider-assisted SIM swaps"
+    indicators:
+      - "Unexpected SIM-change or port-out events on high-value users' numbers"
+      - "Password-reset and MFA SMS codes requested immediately after a number change"
+      - "Account takeovers where SMS MFA was the only second factor"
+      - "Multiple accounts tied to one number falling in a short window"
+    detection:
+      rule: detect_sim_swapping
+      patterns:
+        - '(?i)sim[\s_-]*swap\w*'
+        - '(?i)sms\s+interception'
+        - '(?i)number\s+porting\s+fraud'
+        - '(?i)sim\s+change[\s\w-]*takeover'
+    severity: high
+    mitigations:
+      - "Migrate high-value accounts to phishing-resistant MFA (FIDO2/WebAuthn); treat SMS as insecure"
+      - "Place carrier-level port-out and SIM-change protections (PINs, locks) on important numbers"
+      - "Alert on number changes followed by authentication resets"
+      - "Monitor for takeovers correlating with telecom-layer events"
+    examples:
+      - summary: "In January 2024 the U.S. Securities and Exchange Commission confirmed its X account was hijacked via SIM swap of an associated phone number, with a false ETF-approval post briefly moving markets — prompting renewed calls to abandon SMS-based authentication."
+        reference: "https://www.sec.gov/newsroom/press-releases/2024-5"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1598/"
+      - "https://www.sec.gov/newsroom/press-releases/2024-5"
+
+  - id: AEG-T240
+    name: "Forged Kerberos Tickets: Golden and Silver Tickets"
+    category: identity_attacks
+    description: >-
+      With the krbtgt account hash (often obtained via DCSync, bridge to
+      AEG-T236), an attacker can forge Ticket-Granting Tickets — "golden
+      tickets" — valid for any user, including domain admins, with a chosen
+      lifetime of up to years. Silver tickets forge service tickets for a
+      specific service using that service account's hash: stealthier, scoped
+      to one service, and invisible to the domain controller (which never
+      sees them). Both provide persistent, hard-to-detect access that
+      survives password changes of the impersonated users. Detection is
+      forensic: ticket lifetimes, encryption types, and logon anomalies
+      that deviate from what the real KDC issues.
+    how_it_works: >-
+      Golden ticket: the attacker crafts a TGT offline, embedding any
+      username and group memberships (typically Domain Admins), encrypted
+      with the stolen krbtgt hash; the KDC accepts it because the crypto
+      validates. It is never logged at creation — only its *use* appears.
+      Silver ticket: a service ticket (TGS) forged with a service account's
+      hash grants access to that one service; the KDC is never contacted,
+      so domain-level logging misses it entirely. Defensive signals: tickets
+      with anomalous lifetimes (e.g., 10 years vs the domain's 10 hours),
+      RC4 tickets where AES is policy, logons for users who never
+      authenticated, and krbtgt password age (rotation invalidates golden
+      tickets — the standard remediation).
+    variants:
+      - "Golden tickets with multi-year lifetimes for domain persistence"
+      - "Silver tickets for stealthy single-service access"
+      - "Diamond tickets (TGT request modification) as a newer variant"
+      - "Ticket forgery combined with DCSync-obtained hashes"
+    indicators:
+      - "Kerberos tickets with lifetimes far exceeding domain policy (e.g., years)"
+      - "RC4-encrypted tickets in environments enforcing AES"
+      - "Logons for privileged accounts with no corresponding AS-REQ authentication"
+      - "krbtgt password unchanged for extended periods in a previously compromised domain"
+    detection:
+      rule: detect_forged_kerberos_tickets
+      patterns:
+        - '(?i)golden\s+ticket'
+        - '(?i)silver\s+ticket'
+        - '(?i)forged\s+kerberos\s+tickets?'
+        - '(?i)krbtgt[\s\w-]*hash'
+    severity: critical
+    mitigations:
+      - "Rotate the krbtgt password twice (with replication between) after any suspected domain compromise"
+      - "Enforce AES Kerberos and alert on RC4 tickets and anomalous ticket lifetimes"
+      - "Monitor for privileged logons without matching authentication events"
+      - "Apply tiered administration so a single compromise cannot reach krbtgt"
+    examples:
+      - summary: "The SolarWinds/Nobelium intrusions (CISA AA20-352A) involved forged SAML tokens — the federated equivalent of golden tickets — demonstrating how ticket/token forgery provides persistent access that survives credential resets."
+        reference: "https://www.cisa.gov/news-events/cybersecurity-advisories/aa20-352a"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1558/001/"
+      - "https://attack.mitre.org/versions/v6/techniques/T1558/002/"
+      - "https://www.cisa.gov/news-events/cybersecurity-advisories/aa20-352a"
+
+  - id: AEG-T241
+    name: "Service Account and gMSA Abuse"
+    category: identity_attacks
+    description: >-
+      Service accounts are the soft underbelly of enterprise identity:
+      powerful, rarely monitored, often exempted from MFA and password
+      policies, and frequently over-privileged. Attackers who compromise
+      them inherit unattended, always-on access. Group Managed Service
+      Accounts (gMSAs) improve the password problem (automatic, complex,
+      rotating passwords) but introduce their own abuse: any principal
+      authorized to *retrieve* the gMSA password can compute it at will,
+      turning a misconfigured gMSA host group into a credential dispenser.
+      Traditional service accounts suffer stale, shared, hardcoded passwords
+      (also an AEG-T031 config-harvesting target). Defense means inventorying
+      every service account, minimizing its privilege, and monitoring its
+      logons — service accounts should never log on interactively.
+    how_it_works: >-
+      Abuse paths: (1) password recovery — hardcoded service credentials
+      harvested from configs, scripts, and CI (bridge to AEG-T031/T032);
+      (2) gMSA retrieval — principals in the gMSA's allowed-hosts group
+      query the managed password legitimately, then use it from anywhere;
+      (3) delegation abuse — service accounts with unconstrained delegation
+      impersonate any user to any service; (4) privilege inheritance —
+      service accounts nested in Domain Admins or equivalent. Because
+      service logons are expected 24/7, anomaly detection must key on
+      *interactive* logons, new source hosts, and privilege use outside the
+      service's function rather than on time-of-day.
+    variants:
+      - "Hardcoded service credentials harvested from configs and scripts"
+      - "gMSA password retrieval from over-broad host groups"
+      - "Unconstrained delegation enabling user impersonation"
+      - "Over-privileged service accounts in admin groups"
+    indicators:
+      - "Interactive logons (type 2/10) by service accounts"
+      - "Service accounts authenticating from unexpected hosts"
+      - "gMSA password retrievals from hosts outside the intended group"
+      - "Service accounts with unconstrained delegation or admin-group membership"
+    detection:
+      rule: detect_service_account_abuse
+      patterns:
+        - '(?i)\bgmsa\b'
+        - '(?i)service\s+account[\s\w-]*(?:abuse|compromise|misuse)'
+        - '(?i)unconstrained\s+delegation'
+        - '(?i)interactive\s+logon[\s\w-]*service\s+account'
+    severity: high
+    mitigations:
+      - "Inventory all service accounts; migrate to gMSA/managed identities with tight retrieval groups"
+      - "Remove service accounts from admin groups; scope to the minimum required rights"
+      - "Alert on any interactive logon by a service account and on new source hosts"
+      - "Disable unconstrained delegation; use constrained/resource-based delegation only"
+    examples:
+      - summary: "Microsoft's identity guidance and incident reports repeatedly cite service-account compromise — via hardcoded credentials or delegation abuse — as the escalation path in enterprise intrusions, driving the push toward managed identities."
+        reference: "https://learn.microsoft.com/en-us/entra/architecture/service-accounts"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1558/"
+      - "https://learn.microsoft.com/en-us/entra/architecture/service-accounts"
+
+  - id: AEG-T242
+    name: "Standing Privilege and Just-in-Time Elevation Gaps"
+    category: identity_attacks
+    description: >-
+      Standing privilege — admin rights that are always on — means every
+      compromise is instantly a privileged compromise. Attackers who land on
+      a workstation where the user is a local admin, or in a cloud tenant
+      where engineers hold permanent Owner roles, skip the entire
+      privilege-escalation phase. Just-in-time (JIT) elevation exists to fix
+      this (privilege granted on request, for a bounded time, with
+      approval), but gaps abound: break-glass accounts without monitoring,
+      JIT workflows that auto-approve, and standing access nobody reviewed
+      in years. This is the enterprise-identity counterpart of the
+      agent-focused AEG-T061–T072 privilege-escalation pack: same principle
+      (excess privilege as the vulnerability), different substrate.
+      Verizon's DBIR consistently finds privilege misuse among top breach
+      patterns.
+    how_it_works: >-
+      The attack is the absence of a control: (1) initial access lands on an
+      identity that already holds admin rights — no escalation needed;
+      (2) attackers enumerate standing access (local admins, cloud IAM
+      bindings, PAM vault contents) during discovery; (3) JIT bypasses are
+      exploited where elevation workflows auto-approve, lack MFA, or grant
+      broader roles than requested; (4) break-glass/emergency accounts —
+      intended for outages — become unmonitored persistent backdoors.
+      Defenders detect via access reviews (who *actually* holds admin right
+      now?), elevation telemetry (was this elevation requested and
+      approved?), and anomaly detection on break-glass usage, which should
+      be near-zero.
+    variants:
+      - "Permanent local-admin rights on user workstations"
+      - "Standing cloud Owner/Contributor role assignments"
+      - "Auto-approving or over-scoped JIT elevation workflows"
+      - "Unmonitored break-glass accounts as persistent backdoors"
+    indicators:
+      - "Identities holding admin roles with no recent elevation request (standing vs JIT)"
+      - "Break-glass account usage outside declared emergencies"
+      - "JIT elevations granting broader roles or longer durations than policy"
+      - "Stale admin assignments surviving role changes and departures"
+    detection:
+      rule: detect_standing_privilege
+      patterns:
+        - '(?i)standing\s+(?:admin|privileg\w+)'
+        - '(?i)just[\s_-]*in[\s_-]*time[\s\w-]*elevation'
+        - '(?i)permanent\s+admin\s+rights'
+        - '(?i)break[\s_-]*glass\s+account'
+    severity: high
+    mitigations:
+      - "Eliminate standing admin rights; move to JIT elevation with approval and bounded duration"
+      - "Run periodic access reviews and auto-expire unused privilege grants"
+      - "Monitor break-glass accounts with immediate alerting on any use"
+      - "Enforce MFA and ticketing linkage on every elevation path"
+    examples:
+      - summary: "Verizon's Data Breach Investigations Report consistently identifies privilege misuse — including standing and excessive privileges — among the top action varieties in breaches, underpinning the industry shift to just-in-time administration."
+        reference: "https://www.verizon.com/business/resources/reports/dbir/"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1078/"
+      - "https://www.verizon.com/business/resources/reports/dbir/"

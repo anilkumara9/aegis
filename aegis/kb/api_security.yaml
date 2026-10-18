@@ -1,0 +1,565 @@
+pack: api_security
+version: "1.0"
+techniques:
+  - id: AEG-T223
+    name: "BOLA: Broken Object-Level Authorization in APIs"
+    category: api_security
+    description: >-
+      Broken Object-Level Authorization (BOLA) — the API world's name for the
+      IDOR class — is the number-one API risk in the OWASP API Security Top 10
+      (2023). APIs expose object identifiers (user IDs, order numbers,
+      document UUIDs) and trust the caller to request only their own; when
+      the server fails to verify ownership on every request, an attacker
+      iterates identifiers and reads, modifies, or deletes other users'
+      objects. High-profile breaches — Optus (2022, unauthenticated API
+      exposing millions of customer records) and T-Mobile (2023, abused API
+      exposing 37 million accounts) — trace to this family. This technique is
+      the API-scoped sibling of AEG-T144 (web IDOR): T144 covers the classic
+      web-form case, while this covers REST/GraphQL object endpoints where
+      the authorization check must happen per-object, per-request, in code
+      the framework does not generate for you.
+    how_it_works: >-
+      API endpoints typically resolve an object by an ID taken from the URL
+      path or body, then operate on it. BOLA occurs when the authorization
+      check is missing, checks only authentication ("is logged in") rather
+      than ownership ("owns this object"), or is applied inconsistently
+      across endpoints (the GET is protected, the PUT is not). Attack patterns:
+      (1) identifier enumeration — incrementing numeric IDs or harvesting
+      UUIDs from other responses; (2) verb tampering — trying unprotected
+      methods on the same resource; (3) nested-object traversal — reaching
+      another user's data through a related object the attacker legitimately
+      owns. Detection centers on access logs: one principal touching many
+      distinct object IDs outside its ownership graph.
+    variants:
+      - "Numeric ID enumeration across user-owned resources"
+      - "Unprotected write verbs on protected read endpoints"
+      - "Nested-object traversal through legitimately owned parents"
+      - "UUID harvesting from list endpoints then direct object access"
+    indicators:
+      - "A single API principal accessing many distinct object IDs in a short window (enumeration pattern)"
+      - "Sequential or fuzzed identifiers in object URLs returning 200 instead of 403/404"
+      - "Authorization logic present on some verbs/endpoints but absent on sibling ones"
+      - "Support tickets or telemetry showing users viewing other users' data"
+    detection:
+      rule: detect_bola_attempts
+      patterns:
+        - '(?i)\bbola\b'
+        - '(?i)broken\s+object[\s_-]*level\s+authorization'
+        - '(?i)object[\s_-]*level[\s\w-]*authori[sz]ation[\s\w-]*fail'
+        - '(?i)enumerat\w*\s+object\s+ids?'
+    severity: critical
+    mitigations:
+      - "Enforce per-object ownership checks on every endpoint and every HTTP verb — never rely on authentication alone"
+      - "Use unpredictable, unguessable object identifiers; treat even UUIDs as non-secret"
+      - "Centralize authorization in middleware/policy code with tests per endpoint, and fuzz object IDs in CI"
+      - "Monitor API access logs for cross-principal object-ID enumeration and alert on anomalies"
+    examples:
+      - summary: "The 2022 Optus breach in Australia exposed personal data of millions through an unauthenticated API endpoint — a BOLA-class failure that led to regulatory action and is widely cited in API-security training."
+        reference: "https://owasp.org/API-Security/editions/2023/en/0x11-t10/"
+    references:
+      - "https://owasp.org/API-Security/editions/2023/en/0x11-t10/"
+      - "https://attack.mitre.org/versions/v6/techniques/T1548/"
+
+  - id: AEG-T224
+    name: "Broken API Authentication and Token Abuse"
+    category: api_security
+    description: >-
+      APIs authenticate with tokens, keys, and OAuth flows — and each
+      mechanism fails in API-specific ways: endpoints that skip
+      authentication entirely, API keys that are brute-forceable or never
+      rotate, OAuth scopes granted far beyond need, and refresh tokens with
+      excessive lifetimes. Attackers probe for the unprotected endpoint the
+      developers forgot, then pivot with the stolen or guessed credential.
+      This differs from AEG-T150 (JWT validation flaws — cryptographic and
+      parsing weaknesses in the token itself): this technique covers the
+      *authentication design* around APIs — missing auth, weak credential
+      lifecycle, and scope abuse. The 2021 T-Mobile breach and the 2020
+      Experian API exposure (reported by Brian Krebs) both involved
+      authentication gaps at the API layer. Defenders inventory every
+      endpoint's auth requirement and treat "no auth" as a finding, not a
+      default.
+    how_it_works: >-
+      Failure modes: (1) missing authentication — endpoints (often
+      internal/debug ones) reachable without any credential; (2) weak API
+      keys — short, sequential, or embedded-in-client keys that can be
+      guessed or harvested; (3) credential stuffing at scale — breached
+      username/password pairs replayed against login APIs (bridge to
+      AEG-T233); (4) OAuth scope over-grant — clients requesting and
+      receiving scopes beyond their function, then abusing them; (5) token
+      lifecycle flaws — non-expiring tokens, refresh tokens without rotation,
+      tokens accepted after revocation. Attackers fingerprint auth behavior
+      per endpoint (which return 401 vs 200) and concentrate on the gaps.
+    variants:
+      - "Unauthenticated internal/debug endpoints exposed publicly"
+      - "Brute-forceable or harvestable API keys"
+      - "OAuth scope over-grant and scope confusion"
+      - "Non-expiring tokens and broken revocation"
+    indicators:
+      - "Endpoints returning 200 to unauthenticated requests in scanner or log review"
+      - "API keys with high entropy failure — short, sequential, or long-lived without rotation"
+      - "OAuth clients holding scopes unrelated to their function"
+      - "Authentication anomalies: token reuse after revocation, refresh-token replay"
+    detection:
+      rule: detect_broken_api_auth
+      patterns:
+        - '(?i)missing\s+authentication\s+on\s+(?:the\s+)?api'
+        - '(?i)broken\s+(?:api\s+)?authentication'
+        - '(?i)api\s+key[\s\w-]*brute'
+        - '(?i)unauthenticated\s+api\s+endpoint'
+    severity: critical
+    mitigations:
+      - "Require authentication on every endpoint by default; explicitly document and review any exception"
+      - "Issue high-entropy, rotatable API keys; expire and rotate tokens; enforce revocation"
+      - "Apply least-privilege OAuth scopes and validate them server-side on each call"
+      - "Rate-limit authentication endpoints and alert on credential-stuffing patterns"
+    examples:
+      - summary: "Brian Krebs reported in December 2020 that an Experian API exposed credit scores with only minimal authentication, allowing lookups that should have required stronger identity verification."
+        reference: "https://krebsonsecurity.com/2020/12/experian-api-exposed-credit-scores-of-most-americans/"
+    references:
+      - "https://owasp.org/API-Security/editions/2023/en/0x12-t10/"
+      - "https://krebsonsecurity.com/2020/12/experian-api-exposed-credit-scores-of-most-americans/"
+
+  - id: AEG-T225
+    name: "Mass Assignment and BOPLA (Property-Level Authorization Failure)"
+    category: api_security
+    description: >-
+      Mass assignment lets an attacker set object properties the API never
+      intended to be client-writable — typically by binding the whole JSON
+      body to a model. The classic case is adding `"is_admin": true` or
+      `"role": "admin"` to a profile-update request. BOPLA (Broken Object
+      Property-Level Authorization) is its subtler sibling: the endpoint
+      correctly guards *which object* you touch but not *which properties*
+      of it you may change — you can update your own profile, but also its
+      `account_balance` or `verified` flag. Frameworks that auto-bind
+      request bodies make this the default vulnerability; it is caught only
+      by explicit allowlists of writable fields. Detection in telemetry is
+      hard (the requests look normal), so prevention is primarily a design
+      and testing discipline.
+    how_it_works: >-
+      The server deserializes the request body directly into a domain object
+      or ORM model without filtering fields. Attack patterns: (1) property
+      injection — adding privileged fields (`role`, `is_admin`,
+      `account_status`) to update payloads; (2) nested-object writes —
+      reaching restricted properties through embedded objects the binder
+      traverses; (3) BOPLA read — requesting excessive properties on GET
+      responses that should be filtered per caller; (4) query-parameter
+      binding — frameworks that also bind query strings to models. Because
+      the HTTP layer looks legitimate, detection relies on schema-diffing
+      (request fields vs documented writable fields) and on tests that
+      attempt privileged-property writes.
+    variants:
+      - "Privileged-field injection in update payloads (is_admin, role)"
+      - "Nested-object traversal to restricted properties"
+      - "BOPLA read: excessive properties returned per caller"
+      - "Query-parameter mass binding"
+    indicators:
+      - "API requests containing fields outside the documented writable schema"
+      - "Privilege changes (role, status flags) with no corresponding admin workflow in audit logs"
+      - "ORM models bound directly from request bodies without field allowlists in code review"
+      - "Responses returning sensitive properties to callers who should not see them"
+    detection:
+      rule: detect_mass_assignment
+      patterns:
+        - '(?i)mass\s+assignment'
+        - '(?i)\bbopla\b'
+        - '(?i)unintended[\s\w-]*propert\w+[\s\w-]*(?:bound|set|writ)'
+        - '(?i)is_admin["'']?\s*:\s*true'
+    severity: high
+    mitigations:
+      - "Allowlist writable fields explicitly per endpoint; never bind raw request bodies to domain models"
+      - "Separate input DTOs from persistence models; strip unknown fields and reject on unexpected ones in strict mode"
+      - "Filter response properties per caller role (BOPLA read protection)"
+      - "Add negative tests that attempt privileged-property writes on every mutating endpoint"
+    examples:
+      - summary: "GitHub's 2012 mass-assignment incident — where a user escalated to admin by adding a public key to another user's account via crafted parameters — remains the canonical example of this vulnerability class."
+        reference: "https://owasp.org/API-Security/editions/2023/en/0x13-t10/"
+    references:
+      - "https://owasp.org/API-Security/editions/2023/en/0x13-t10/"
+      - "https://owasp.org/www-community/vulnerabilities/Mass_Assignment_Cheat_Sheet"
+
+  - id: AEG-T226
+    name: "Excessive Data Exposure via Verbose API Responses"
+    category: api_security
+    description: >-
+      APIs routinely return far more data than the client needs — full
+      database rows serialized because it was easier than projecting fields.
+      Attackers do not need to break authorization when the legitimate
+      response already contains other users' PII, internal IDs, password
+      hashes, or business-sensitive fields. Unlike BOLA, the caller is
+      *entitled* to the endpoint; the failure is returning excessive fields
+      within it. Mobile apps are a rich hunting ground: decompiled clients
+      reveal which verbose endpoints exist, and proxies capture the surplus
+      data in transit. The fix is response shaping — return exactly the
+      fields each caller role needs, nothing more — plus data classification
+      so sensitive fields are never serializable by default.
+    how_it_works: >-
+      The server serializes whole ORM objects or database rows into JSON,
+      including fields the client never displays. Attack patterns:
+      (1) passive harvesting — legitimate API use collects surplus fields
+      over time into a shadow dataset; (2) client analysis — decompiling
+      mobile apps to find verbose endpoints, then querying them directly;
+      (3) field discovery — diffing responses across roles to identify
+      which sensitive fields leak to low-privilege callers. Because requests
+      are authorized and normal-looking, this is primarily found by response
+      auditing, not request monitoring: diff actual response schemas against
+      documented contracts and flag sensitive-typed fields.
+    variants:
+      - "Full-row serialization leaking PII and internal fields"
+      - "Mobile-API verbosity harvested via proxy interception"
+      - "Cross-role response diffing to find leaked fields"
+      - "Sensitive fields (hashes, tokens) included in list endpoints"
+    indicators:
+      - "API responses containing fields absent from documentation or the client's visible UI"
+      - "Sensitive-typed data (SSNs, hashes, internal notes) in responses to low-privilege callers"
+      - "Clients systematically paging list endpoints and storing full payloads"
+      - "Response schemas drifting wider than the documented contract"
+    detection:
+      rule: detect_excessive_data_exposure
+      patterns:
+        - '(?i)excessive\s+data\s+exposure'
+        - '(?i)over[\s_-]*fetch\w*\s+api'
+        - '(?i)verbose\s+api\s+responses?'
+        - '(?i)full[\s_-]*row\s+seriali[sz]ation'
+    severity: high
+    mitigations:
+      - "Project only required fields per endpoint and caller role; never serialize whole models"
+      - "Classify sensitive fields and block them from default serialization"
+      - "Contract-test response schemas in CI; alert on undocumented field additions"
+      - "Audit mobile and partner APIs specifically — they are the most harvested"
+    examples:
+      - summary: "OWASP API Security Top 10 (2023) documents excessive data exposure as a top-three API risk, citing repeated incidents where verbose responses leaked PII and credentials to authorized-but-low-privilege callers."
+        reference: "https://owasp.org/API-Security/editions/2023/en/0x14-t10/"
+    references:
+      - "https://owasp.org/API-Security/editions/2023/en/0x14-t10/"
+      - "https://attack.mitre.org/versions/v6/techniques/T1083/"
+
+  - id: AEG-T227
+    name: "Broken Function-Level Authorization (Exposed Admin APIs)"
+    category: api_security
+    description: >-
+      Complex applications hide admin functions behind UI elements — but the
+      API endpoints behind those buttons often check nothing. Broken
+      function-level authorization means a regular user can call
+      `/api/admin/users/delete` simply because the server never verifies the
+      caller's role. Attackers discover these endpoints by spidering the
+      client, reading JavaScript bundles, or fuzzing predictable admin paths.
+      The failure is authorization *by obscurity*: the function was "protected"
+      by not being linked in the UI. Every function — especially destructive
+      and cross-user ones — needs an explicit server-side role check,
+      independent of what the client displays.
+    how_it_works: >-
+      The client UI conditionally renders admin controls, but the API
+      authorizes only authentication, not role. Attack patterns:
+      (1) endpoint discovery — extracting admin paths from JS bundles,
+      mobile apps, or API docs; (2) direct invocation — calling admin
+      endpoints with a normal user's token; (3) verb/method confusion —
+      admin functions exposed under unexpected methods the authz layer
+      missed; (4) tenant confusion — admin functions scoped to the wrong
+      tenant in multi-tenant APIs. Detection: alert when non-admin
+      principals invoke admin-namespaced endpoints, and test every
+      admin function with a low-privilege token in CI.
+    variants:
+      - "Admin endpoints callable with standard user tokens"
+      - "Destructive functions exposed under unprotected methods"
+      - "Cross-tenant admin function invocation"
+      - "Hidden debug/maintenance endpoints without role checks"
+    indicators:
+      - "Non-admin principals invoking admin-namespaced API paths in access logs"
+      - "Admin paths discoverable in client bundles without corresponding server-side role checks"
+      - "Destructive operations (delete, ban, refund) succeeding for standard users"
+      - "Role checks implemented in UI code but absent server-side"
+    detection:
+      rule: detect_broken_function_authz
+      patterns:
+        - '(?i)broken\s+function[\s_-]*level\s+authorization'
+        - '(?i)admin\s+(?:api|endpoint)[\s\w-]*(?:expos|unauthenticated|unprotected)'
+        - '(?i)missing\s+role\s+check'
+        - '(?i)non[\s_-]*admin[\s\w-]*admin\s+(?:api|endpoint|function)'
+    severity: critical
+    mitigations:
+      - "Enforce server-side role checks on every function, especially admin and destructive ones"
+      - "Deny by default: new endpoints require explicit authorization policy before exposure"
+      - "Test all privileged functions with low-privilege tokens in CI (negative authz tests)"
+      - "Alert on non-admin principals hitting admin-namespaced paths"
+    examples:
+      - summary: "OWASP API Security Top 10 (2023) ranks broken function-level authorization in the top five, with case studies of standard users invoking exposed admin APIs to modify or delete other tenants' data."
+        reference: "https://owasp.org/API-Security/editions/2023/en/0x15-t10/"
+    references:
+      - "https://owasp.org/API-Security/editions/2023/en/0x15-t10/"
+      - "https://attack.mitre.org/versions/v6/techniques/T1548/"
+
+  - id: AEG-T228
+    name: "API Rate-Limit Abuse and Unrestricted Resource Consumption"
+    category: api_security
+    description: >-
+      Many APIs lack effective rate limiting — or limit requests but not
+      *cost*: an attacker allowed 100 requests per minute can still request
+      hundred-megabyte exports, trigger expensive report generation, or send
+      password-reset emails to thousands of addresses. This is the API-layer
+      cousin of network DDoS (AEG-T159) and LLM unbounded consumption
+      (AEG-T219): the abuse is legitimate-looking API use at a volume or
+      cost the operator never budgeted. Business impacts include
+      denial-of-service, SMS/email bombing via the API, and cloud-bill shock.
+      Defense requires cost-aware quotas — limits on expensive operations,
+      not just request counts — plus abuse-shaped traffic detection.
+    how_it_works: >-
+      Attack patterns: (1) expensive-operation flooding — repeatedly invoking
+      the costliest endpoints (exports, reports, bulk operations);
+      (2) notification bombing — abusing resend/notify endpoints to spam
+      victims or burn SMS budgets; (3) quota arbitrage — spreading load
+      across many free-tier accounts; (4) slowloris-style API abuse —
+      holding connections open on streaming endpoints. Operators often
+      discover the gap from the invoice, not the monitoring. Effective
+      defense tiers limits by operation cost, tracks per-principal spend,
+      and treats sudden cost spikes as security events.
+    variants:
+      - "Expensive-endpoint flooding (exports, reports, bulk ops)"
+      - "Notification/SMS bombing via resend APIs"
+      - "Free-tier quota arbitrage across many accounts"
+      - "Connection-holding abuse on streaming endpoints"
+    indicators:
+      - "Per-principal request costs far above baseline for the integration type"
+      - "Repeated invocation of the most expensive endpoints with no business purpose"
+      - "Spikes in outbound notification volume originating from API calls"
+      - "Many new free-tier accounts exhibiting identical high-cost usage"
+    detection:
+      rule: detect_api_rate_abuse
+      patterns:
+        - '(?i)api\s+rate[\s_-]*limit[\s\w-]*(?:abuse|bypass|missing)'
+        - '(?i)unrestricted\s+resource\s+consumption'
+        - '(?i)throttl\w+[\s\w-]*bypass'
+        - '(?i)notification\s+bombing'
+    severity: medium
+    mitigations:
+      - "Apply cost-tiered rate limits: stricter quotas on expensive operations, not flat request counts"
+      - "Track per-principal spend and alert on anomalies; cap free-tier abuse vectors"
+      - "Require additional verification for notification-sending and bulk-export endpoints"
+      - "Load-test abuse scenarios and set billing alerts as a security control"
+    examples:
+      - summary: "OWASP API Security Top 10 (2023) documents unrestricted resource consumption incidents including SMS-bombing via APIs and cloud-bill shocks from unthrottled expensive endpoints."
+        reference: "https://owasp.org/API-Security/editions/2023/en/0x16-t10/"
+    references:
+      - "https://owasp.org/API-Security/editions/2023/en/0x16-t10/"
+      - "https://attack.mitre.org/versions/v6/techniques/T1499/"
+
+  - id: AEG-T229
+    name: "Shadow, Zombie, and Undocumented APIs"
+    category: api_security
+    description: >-
+      Organizations lose track of their APIs: experimental endpoints left
+      public, old versions never decommissioned (zombies), partner-only APIs
+      exposed to the internet, and internal tools reachable externally. Each
+      undocumented endpoint is an unreviewed, untested, unmonitored attack
+      surface — frequently missing the authentication and authorization that
+      current versions enforce. Attackers find them through certificate
+      transparency, DNS enumeration, client-bundle analysis, and fuzzing.
+      This is fundamentally an inventory failure, and the fix is too:
+      continuous API discovery, version lifecycle enforcement, and treating
+      "unknown endpoint" as a vulnerability.
+    how_it_works: >-
+      Shadow APIs arise from: (1) version sprawl — v1 left running with old,
+      weaker auth after v2 launches; (2) environment bleed — staging/debug
+      APIs reachable from production networks; (3) acquisition sprawl —
+      inherited APIs nobody owns; (4) feature flags — half-built endpoints
+      shipped dark but reachable. Attackers enumerate via CT logs, subdomain
+      brute-forcing, OpenAPI/Swagger files left public, and client
+      decompilation, then test each for the auth gaps the main API fixed
+      long ago. Zombie endpoints are especially attractive because their
+      vulnerabilities are often *known* — patched in v2, still live in v1.
+    variants:
+      - "Zombie versions with known-patched vulnerabilities still live"
+      - "Staging/debug APIs reachable from production"
+      - "Partner/internal APIs exposed to the internet"
+      - "Dark feature-flagged endpoints shipped reachable"
+    indicators:
+      - "Endpoints serving traffic that appear in no API inventory or documentation"
+      - "Old API versions receiving requests long after deprecation dates"
+      - "Public Swagger/OpenAPI files or client bundles referencing internal paths"
+      - "Authentication behavior differing between versions of the same API"
+    detection:
+      rule: detect_shadow_apis
+      patterns:
+        - '(?i)shadow\s+apis?'
+        - '(?i)zombie\s+apis?'
+        - '(?i)undocumented\s+(?:api\s+)?endpoints?'
+        - '(?i)deprecated\s+api[\s\w-]*still\s+(?:live|serving|reachable)'
+    severity: high
+    mitigations:
+      - "Maintain a continuous, automated API inventory (discovery from traffic, code, and DNS)"
+      - "Enforce version lifecycles: deprecate, announce, and actually decommission old versions"
+      - "Never expose staging/debug APIs to production networks; gate by network and auth"
+      - "Remove public Swagger/docs for internal APIs; treat docs exposure as information disclosure"
+    examples:
+      - summary: "OWASP API Security Top 10 (2023) highlights improper inventory management as a top risk, noting breaches repeatedly trace to forgotten or zombie API versions with weaker security than current ones."
+        reference: "https://owasp.org/API-Security/editions/2023/en/0x19-t10/"
+    references:
+      - "https://owasp.org/API-Security/editions/2023/en/0x19-t10/"
+      - "https://attack.mitre.org/versions/v6/techniques/T1593/002/"
+
+  - id: AEG-T230
+    name: "GraphQL-Specific Abuse: Introspection, Deep Queries, Batching"
+    category: api_security
+    description: >-
+      GraphQL's flexibility is its attack surface. A single endpoint exposes
+      the entire schema: introspection queries reveal every type, field, and
+      mutation — a free API map for attackers. Deeply nested queries can
+      trigger exponential resolver work (a GraphQL-native DoS), and batched
+      queries pack hundreds of operations into one request, defeating naive
+      rate limiters. Mutations often skip the authorization checks applied
+      to queries. Defenders must treat the GraphQL layer as a distinct
+      enforcement point: disable introspection in production, bound query
+      depth and complexity, and authorize per-field, not per-endpoint.
+    how_it_works: >-
+      Attack patterns: (1) introspection mapping — `__schema` queries
+      enumerate all types and fields, including admin-only ones;
+      (2) deep-query DoS — nested selections (friends of friends of friends)
+      multiply database work exponentially; (3) batching attacks — arrays of
+      aliased operations bypass per-request rate limits and enable
+      credential stuffing at scale; (4) mutation abuse — state-changing
+      operations with weaker authz than their query counterparts;
+      (5) field-suggestion probing — error messages recommending valid
+      fields, leaking schema details. Cost analysis (query complexity
+      scoring) before execution is the core defense.
+    variants:
+      - "Introspection-driven schema mapping in production"
+      - "Exponential deep-query denial of service"
+      - "Batched query abuse defeating rate limits"
+      - "Under-authorized mutations and field-level authz gaps"
+    indicators:
+      - "Introspection queries against production GraphQL endpoints"
+      - "Queries with extreme nesting depth or complexity scores"
+      - "Single requests containing large batches of aliased operations"
+      - "Error messages disclosing valid field names to unauthenticated callers"
+    detection:
+      rule: detect_graphql_abuse
+      patterns:
+        - '(?i)graphql\s+introspection'
+        - '(?i)graphql[\s\w-]*(?:deep|nested)\s+quer'
+        - '(?i)graphql\s+batching'
+        - '(?i)__schema\s*\{'
+    severity: high
+    mitigations:
+      - "Disable introspection in production; serve minimal schema documentation to authorized developers only"
+      - "Enforce query depth limits and computed complexity budgets before execution"
+      - "Count batched operations individually against rate limits"
+      - "Apply field-level authorization on mutations and sensitive fields"
+    examples:
+      - summary: "Public bug-bounty reports (e.g., via HackerOne) repeatedly show GraphQL introspection exposing admin mutations and deep-query DoS against production endpoints, making GraphQL hardening a standard API-security workstream."
+        reference: "https://owasp.org/API-Security/editions/2023/en/0x11-t10/"
+    references:
+      - "https://owasp.org/API-Security/editions/2023/en/0x11-t10/"
+      - "https://graphql.org/learn/security/"
+
+  - id: AEG-T231
+    name: "API Business-Logic and Workflow Abuse"
+    category: api_security
+    description: >-
+      Business-logic abuse exploits the *intended* functionality used in an
+      unintended order, volume, or combination: applying the same coupon a
+      thousand times, racing two simultaneous refund requests, skipping
+      checkout steps by calling APIs out of order, or voting repeatedly
+      through an unguarded endpoint. Scanners cannot find these flaws —
+      every request is well-formed and authorized; only the *sequence*
+      violates business rules. They are discovered through threat modeling
+      of workflows and abuse-case testing. For defenders, the controls are
+      state machines (the server tracks legitimate workflow state),
+      idempotency, and anomaly detection on business metrics, not just
+      request metrics.
+    how_it_works: >-
+      Attack patterns: (1) workflow skipping — calling later-stage APIs
+      without completing prerequisites (e.g., invoking payment-capture
+      without checkout); (2) race conditions — parallel requests that each
+      pass a balance check before either settles; (3) parameter
+      manipulation within allowed ranges — negative quantities, zero-price
+      items, oversized redemptions; (4) repetition abuse — replaying
+      one-time actions (coupon apply, vote, claim) that lack idempotency.
+      Attackers map workflows by observing client behavior, then script
+      out-of-order or concurrent API sequences. Detection requires
+      business-aware monitoring: impossible state transitions and metric
+      anomalies (refund rates, coupon redemptions) rather than signature
+      matching.
+    variants:
+      - "Checkout/workflow step skipping via out-of-order API calls"
+      - "Race conditions on balance/limit checks"
+      - "Negative/zero-value parameter manipulation"
+      - "One-time action replay without idempotency"
+    indicators:
+      - "API call sequences that skip required workflow states"
+      - "Anomalous business metrics: refund rates, coupon redemptions, vote counts"
+      - "Concurrent requests from one principal against balance-sensitive endpoints"
+      - "Parameters at extreme-but-valid values (zero, negative, maximum)"
+    detection:
+      rule: detect_business_logic_abuse
+      patterns:
+        - '(?i)business[\s_-]*logic\s+(?:abuse|flaw|bypass)'
+        - '(?i)workflow\s+manipulation'
+        - '(?i)race\s+condition[\s\w-]*(?:coupon|checkout|payment|refund)'
+        - '(?i)coupon[\s\w-]*replay|replay[\s\w-]*coupon'
+    severity: high
+    mitigations:
+      - "Model workflows as server-side state machines; reject out-of-order transitions"
+      - "Make one-time actions idempotent with idempotency keys"
+      - "Validate business invariants server-side (non-negative balances, single redemption) under concurrency"
+      - "Monitor business metrics for abuse anomalies, not just technical ones"
+    examples:
+      - summary: "OWASP API Security Top 10 (2023) documents unrestricted access to business flows — including repeated coupon redemption and workflow manipulation — as a distinct API risk class found only through abuse-case testing."
+        reference: "https://owasp.org/API-Security/editions/2023/en/0x1a-t10/"
+    references:
+      - "https://owasp.org/API-Security/editions/2023/en/0x1a-t10/"
+      - "https://owasp.org/www-community/attacks/Business_logic_vulnerability"
+
+  - id: AEG-T232
+    name: "Unsafe Consumption of Third-Party APIs and Webhook Validation Failures"
+    category: api_security
+    description: >-
+      Applications increasingly *consume* external APIs and webhooks — and
+      trust what comes back. Unsafe consumption means treating third-party
+      API responses as trusted data: rendering them without encoding,
+      concatenating them into queries, or acting on webhook callbacks
+      without verifying their signature and freshness. Attackers who
+      compromise (or impersonate) the third party — or who can trigger
+      callbacks to attacker-controlled URLs — inject malicious content
+      straight into the victim application. This differs from AEG-T141
+      (SSRF — the server *fetching* attacker-chosen URLs): here the server
+      willingly talks to a legitimate partner, but fails to distrust the
+      *content* of the reply. Webhook signature verification and
+      response-schema validation are the core controls.
+    how_it_works: >-
+      Attack patterns: (1) webhook forgery — sending fake callbacks
+      (payment succeeded, shipment delivered) to endpoints that skip
+      signature verification; (2) replay — capturing a legitimate webhook
+      and re-sending it to double-apply an action; (3) response injection —
+      compromising a data-provider API so its responses carry XSS/SQLi
+      payloads the consumer renders or executes; (4) redirect manipulation —
+      OAuth and payment callbacks whose redirect URLs are not allowlisted,
+      leaking tokens. Because the traffic comes from a "trusted" partner,
+      it often bypasses WAFs and input validation entirely.
+    variants:
+      - "Forged webhooks accepted without signature verification"
+      - "Webhook replay doubling financial or fulfillment actions"
+      - "Compromised provider responses carrying injection payloads"
+      - "Open redirect/token leakage in OAuth and payment callbacks"
+    indicators:
+      - "Webhook endpoints accepting callbacks without signature or timestamp verification"
+      - "Duplicate webhook deliveries applied twice (missing idempotency)"
+      - "Third-party response data rendered or executed without validation"
+      - "Callback/redirect URLs accepted without an allowlist"
+    detection:
+      rule: detect_unsafe_api_consumption
+      patterns:
+        - '(?i)unsafe\s+consumption'
+        - '(?i)third[\s_-]*party\s+api[\s\w-]*inject'
+        - '(?i)webhook[\s\w-]*signature[\s\w-]*(?:missing|bypass|fail|skip)'
+        - '(?i)forged\s+webhooks?'
+    severity: high
+    mitigations:
+      - "Verify webhook signatures with the provider's public key and reject stale timestamps"
+      - "Make webhook handlers idempotent; deduplicate by event ID"
+      - "Validate third-party response schemas and treat response content as untrusted input"
+      - "Allowlist callback/redirect URLs; never accept them from the request"
+    examples:
+      - summary: "OWASP API Security Top 10 (2023) documents unsafe consumption of APIs — including unsigned webhook acceptance leading to fraudulent state changes — as a recurring cause of payment and fulfillment fraud."
+        reference: "https://owasp.org/API-Security/editions/2023/en/0x1b-t10/"
+    references:
+      - "https://owasp.org/API-Security/editions/2023/en/0x1b-t10/"
+      - "https://attack.mitre.org/versions/v6/techniques/T1557/"

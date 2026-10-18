@@ -1,0 +1,567 @@
+pack: reconnaissance
+version: "1.0"
+techniques:
+  - id: AEG-T243
+    name: "Subdomain and Certificate-Transparency Enumeration"
+    category: reconnaissance
+    description: >-
+      Every TLS certificate is logged to public Certificate Transparency
+      (CT) logs — which means every new subdomain an organization deploys is
+      effectively published to attackers via crt.sh and similar monitors.
+      Combined with DNS brute-forcing and passive-DNS data, adversaries
+      build a near-complete map of an organization's internet-facing assets,
+      including the forgotten staging, dev, and partner subdomains that
+      become initial-access targets. This is purely passive from the
+      attacker's side: no packets touch the victim. For defenders, the
+      counter is continuous external-asset discovery — monitoring the same
+      CT logs for your own domains — plus shrinking the exposed surface the
+      logs reveal.
+    how_it_works: >-
+      Collection methods: (1) CT log monitoring — streaming new certificates
+      for target domains and extracting subdomains; (2) subdomain
+      brute-forcing with curated wordlists against resolvers; (3) passive
+      DNS — querying historical DNS databases for observed subdomains;
+      (4) DNS aggregators and search engines (Censys, Shodan) that
+      continuously scan and index. Attackers correlate the results to find
+      high-value, low-hardening targets: `staging-`, `dev-`, `vpn-`,
+      `legacy-` hosts. Because CT is public and passive DNS is third-party
+      data, the victim sees nothing — the defense is to assume your
+      subdomain inventory is public and to discover and harden assets before
+      attackers do.
+    variants:
+      - "CT-log streaming for newly issued subdomain certificates"
+      - "Wordlist-based subdomain brute-forcing"
+      - "Passive-DNS historical subdomain recovery"
+      - "Censys/Shodan index mining for exposed services"
+    indicators:
+      - "New certificates appearing in CT logs for non-production-looking subdomains"
+      - "External asset inventories diverging from internal CMDB (unknown-to-you hosts)"
+      - "Subdomain brute-force patterns in DNS query logs (high NXDOMAIN rates)"
+      - "Forgotten subdomains resolving to live, unpatched services"
+    detection:
+      rule: detect_subdomain_enumeration
+      patterns:
+        - '(?i)certificate\s+transparency'
+        - '(?i)subdomain\s+enumeration'
+        - '(?i)crt\.sh'
+        - '(?i)passive[\s_-]*dns'
+    severity: medium
+    mitigations:
+      - "Monitor CT logs for your domains continuously; treat new subdomains as new attack surface"
+      - "Run your own external-asset discovery and reconcile against the CMDB"
+      - "Avoid descriptive sensitive subdomain names; use wildcard certificates to reduce CT granularity where appropriate"
+      - "Decommission or harden forgotten subdomains; DNS should not point at dead infrastructure"
+    examples:
+      - summary: "Bug-bounty methodology writeups and Censys research consistently show subdomain enumeration via CT logs as the first step in external attack-surface mapping, regularly surfacing forgotten staging and dev hosts."
+        reference: "https://censys.com/"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1593/002/"
+      - "https://attack.mitre.org/versions/v6/techniques/T1590/002/"
+
+  - id: AEG-T244
+    name: "Search-Engine Dorking (GHDB Concepts, Defensive View)"
+    category: reconnaissance
+    description: >-
+      Search-engine dorking uses advanced operators (filetype:, inurl:,
+      intitle:, site:) to surface exposed files, login portals, error pages,
+      and misconfigured devices indexed by search engines. The Google
+      Hacking Database (GHDB) catalogs thousands of such query patterns.
+      Attackers use dorking to find exposed credentials, database dumps,
+      backup files, and IoT devices without touching the target. This entry
+      is defensive: it describes what dorking *looks like from the
+      defender's side* — which of your assets are indexed, what the queries
+      reveal, and how to remove yourself from the index. No query recipes
+      are provided here; defenders learn the pattern classes so they can
+      audit their own exposure.
+    how_it_works: >-
+      From the defender's perspective, the exposure chain is: (1) a
+      misconfigured asset (open directory listing, exposed config, debug
+      page) gets crawled and indexed; (2) the indexed content becomes
+      retrievable by anyone using operator queries; (3) attackers automate
+      dork queries at scale to harvest fresh exposures. The defensive
+      workflow inverts this: enumerate your indexed footprint with the same
+      operator classes, classify findings (credentials, dumps, portals,
+      devices), remediate the underlying misconfiguration, and request
+      de-indexing. Robots.txt and noindex are hygiene, not security — the
+      fix is removing the exposure, since attackers also use non-compliant
+      crawlers and historical indexes.
+    variants:
+      - "Exposed-file discovery (dumps, backups, configs) via indexed content"
+      - "Login-portal and admin-interface discovery"
+      - "Exposed-device discovery (cameras, industrial controllers)"
+      - "Error-page and debug-information harvesting"
+    indicators:
+      - "Your organization's files, portals, or devices appearing in search results"
+      - "Directory listings or config files indexed under your domains"
+      - "Credential-like strings in indexed documents (see also AEG-T248)"
+      - "Search-engine caches holding removed sensitive pages"
+    detection:
+      rule: detect_dorking_exposure
+      patterns:
+        - '(?i)search[\s_-]*engine\s+dorking'
+        - '(?i)\bghdb\b'
+        - '(?i)google\s+dork\w*'
+        - '(?i)indexed\s+(?:credentials?|dumps?|backups?)'
+    severity: medium
+    mitigations:
+      - "Audit your indexed footprint regularly with operator-class queries; treat findings as vulnerabilities"
+      - "Fix the underlying exposure (access controls, removed files) — not just the indexing"
+      - "Use authentication for sensitive portals; never rely on obscurity or robots.txt"
+      - "Request de-indexing after remediation and monitor for reappearance"
+    examples:
+      - summary: "Exploit-DB's Google Hacking Database has cataloged dork-discoverable exposures for two decades, and breach post-mortems repeatedly trace initial access to assets attackers found through indexed misconfigurations."
+        reference: "https://www.exploit-db.com/google-hacking-database"
+    references:
+      - "https://www.exploit-db.com/google-hacking-database"
+      - "https://attack.mitre.org/versions/v6/techniques/T1593/002/"
+
+  - id: AEG-T245
+    name: "DNS Reconnaissance: Zone Transfers, Enumeration, Passive DNS"
+    category: reconnaissance
+    description: >-
+      DNS is the organization's public phone book, and attackers read it
+      thoroughly: misconfigured zone transfers (AXFR) hand over the entire
+      zone file, DNSSEC zone-walking (NSEC) enumerates signed zones record
+      by record, and passive-DNS databases reveal historical records the
+      organization forgot it published. Even without misconfiguration,
+      systematic TXT, MX, and SRV queries map mail infrastructure, service
+      providers, and internal naming conventions useful for phishing and
+      targeted attacks (bridge to AEG-T249). For defenders, DNS hygiene —
+      no AXFR to the world, NSEC3 instead of NSEC, minimal informative
+      records — plus monitoring for enumeration patterns closes a quiet but
+      persistent information leak.
+    how_it_works: >-
+      Collection methods: (1) AXFR requests to authoritative servers that
+      still allow them — returning every record at once; (2) NSEC zone
+      walking on DNSSEC-signed zones, following the chain of
+      next-record pointers; (3) passive-DNS queries against third-party
+      databases for historical subdomains and infrastructure; (4) record-type
+      harvesting — MX reveals mail providers (phishing targets), TXT
+      reveals SPF/DKIM and sometimes credentials, SRV reveals internal
+      service topology. All of this is normal DNS traffic, so victim-side
+      detection focuses on *your own* servers' logs: AXFR attempts and
+      enumeration-shaped query bursts from single sources.
+    variants:
+      - "AXFR zone-transfer attempts against misconfigured servers"
+      - "NSEC zone walking on DNSSEC-signed zones"
+      - "Passive-DNS historical infrastructure recovery"
+      - "MX/TXT/SRV harvesting for phishing and provider targeting"
+    indicators:
+      - "AXFR queries arriving at authoritative servers from untrusted sources"
+      - "High-volume sequential DNS queries suggesting zone walking or brute-forcing"
+      - "Sensitive details (internal names, credentials) in public TXT records"
+      - "Historical DNS data showing forgotten infrastructure still resolving"
+    detection:
+      rule: detect_dns_recon
+      patterns:
+        - '(?i)dns\s+reconnaissance'
+        - '(?i)zone\s+transfer'
+        - '(?i)passive\s+dns'
+        - '(?i)nsec\s+zone\s+walk'
+    severity: medium
+    mitigations:
+      - "Restrict AXFR to authorized secondaries; use TSIG for transfer authentication"
+      - "Deploy NSEC3 (not NSEC) for DNSSEC zones to block zone walking"
+      - "Minimize public DNS records; audit TXT records for sensitive content"
+      - "Monitor authoritative-server logs for AXFR attempts and enumeration bursts"
+    examples:
+      - summary: "Internet-wide measurement studies have repeatedly found thousands of domains still permitting AXFR zone transfers, and penetration-test reports routinely list DNS enumeration as the highest-yield passive reconnaissance step."
+        reference: "https://attack.mitre.org/versions/v6/techniques/T1590/002/"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1590/002/"
+      - "https://www.rfc-editor.org/rfc/rfc5936.txt"
+
+  - id: AEG-T246
+    name: "Breach-Data and Combo-List Reuse"
+    category: reconnaissance
+    description: >-
+      Every major breach feeds the next attack: stolen credential databases
+      are aggregated into "combo lists" and breach compilations that
+      attackers reuse for credential stuffing (bridge to AEG-T233),
+      password spraying, and target profiling. Infostealer logs — sold in
+      bulk on dark markets (bridge to AEG-T097) — add session cookies and
+      autofill data to the mix. For defenders, breach data is both a threat
+      (your users' reused passwords are in there) and a defensive resource:
+      monitoring whether corporate credentials appear in new compilations
+      gives early warning before the stuffing campaigns start. The control
+      set is MFA, breach-corpus password screening, and rapid rotation on
+      exposure notification.
+    how_it_works: >-
+      The reuse pipeline: (1) breaches and stealer infections produce raw
+      credential dumps; (2) aggregators normalize them into combo lists
+      (email:password pairs) and full breach compilations indexed by domain;
+      (3) attackers query these for target organizations — "show me all
+      @victim.com pairs" — and replay them against VPN, email, and SSO
+      (bridge to AEG-T233); (4) non-credential fields (names, phones,
+      security answers) feed profiling and pretexting (bridge to AEG-T249).
+      Defenders invert the pipeline: subscribe to breach-notification
+      services, screen corporate domains against new compilations, force
+      resets on hits, and block breached passwords at creation.
+    variants:
+      - "Combo-list credential stuffing against corporate logins"
+      - "Stealer-log session-cookie and autofill harvesting"
+      - "Breach-data enrichment for spear-phishing profiles"
+      - "Corporate-domain screening of new breach compilations (defensive)"
+    indicators:
+      - "Corporate credentials appearing in newly published breach compilations"
+      - "Login attempts using passwords matching known breach corpora"
+      - "Spikes in account-takeover reports following a third-party breach"
+      - "Threat-intel reports of your domain in combo-list chatter"
+    detection:
+      rule: detect_breach_data_reuse
+      patterns:
+        - '(?i)combo\s+lists?'
+        - '(?i)breach[\s_-]*data[\s\w-]*reuse'
+        - '(?i)breach\s+compilations?'
+        - '(?i)stealer\s+logs?[\s\w-]*(?:sale|bulk|reuse)'
+    severity: high
+    mitigations:
+      - "Enforce MFA everywhere; screen new passwords against breach corpora"
+      - "Monitor breach-notification feeds for your domains; force resets on exposure"
+      - "Detect stuffing-shaped login patterns (bridge to AEG-T233 controls)"
+      - "Reduce reuse blast radius with SSO and passwordless where possible"
+    examples:
+      - summary: "The 2024 Snowflake attacks investigated by Mandiant reused credentials harvested by infostealer malware — a textbook breach-data-reuse pipeline from stealer logs to combo lists to cloud-tenant compromise."
+        reference: "https://cloud.google.com/blog/topics/threat-intelligence/unc5537-snowflake-data-theft-extortion"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1589/001/"
+      - "https://cloud.google.com/blog/topics/threat-intelligence/unc5537-snowflake-data-theft-extortion"
+
+  - id: AEG-T247
+    name: "Technology Fingerprinting and Banner Analysis"
+    category: reconnaissance
+    description: >-
+      Before attacking, adversaries fingerprint: banners, HTTP headers,
+      TLS certificates, favicon hashes, and JavaScript libraries reveal the
+      exact software stack and version, which maps directly to known
+      vulnerabilities (bridge to AEG-T181 exploit collections). Tools like
+      Shodan and Censys do this continuously at internet scale, so attackers
+      often start from a pre-built index rather than scanning you directly.
+      Wappalyzer-style analysis of your public sites tells them your CMS,
+      frameworks, and analytics — each a potential exploit path. The
+      defensive response is minimizing the fingerprint (banner suppression,
+      header hardening) and — more importantly — patching faster than the
+      fingerprint-to-exploit pipeline runs.
+    how_it_works: >-
+      Fingerprinting layers: (1) banner grabbing — service banners on open
+      ports disclose product and version; (2) HTTP analysis — Server and
+      X-Powered-By headers, cookie names, error pages, and favicon hashes
+      identify frameworks; (3) TLS analysis — certificate fields and JA3/JA4
+      fingerprints identify infrastructure; (4) index mining — querying
+      Shodan/Censys for your netblocks or technology filters ("all exposed
+      instances of product X, version Y"). Attackers then match versions
+      against vulnerability databases and exploit collections. Because
+      indexes are third-party, the victim sees no scan — defense is
+      reducing what the index knows and patching what it reveals.
+    variants:
+      - "Banner grabbing for exact service versions"
+      - "HTTP header and favicon-hash framework identification"
+      - "Shodan/Censys index mining by technology filter"
+      - "TLS certificate and JA3/JA4 infrastructure fingerprinting"
+    indicators:
+      - "Verbose banners and headers disclosing exact versions on public services"
+      - "Your assets appearing in technology-filtered Shodan/Censys queries"
+      - "Unpatched versions visible in fingerprints matching known CVEs"
+      - "Favicon hashes and error pages identifying frameworks"
+    detection:
+      rule: detect_technology_fingerprinting
+      patterns:
+        - '(?i)technology\s+fingerprinting'
+        - '(?i)banner\s+grab\w*'
+        - '(?i)service\s+fingerprint'
+        - '(?i)shodan[\s\w-]*exposed'
+    severity: medium
+    mitigations:
+      - "Suppress verbose banners and technology headers; standardize minimal error pages"
+      - "Query Shodan/Censys for your own assets regularly and remediate exposures"
+      - "Patch on a cadence faster than the fingerprint-to-exploit pipeline"
+      - "Inventory public-facing software versions centrally so fingerprint findings map to owners"
+    examples:
+      - summary: "Censys and Shodan research reports routinely demonstrate internet-wide discovery of unpatched services by version fingerprint, with ransomware affiliates citing such indexes for initial-access targeting."
+        reference: "https://censys.com/"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1592/002/"
+      - "https://censys.com/"
+
+  - id: AEG-T248
+    name: "Code and Secret Leakage in Public Repositories"
+    category: reconnaissance
+    description: >-
+      Developers commit secrets — API keys, cloud credentials, private
+      keys, tokens — to public repositories, gists, and container images,
+      and attackers harvest them at scale with secret scanners. GitGuardian's
+      State of Secrets Sprawl report measures millions of new leaked secrets
+      yearly. A leaked cloud key is instant infrastructure access; a leaked
+      API token becomes persistent access until rotated. Attackers also mine
+      repos for architecture insight: internal hostnames, employee names,
+      and TODO comments admitting vulnerabilities. For defenders, the
+      controls are pre-commit secret blocking, continuous public-repo
+      monitoring for your organization's secrets, and treating every leak as
+      a compromise requiring rotation — not just deletion.
+    how_it_works: >-
+      The leakage pipeline: (1) a secret is committed (often in `.env`
+      files, config examples, or hardcoded in code); (2) automated scanners
+      — run by attackers, researchers, and GitHub itself — detect it within
+      minutes to hours; (3) the secret is tested and exploited, frequently
+      before the committer notices; (4) forks, clones, and commit history
+      preserve the secret even after "removal". Attackers additionally mine
+      non-secret content: internal hostnames in configs, employee identities
+      for phishing (bridge to AEG-T249), and infrastructure-as-code
+      revealing the full architecture. Defense inverts the pipeline:
+      block at commit time, monitor public sources continuously, rotate on
+      any exposure.
+    variants:
+      - "Committed API keys and cloud credentials harvested at scale"
+      - "Private keys and certificates in public repos"
+      - "Architecture mining: hostnames, IaC, and org charts from code"
+      - "Secrets in container image layers and build artifacts"
+    indicators:
+      - "Secrets matching your organization's patterns found in public repos or images"
+      - "Cloud credentials used from unexpected locations shortly after a commit"
+      - "Internal hostnames and architecture details visible in public code"
+      - "Secret-scanner alerts on your repositories (including forks)"
+    detection:
+      rule: detect_repo_secret_leakage
+      patterns:
+        - '(?i)secrets?\s+in\s+public\s+repos'
+        - '(?i)(?:gitleaks|trufflehog)[\s\w-]*secret'
+        - '(?i)hardcoded\s+(?:secrets?|credentials?|api\s*keys?)'
+        - '(?i)leaked\s+(?:api\s*keys?|credentials?|tokens?)'
+    severity: high
+    mitigations:
+      - "Block secrets at commit time with pre-commit hooks and push protection"
+      - "Continuously monitor public repos, gists, and images for your organization's secrets"
+      - "Treat every leak as compromise: rotate immediately, audit usage, do not just delete"
+      - "Use secret managers and short-lived credentials so leaks have minimal value"
+    examples:
+      - summary: "GitGuardian's State of Secrets Sprawl reports document millions of secrets leaked to public GitHub annually, with attacker automation routinely exploiting leaked cloud keys within hours of commit."
+        reference: "https://www.gitguardian.com/state-of-secrets-sprawl-report-2024"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1593/002/"
+      - "https://www.gitguardian.com/state-of-secrets-sprawl-report-2024"
+
+  - id: AEG-T249
+    name: "People OSINT and Target Profiling for Social Engineering"
+    category: reconnaissance
+    description: >-
+      Targeted attacks begin with people research: LinkedIn reveals org
+      charts and technologies, social media reveals travel and interests,
+      breach data reveals emails and phone numbers (bridge to AEG-T246),
+      and corporate sites reveal naming conventions and partners. Assembled,
+      this becomes the pretext for spear-phishing (bridge to AEG-T127),
+      vishing (AEG-T130), and executive impersonation (AEG-T135). This entry
+      is defensive: it catalogs *what attackers collect* so defenders can
+      reduce the public profile, train high-risk individuals, and recognize
+      when profiling precedes an attack. No collection tradecraft is
+      provided — the value for defenders is knowing the dossier exists.
+    how_it_works: >-
+      The profiling dossier typically contains: organizational role and
+      reporting lines (who can authorize what), technology stack (what
+      phishing lures look legitimate), contact details and communication
+      channels (where to reach the target), personal context (travel,
+      events, interests for pretexting), and credential material from
+      breaches. Attackers correlate across sources to build confidence:
+      a LinkedIn role plus a breached password plus a conference trip
+      becomes a convincing urgent request. Defensive signals are indirect
+      but real: profile-view spikes on key personnel, lookalike domains
+      referencing executives (bridge to AEG-T252), and phishing lures
+      containing non-public personal details — evidence of dossier-driven
+      targeting.
+    variants:
+      - "Org-chart reconstruction for authorization-path pretexting"
+      - "Travel and event monitoring for timing attacks"
+      - "Breach-data enrichment of personal dossiers"
+      - "Executive digital-twin building for impersonation"
+    indicators:
+      - "Phishing lures containing accurate non-public personal or organizational details"
+      - "Anomalous profile-view or connection patterns targeting executives and finance staff"
+      - "Lookalike domains and social profiles impersonating key personnel"
+      - "Vishing calls demonstrating detailed knowledge of internal processes"
+    detection:
+      rule: detect_people_osint
+      patterns:
+        - '(?i)people\s+osint'
+        - '(?i)target\s+profiling'
+        - '(?i)spear[\s_-]*phish\w*\s+reconnaissance'
+        - '(?i)executive\s+impersonation[\s\w-]*recon'
+    severity: medium
+    mitigations:
+      - "Minimize public personal and organizational details; review executive digital footprints"
+      - "Give high-risk roles (finance, IT admins, executives) targeted social-engineering training"
+      - "Monitor for lookalike domains and impersonating profiles; takedown quickly"
+      - "Establish out-of-band verification for sensitive requests regardless of how legitimate they look"
+    examples:
+      - summary: "Mandiant and CISA reporting on spear-phishing campaigns consistently describes dossier-driven pretexting — attackers referencing real projects, travel, and colleagues — as the factor that defeats generic phishing training."
+        reference: "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1589/002/"
+      - "https://attack.mitre.org/versions/v6/techniques/T1591/"
+
+  - id: AEG-T250
+    name: "Cloud Asset Discovery and Exposed-Service Enumeration"
+    category: reconnaissance
+    description: >-
+      Cloud estates sprawl: storage buckets, VMs with public IPs, exposed
+      management consoles, serverless endpoints, and Kubernetes APIs —
+      created by dozens of teams, often outside central inventory. Attackers
+      enumerate this surface with cloud-aware tooling and public indexes,
+      hunting the classic exposures: public S3-style buckets, open
+      Elasticsearch/Redis, exposed Kubelet and dashboard ports, and
+      unauthenticated metadata-adjacent services. This differs from
+      AEG-T116 (cloud-tenant *takeover* — the attack after discovery) and
+      AEG-T045 (cloud storage as *exfil staging*): this is the *discovery*
+      phase. The defense is continuous cloud-asset discovery with
+      policy-as-code: every public exposure must be intentional, approved,
+      and monitored.
+    how_it_works: >-
+      Discovery methods: (1) bucket-name permutation and certificate-log
+      mining for storage accounts; (2) IP-range and port scanning tuned to
+      cloud provider ranges; (3) console/API enumeration with stolen or
+      low-privilege credentials to map the estate from inside; (4) public
+      index queries (Shodan/Censys) filtered by cloud ASNs and service
+      banners. Attackers prioritize exposures by value: object storage
+      (data), databases (credentials and PII), orchestration APIs
+      (cluster takeover), and CI/CD webhooks (pipeline access). Because
+      cloud APIs make enumeration fast and quiet, defenders must discover
+      their own estate continuously — CSPM tooling, config rules, and
+      external scanning in a loop.
+    variants:
+      - "Public storage-bucket discovery via name permutation"
+      - "Exposed database and cache services in cloud IP ranges"
+      - "Kubernetes API and dashboard exposure"
+      - "Cloud-console enumeration from low-privilege credentials"
+    indicators:
+      - "Storage buckets or cloud services reachable without authentication in external scans"
+      - "Cloud assets absent from central inventory (shadow cloud)"
+      - "Management consoles and orchestration APIs exposed to the internet"
+      - "CSPM findings of public exposures with no associated approval"
+    detection:
+      rule: detect_cloud_asset_discovery
+      patterns:
+        - '(?i)cloud\s+asset\s+discovery'
+        - '(?i)exposed\s+(?:s3|storage|cloud)[\s\w-]*bucket'
+        - '(?i)public\s+s3\s+bucket'
+        - '(?i)cloud\s+enumeration'
+    severity: high
+    mitigations:
+      - "Run continuous cloud-asset discovery (CSPM) and reconcile against approved inventory"
+      - "Default-deny public access on storage; require explicit approval for any public exposure"
+      - "Never expose orchestration, database, or management services to the internet"
+      - "Scan your own cloud footprint externally on a schedule, like an attacker would"
+    examples:
+      - summary: "Verizon's DBIR and cloud-security research reports consistently list misconfigured cloud storage among top breach vectors, with attackers using automated bucket-enumeration to find exposures within hours of creation."
+        reference: "https://www.verizon.com/business/resources/reports/dbir/"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1590/"
+      - "https://www.verizon.com/business/resources/reports/dbir/"
+
+  - id: AEG-T251
+    name: "Internal Network Discovery Post-Compromise (ATT&CK Discovery)"
+    category: reconnaissance
+    description: >-
+      Once inside, attackers map the interior: domain trusts, file shares,
+      user and group memberships, network topology, and security tooling.
+      This is ATT&CK's Discovery tactic — distinct from external
+      reconnaissance because it runs with valid credentials on the inside,
+      using built-in tools (a bridge to AEG-T107 living-off-the-land) that
+      look administrative. BloodHound-class tooling (bridge to AEG-T182)
+      turns Active Directory into an attack graph showing the shortest path
+      to Domain Admin. For defenders, Discovery is the last quiet phase
+      before lateral movement: detecting it means catching the intrusion
+      while the attacker is still mapping, not yet moving.
+    how_it_works: >-
+      Discovery techniques: (1) AD enumeration — users, groups, trusts,
+      GPOs, and attack paths via LDAP queries or BloodHound collectors;
+      (2) share enumeration — listing accessible SMB shares for staging
+      and data (bridge to collection); (3) network discovery — ARP scans,
+      ping sweeps, and local routing tables to map segments; (4) security
+      discovery — identifying EDR, logging, and backup infrastructure to
+      evade or disable (bridge to AEG-T085/T094); (5) cloud discovery —
+      enumerating IAM roles, instances, and storage from a compromised
+      workload. Built-in commands dominate, so detection keys on *volume
+      and context*: enumeration-shaped query bursts from a newly
+      compromised host or user.
+    variants:
+      - "Active Directory attack-path mapping (BloodHound-class)"
+      - "SMB share enumeration for staging and collection"
+      - "Internal network topology mapping from compromised hosts"
+      - "Security-tooling and backup discovery for evasion planning"
+    indicators:
+      - "LDAP query bursts enumerating users, groups, and trusts from a single host"
+      - "BloodHound collector artifacts or SharpHound-like process patterns"
+      - "Broad SMB share enumeration from a workstation"
+      - "New hosts performing internal ping sweeps or ARP scans"
+    detection:
+      rule: detect_internal_discovery
+      patterns:
+        - '(?i)internal\s+(?:network\s+)?discovery'
+        - '(?i)share\s+enumeration'
+        - '(?i)\bad\s+enumeration\b'
+        - '(?i)attack[\s_-]*path\s+mapping'
+    severity: medium
+    mitigations:
+      - "Alert on enumeration-shaped LDAP/SMB query bursts, especially from newly seen hosts"
+      - "Harden AD: reduce privileged-group membership, clean attack paths BloodHound reveals"
+      - "Segment networks so discovery from one segment yields little"
+      - "Deploy canary shares, users, and hosts that fire on enumeration"
+    examples:
+      - summary: "Mandiant's M-Trends reports consistently place internal discovery — particularly AD attack-path mapping — among the most observed post-compromise behaviors, with dwell-time data showing attackers map before they move."
+        reference: "https://www.mandiant.com/resources/m-trends"
+    references:
+      - "https://attack.mitre.org/versions/v6/tactics/TA0007/"
+      - "https://www.mandiant.com/resources/m-trends"
+
+  - id: AEG-T252
+    name: "Lookalike Domain Registration and Infrastructure Staging"
+    category: reconnaissance
+    description: >-
+      Before phishing and C2 campaigns, attackers stage infrastructure:
+      registering lookalike domains (typosquats, homoglyphs, cousin domains
+      like `secure-login-victim.com`), aging them to build reputation,
+      obtaining TLS certificates, and provisioning hosting. This is ATT&CK's
+      Resource Development — the quiet phase defenders can observe *before*
+      any attack packet arrives. Certificate Transparency (bridge to
+      AEG-T243) makes new lookalike certificates visible; domain-registration
+      monitoring and brand-protection feeds turn that visibility into early
+      warning. The defensive play is detection at staging time and takedown
+      before weaponization.
+    how_it_works: >-
+      Staging workflow: (1) domain selection — typosquatting, homoglyphs,
+      hyphenated variants, and TLD swaps of the target brand; (2) reputation
+      aging — parking the domain with benign content so new-domain
+      reputation filters decay; (3) certificate issuance — free DV certs
+      from automated CAs, visible in CT logs; (4) infrastructure build-out —
+      phishing kits, redirectors, and C2 panels deployed ahead of the
+      campaign. Defenders monitor CT logs and registration feeds for
+      brand-adjacent domains, score them (age, registrar, name distance),
+      and sinkhole or take down high-risk ones. The window between staging
+      and weaponization is the cheapest place to kill a campaign.
+    variants:
+      - "Typosquat and homoglyph domain registration"
+      - "Cousin-domain registration (brand + keyword + TLD)"
+      - "Reputation aging with benign parked content"
+      - "Bulk staging of redirector and phishing-kit infrastructure"
+    indicators:
+      - "Newly registered domains with small edit distance to your brand in CT logs"
+      - "Lookalike domains obtaining TLS certificates"
+      - "Aged-but-dormant domains suddenly hosting login-like pages"
+      - "Brand keywords appearing in newly observed phishing URLs"
+    detection:
+      rule: detect_lookalike_domains
+      patterns:
+        - '(?i)lookalike\s+domains?'
+        - '(?i)typosquat\w*\s+domains?'
+        - '(?i)cousin[\s_-]*domains?'
+        - '(?i)homoglyph\s+domains?'
+    severity: medium
+    mitigations:
+      - "Monitor CT logs and registration feeds for brand-adjacent domains; automate scoring and alerting"
+      - "Defensively register the most abusable variants of your brand domains"
+      - "Pursue rapid takedown of confirmed phishing lookalikes via registrars and hosts"
+      - "Publish SPF/DMARC/BIMI so impersonation is harder even with a lookalike domain"
+    examples:
+      - summary: "CISA's phishing guidance and brand-protection industry reports document lookalike-domain staging as the standard precursor to enterprise phishing waves, with CT-log monitoring now a baseline defensive control."
+        reference: "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1583/001/"
+      - "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a"
