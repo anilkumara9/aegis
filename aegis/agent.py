@@ -10,10 +10,12 @@ with the same engine it offers others.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Callable
 
 from . import config, guard as guard_mod
+from . import session as session_mod
 from .audit import AuditLog
 from .detect import secrets as sec
 from .kb import KB
@@ -53,13 +55,36 @@ def build_system_prompt(kb: KB) -> str:
     ])
 
 
+def _summarize_args(args: dict) -> str:
+    """Compact one-line summary of redacted tool args for display."""
+    text, _ = sec.redact(json.dumps(args or {}, default=str))
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return text[:300]
+    if not isinstance(parsed, dict):
+        return str(parsed)[:300]
+    parts = []
+    for k, v in parsed.items():
+        s = str(v)
+        if len(s) > 60:
+            s = s[:57] + "..."
+        parts.append(f"{k}={s}")
+    return ", ".join(parts)[:300]
+
+
 class AgentLoop:
     def __init__(self, provider: Provider, kb: KB,
                  guard_session: guard_mod.GuardSession,
                  cwd: Path | None = None,
                  approval_callback: Callable | None = None,
                  on_text: Callable[[str], None] | None = None,
-                 max_iterations: int | None = None):
+                 max_iterations: int | None = None,
+                 # -- additive v0.2 UX hooks (all default off) ----------------
+                 conversation_id: str | None = None,
+                 history: list[dict] | None = None,
+                 on_tool_start: Callable[[str, str], None] | None = None,
+                 on_tool_end: Callable[[str, str, float, str], None] | None = None):
         self.provider = provider
         self.kb = kb
         self.guard = guard_session
@@ -71,17 +96,76 @@ class AgentLoop:
                                approval_callback=approval_callback)
         self.system = build_system_prompt(kb)
         self.tool_specs = [t.spec() for t in TOOLS.values()]
+        # Display callbacks for tool-call blocks: additive, never required.
+        self.on_tool_start = on_tool_start or (lambda name, summary: None)
+        self.on_tool_end = (on_tool_end or
+                            (lambda name, verdict, ms, excerpt: None))
+        # Conversation persistence: None = legacy stateless mode (each run()
+        # starts fresh, exactly as before). Set conversation_id and/or
+        # history to get multi-turn context with per-turn persistence.
+        self.conversation_id: str | None = None
+        self.history: list[dict] | None = None
+        if history is not None:
+            self.history = [dict(m) for m in history]
+        if conversation_id is not None:
+            if not self.attach_conversation(conversation_id, keep_existing=True):
+                # Brand-new persisted session: create the store record and
+                # start from the given history (or empty).
+                session_mod.new_session(conversation_id)
+                self.conversation_id = conversation_id
+                if self.history is None:
+                    self.history = []
+
+    def attach_conversation(self, conversation_id: str,
+                            keep_existing: bool = False) -> bool:
+        """Attach (or re-attach) a persisted conversation session.
+
+        History from the store is loaded into the loop so a resumed
+        session continues where it left off. Returns False when the
+        session does not exist.
+        """
+        rec = session_mod.load_session(conversation_id)
+        if rec is None:
+            return False
+        stored = [dict(m) for m in rec.get("messages", [])]
+        if keep_existing and self.history:
+            self.history = self.history + stored
+        else:
+            self.history = stored
+        self.conversation_id = conversation_id
+        return True
 
     # -- single user turn ------------------------------------------------
     def run(self, user_message: str) -> str:
-        messages = [{"role": "user", "content": user_message}]
+        base = list(self.history) if self.history is not None else []
+        messages = base + [{"role": "user", "content": user_message}]
+        result = self._run_turn(messages)
+        # Persist the turn (user + assistant + tool messages) into the
+        # conversation store and into the in-memory history.
+        turn = messages[len(base):]
+        if self.history is not None:
+            self.history.extend(turn)
+        if self.conversation_id:
+            for m in turn:
+                extra = {k: v for k, v in m.items()
+                         if k not in ("role", "content")}
+                session_mod.save_message(self.conversation_id,
+                                         m.get("role", ""), m.get("content", ""),
+                                         extra=extra or None)
+        return result
+
+    def _run_turn(self, messages: list[dict]) -> str:
         final_text: list[str] = []
         for _ in range(self.max_iterations):
             text, tool_calls, error = self._one_step(messages)
             if error:
+                messages.append({"role": "assistant", "content": text})
                 return "".join(final_text) + f"\n[provider error: {error}]"
             final_text.append(text)
             if not tool_calls:
+                # Text-only turn: keep the assistant reply in the transcript
+                # so persisted/resumed history stays complete.
+                messages.append({"role": "assistant", "content": text})
                 return "".join(final_text)
             assistant_msg: dict = {"role": "assistant", "content": text,
                                    "tool_calls": []}
@@ -122,23 +206,34 @@ class AgentLoop:
 
     # -- guarded execution -------------------------------------------------
     def _guarded_execute(self, tc: ToolCall) -> str:
+        t0 = time.perf_counter()
+        try:
+            self.on_tool_start(tc.name, _summarize_args(tc.args))
+        except Exception:
+            pass
         tool = TOOLS.get(tc.name)
         if tool is None:
             self._audit(tc, "deny", [], "unknown tool")
-            return f"GUARD DENIED: unknown tool '{tc.name}'"
+            result = f"GUARD DENIED: unknown tool '{tc.name}'"
+            self._tool_end(tc, "deny", t0, "unknown tool")
+            return result
         verdict = self.guard.check_call(tc.name, tc.args)
         if verdict.decision == "deny":
             self._audit(tc, "deny", verdict.findings,
                         f"denied: {verdict.reason}")
-            return (f"GUARD DENIED: {verdict.reason}. Do not attempt to work "
+            result = (f"GUARD DENIED: {verdict.reason}. Do not attempt to work "
                     f"around this. Explain what you were trying to do and "
                     f"continue safely.")
+            self._tool_end(tc, "deny", t0, verdict.reason)
+            return result
         if verdict.decision == "needs_approval":
             approved = self._ask_approval(tc, verdict)
             if not approved:
                 self._audit(tc, "denied", verdict.findings, "operator denied")
-                return ("GUARD: the human operator denied this call. "
+                result = ("GUARD: the human operator denied this call. "
                         "Continue with a safer alternative or stop.")
+                self._tool_end(tc, "denied", t0, "operator denied")
+                return result
         try:
             raw = tool.run(tc.args, self.ctx)
         except Exception as e:
@@ -146,7 +241,17 @@ class AgentLoop:
         redacted, _ = sec.redact(raw)
         self._audit(tc, verdict.decision if verdict.decision == "allow" else "approved",
                     verdict.findings, redacted)
+        self._tool_end(tc, "allow" if verdict.decision == "allow" else "approved",
+                       t0, redacted)
         return redacted
+
+    def _tool_end(self, tc: ToolCall, verdict: str, t0: float,
+                  output: str) -> None:
+        duration_ms = (time.perf_counter() - t0) * 1000
+        try:
+            self.on_tool_end(tc.name, verdict, duration_ms, str(output)[:500])
+        except Exception:
+            pass
 
     def _ask_approval(self, tc: ToolCall, verdict) -> bool:
         cb = self.approval_callback or self.guard.policy.approval_callback
