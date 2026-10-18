@@ -106,3 +106,19 @@ def test_system_prompt_carries_kb_depth(kb):
     assert "kb_query" in prompt
     assert "NEVER help attack" in prompt
     assert "redacted" in prompt.lower()
+
+
+def test_provider_error_is_surfaced_not_silent(kb, tmp_path):
+    """Regression: a failing provider (429, 401, network down) must be
+    visible to the user through on_text, not an empty silent turn."""
+    seen = []
+    script = [{"error": "openai request failed: HTTP Error 429: Too Many Requests"}]
+    provider = MockProvider(script)
+    policy = Policy(name="agent-test", allowed_tools=set(TOOL_NAMES))
+    session = create_session(policy, kb)
+    loop = AgentLoop(provider, kb, session, cwd=tmp_path,
+                     on_text=seen.append)
+    result = loop.run("hi")
+    assert "[provider error:" in result
+    assert any("[provider error:" in s for s in seen), \
+        "error must reach on_text (the REPL's display channel)"

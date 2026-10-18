@@ -216,6 +216,7 @@ class AgentLoop:
                 messages.append({"role": "tool", "tool_call_id": tc.id,
                                  "name": tc.name, "content": result})
             messages.insert(len(messages) - len(tool_calls), assistant_msg)
+        self.on_text("\n[max iterations reached]\n")
         return "".join(final_text) + "\n[max iterations reached]"
 
     def _one_step(self, messages: list[dict]):
@@ -231,6 +232,7 @@ class AgentLoop:
                 tool_calls.append(payload)
             elif kind == "error":
                 error = str(payload)
+                self.on_text(f"\n[provider error: {error}]\n")
                 break
             elif kind == "done":
                 break

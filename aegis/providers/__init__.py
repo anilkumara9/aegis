@@ -386,8 +386,9 @@ class MockProvider(Provider):
     """Scripted provider for tests and offline demos. No network.
 
     script: list of turns; each turn is a dict {"text": str,
-    "tool_calls": [{"name": str, "args": dict}]}. Each stream() call pops
-    the next turn. A turn may also be a callable(messages) -> turn dict.
+    "tool_calls": [{"name": str, "args": dict}]} or {"error": str} to
+    simulate a provider failure. Each stream() call pops the next turn.
+    A turn may also be a callable(messages) -> turn dict.
     """
 
     name = "mock"
@@ -407,6 +408,9 @@ class MockProvider(Provider):
         turn = self.script.pop(0)
         if callable(turn):
             turn = turn(messages)
+        if "error" in turn:
+            yield ("error", turn["error"])
+            return
         text = turn.get("text", "")
         if text:
             yield ("text", text)
