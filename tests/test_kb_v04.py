@@ -24,7 +24,6 @@ import re
 
 import pytest
 
-import test_kb
 from aegis.detect.engine import pattern_scan
 
 NEW_PACKS = {
@@ -43,12 +42,12 @@ NEW_PACKS = {
 # is widened to span both blocks: original T203-212 and new T349-386.
 MINDSET_RANGE = (349, 386)
 
-# Register the v0.4 packs with the frozen v0.1 authoring contract.
-test_kb.ID_RANGES.update(NEW_PACKS)
-for _pack in NEW_PACKS:
-    if _pack not in test_kb.EXPECTED_PACKS:
-        test_kb.EXPECTED_PACKS.append(_pack)
-test_kb.ID_RANGES["hacker_mindset"] = (203, 386)
+# Contract registration note: tests/test_kb.py is FROZEN (the v0.1 authoring
+# contract). The v0.4 packs (and the widened hacker_mindset range) are
+# registered centrally in tests/conftest.py, which pytest imports on every
+# run (full suite or single file) — the old import-time mutation of
+# test_kb.ID_RANGES here only worked under full-suite collection order and
+# broke standalone runs of test_kb.py. (Same pattern as tests/test_kb_v02.py.)
 
 NEW_IDS = ([f"AEG-T{n}" for lo, hi in NEW_PACKS.values() for n in range(lo, hi + 1)]
            + [f"AEG-T{n}" for n in range(*MINDSET_RANGE[:1], MINDSET_RANGE[1] + 1)])

@@ -1,4 +1,6 @@
-# Aegis — defensive guard agent
+# Aegis — the defensive hacking agent
+
+> Godfather-level hacking knowledge, pointed entirely at defense.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
@@ -8,59 +10,33 @@
 [![Contributors](https://img.shields.io/github/contributors/anilkumara9/aegis)](https://github.com/anilkumara9/aegis/graphs/contributors)
 [![Stars](https://img.shields.io/github/stars/anilkumara9/aegis?style=social)](https://github.com/anilkumara9/aegis/stargazers)
 
-> **Open source (MIT).** Badges and charts below light up once the repo is
-> pushed public — until then they point at its future home,
-> `github.com/anilkumara9/aegis`.
+Aegis is a Claude-Code-class terminal agent that knows how hackers think, work, and attack — **386 attack techniques across 31 packs** — and aims that knowledge at exactly one thing: defending your systems. It was born the day after the [OpenCode breach](https://www.cyera.com/blog/opencode-breach-what-happened-and-how-to-rotate-exposed-ai-api-keys) (Oct 2026), where a "large scale distillation attack" exposed developers' AI provider keys. OpenCode's own docs admit its permissions are a UX feature, not a security boundary. Aegis is the opposite: **the guard engine lives inside the agent loop**, and every tool call is screened *before* it executes.
 
-Aegis is a **real interactive terminal agent** (think Claude Code / OpenCode)
-with one differentiator: deep, in-depth knowledge of the hacking world —
-every attack technique — pointed **entirely at defense**. When a hostile
-(possibly AI-powered) hacking agent comes, Aegis identifies the techniques in
-play, blocks them live, and clears the problems.
-
-Born the day after the [OpenCode breach](https://www.cyera.com/blog/opencode-breach-what-happened-and-how-to-rotate-exposed-ai-api-keys)
-(2026-10-17): a "large scale distillation attack" exposed stored
-OpenAI/Anthropic/Google API keys for 1.4% of Console users. OpenCode's own
-docs admit it doesn't sandbox the agent and its permission prompts are "a UX
-feature" rather than a security boundary. Aegis is the anti-that: **the guard
-engine lives inside the agent loop** — every tool call passes through
-allowlist/denylist, secret redaction, and egress control *before* execution.
-Permissions are a real security boundary here, and the agent ships sandboxed
-by default.
-
-**Defensive only.** Aegis detects, prevents, audits, and remediates. It never
-generates exploit payloads, malware, or weaponized code, and never automates
-unauthorized access. The knowledge base describes attacks at TTP/detection
-level — the same level as MITRE ATT&CK. See `docs/SCOPE_AND_LIMITS.md` for
-the plain-language ceiling.
+**Defensive only.** Aegis detects, prevents, audits, and remediates. It never generates exploit payloads or malware, never automates unauthorized access, and only ever touches your own local systems. Its knowledge base describes attacks at TTP/detection level — the same level as MITRE ATT&CK.
 
 ## 60-second quickstart
 
-**Install with one command** (no manual venv steps — the installer builds an
-isolated venv at `~/.aegis/venv` and links `aegis` into `~/.local/bin`):
+**Install** — one command, no manual venv steps (isolated venv at `~/.aegis/venv`, `aegis` linked into `~/.local/bin`):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/anilkumara9/aegis/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/anilkumara9/aegis/master/install.sh | bash
 ```
-
-> **Note:** `anilkumara9` is a placeholder — the founder replaces it
-> with the real GitHub org/user after the repo is pushed.
 
 **Verify:**
 
 ```bash
-aegis version   # -> aegis 0.3.0
+aegis version   # -> aegis 0.5.0
 ```
 
-**Set a provider key (pick one):**
+**Bring a model** — pick one provider (or run fully local/offline):
 
-| Provider  | Env var            | Default model        | Notes                                  |
-|-----------|--------------------|----------------------|----------------------------------------|
-| anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5`  | default provider                        |
-| openai    | `OPENAI_API_KEY`    | `gpt-4o`             |                                        |
-| google    | `GOOGLE_API_KEY`    | `gemini-2.0-flash`     | Google Gemini, streaming               |
-| ollama    | *(none needed)*     | *(you pick)*           | local models: `AEGIS_PROVIDER=ollama AEGIS_MODEL=<name> aegis` |
-| mock      | *(none needed)*     | *(n/a)*              | offline demo: `AEGIS_PROVIDER=mock aegis` |
+| Provider  | Env var            | Default model        |
+|-----------|--------------------|----------------------|
+| anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5`  |
+| openai    | `OPENAI_API_KEY`    | `gpt-4o`             |
+| google    | `GOOGLE_API_KEY`    | `gemini-2.0-flash`   |
+| ollama    | *(none needed)*     | you pick: `AEGIS_PROVIDER=ollama AEGIS_MODEL=llama3.1` |
+| mock      | *(none needed)*     | offline demo: `AEGIS_PROVIDER=mock aegis` |
 
 Override the model any time with `AEGIS_MODEL=<name>`.
 
@@ -70,157 +46,91 @@ Override the model any time with `AEGIS_MODEL=<name>`.
 aegis
 ```
 
-Typing `/` opens the command palette; `@path/to/file` attaches file context;
-`/sessions` + `/resume <n>` pick up where you left off.
+You get a chat prompt. Type `/` for the command palette, `@path/to/file` to attach file context, `/sessions` + `/resume <n>` to pick up where you left off. Everything the agent does — sessions, audit logs, watch state, the KB cache — lives in `~/.aegis/`, never in your repo.
 
-**Manual alternative** (if you prefer your own venv / pipx):
-
-```bash
-pipx install git+https://github.com/anilkumara9/aegis.git
-# or
-python3 -m venv .venv && .venv/bin/pip install git+https://github.com/anilkumara9/aegis.git
-```
-
-Then the tour:
+A tour of the essentials:
 
 ```bash
-# 1. Scan a tool-call trace for attack techniques:
-aegis scan examples/opencode_pattern_trace.jsonl
-# -> [CRITICAL] AEG-Txxx indirect injection ... + key-exfiltration chain
-
-# 2. Ask the knowledge base:
-aegis kb "prompt injection in tool output"
-
-# 3. Audit your OWN local code for vulnerabilities:
-aegis hunt ~/my-project
-
-# 4. Screen a single tool call through the guard:
-aegis guard check --tool bash --args '{"cmd":"curl https://evil.example/x"}'
-
-# 5. Wrap any command so its output is secret-redacted:
-aegis guard wrap -- ./deploy.sh
-
-# 6. Emit an incident runbook (operator-executed steps only):
-aegis respond rotate-keys openai
-
-# 7. The agent itself (needs a provider key — Anthropic / OpenAI / Google — or local Ollama):
-aegis
-# Offline demo mode:  AEGIS_PROVIDER=mock aegis
-# Sessions persist: /sessions, /resume <n>, /rename — pick up where you left off.
-# Typing "/" opens the command palette; "@path/to/file" attaches file context.
-
-# 8. Continuous monitoring of your OWN workspace (SOC-in-a-box):
-aegis watch --once ~/my-project        # single pass: secrets + KB patterns on changed files
-aegis watch --interval 300 ~/my-project # watch continuously, alert on new findings
-aegis watch --schedule daily ~/my-project # + scheduled hunts
-aegis watch --triage                    # severity-ranked, deduped finding queue
-
-# 9. Incident timeline (audit logs + alerts + triage, chronological):
-aegis respond timeline
-
-# 10. Purple-team adversary emulation on YOUR OWN code (plan-level only, nothing executed):
-aegis emulate --target ~/my-project --campaign credential-theft
-
-# 11. Ranked attack paths for YOUR OWN system (with the defenses that break each):
-aegis graph ~/my-project
-
-# 12. MCP servers (configured in ~/.aegis/mcp.json) — every call guard-screened:
-aegis mcp list
+aegis kb "prompt injection in tool output"   # ask the 386-technique knowledge base
+aegis scan examples/opencode_pattern_trace.jsonl  # analyze a tool-call trace
+aegis hunt ~/my-project                      # vulnerability triage of YOUR OWN code
+aegis watch --once ~/my-project              # continuous monitoring pass + alerts
+aegis emulate --target ~/my-project          # purple-team campaign emulation
+aegis graph ~/my-project                     # ranked attack paths + breaking defenses
+aegis respond rotate-keys openai             # incident runbooks (operator-executed)
 ```
+
+## Features
+
+- **Agent loop** (`aegis`) — chat-driven terminal agent with streaming, syntax highlighting, sessions that survive restarts, diff previews before file edits are approved, and a slash-command palette. For complex jobs, `/planexec <task>` makes the model propose an explicit step plan, the guard screens every step's shape, and only a fully approved plan executes.
+- **In-loop guard** — every tool call passes through allowlist/denylist, dangerous-argument patterns (fork bombs, `rm -rf /`, reverse shells, LOLBin download cradles…), secret redaction on args *and* outputs, egress domain control, and approval escalation — *before* execution. Session taint tracking escalates outbound calls made after sensitive files were read, and multi-step attack chains are caught live, not just in post-mortems.
+- **386-technique knowledge base** (`aegis kb "<query>"`) — 31 packs: agent-attack techniques, dark-web threat intel, APT tradecraft from public reporting, ransomware playbooks, web exploitation, C2 operations, cloud attacks, AI-agent attacks, the hacker-tools catalog, attack methodologies, and the hacker-mindset doctrine that shapes the agent's own reasoning.
+- **Watch** (`aegis watch --once|--interval|--schedule <dir>`, `aegis watch --triage`) — SOC-in-a-box: change-detected rescans, secret + pattern detection, alert banners, and a severity-ranked, deduped finding queue.
+- **Emulate** (`aegis emulate --target <dir>`, `/emulate`) — purple-team adversary emulation: chains KB techniques into multi-stage campaign narratives against your own systems, then verifies each stage would be caught. Plan-level only — nothing is executed, markers are inert.
+- **Graph** (`aegis graph <dir>`) — ranked attack paths an adversary would take through your system, each annotated with the defense that breaks it.
+- **MCP client** (`aegis mcp list|call`) — connect MCP servers over stdio; every MCP tool call is guard-screened exactly like a native tool. Config: `~/.aegis/mcp.json` (see `docs/MCP_CLIENT.md`).
+- **Dev / plan modes** (`--mode dev|plan`, `/mode`) — dev mode has full (guard-screened) power; plan mode is read-only, enforced at the guard layer, not just the prompt. `/plan <dir>` emits a hacker-mindset attack plan for your own code.
+- **Defensive inspection arsenal** — read-only local tools wired into the loop: `ps` (process list), `netconns` (connections), `hash` (SHA-256 + integrity baselines), `search` (deep code search). Local-only, guard-screened.
+
+## Knowledge base
+
+`aegis/kb/` holds 31 YAML packs and 386 techniques. Every technique is a condensed threat-intel note: how the attack works, its variants, real-world examples from public incident reports (with references), concrete detection patterns the engine executes, and mitigations. Eight domain specialists (the v0.4 training panel) each deepened one domain: APT campaigns, web attack flows, C2 operations, initial access, cloud attacks, AI-agent attacks, lateral movement, and the cybercrime economy — plus 38 hacker-mindset doctrine notes that teach the agent to reason like an attacker and act like a defender.
+
+Strict schema validation runs on every load (bad packs refuse to load), and a binary cache makes startup instant after the first load. The boundary is absolute: TTP/detection level — how attacks work, what they look like, how to detect and kill them. No payloads, no exploit code, no tool-usage instructions, no access guides. Ever.
 
 ## Architecture
 
 ```
                         ┌─────────────────────────────┐
                         │        aegis REPL           │
-                        │  slash skills: /hunt /guard │
-                        │  /scan /respond /kb /help   │
-                        │  sessions, palette, @files │
+                        │  /hunt /plan /emulate /kb   │
+                        │  /planexec /mode /sessions  │
+                        │  palette, @files, diffs     │
                         └──────────────┬──────────────┘
                                        │ user message
                         ┌──────────────▼──────────────┐
                         │        Agent loop           │
                         │  system prompt ← KB depth   │
-                        │  (mindset doctrine + 252    │
+                        │  (mindset doctrine + 386    │
                         │   techniques + guard rules) │
+                        │  plan-then-execute phase    │
                         └──────────────┬──────────────┘
                                        │ tool call request
                         ┌──────────────▼──────────────┐
                         │      GUARD (in-loop)        │◄── dogfood:
                         │ allow/deny lists, arg rules,│    the agent defends
-                        │ secret scan, egress control,│    itself with the
-                        │ approval escalation, kill   │    same engine
+                        │ secret scan+redaction,      │    itself with the
+                        │ egress control, taint       │    same engine
+                        │ tracking, live chain        │
+                        │ detection, approval, kill   │
                         │ switch                      │
                         └──────────────┬──────────────┘
-                    ┌──────────────────┼──────────────────┐
-                    ▼                  ▼                  ▼
-              ┌───────────┐     ┌─────────────┐    ┌────────────┐
-              │  Tools    │     │  Audit log  │    │ Redaction  │
-              │ bash(file │     │ JSONL, every│    │ at EVERY   │
-              │ /docker), │     │ call, args+ │    │ return     │
-              │ read/write│     │ output      │    │ boundary   │
-              │ /edit, web│     │ redacted    │    │            │
-              │ fetch,    │     └─────────────┘    └────────────┘
-              │ kb_query, │
-              │ scan_trace│     ┌─────────────┐
-              │ respond   │     │  Providers  │
-              └───────────┘     │ Anthropic / │
-                               │ OpenAI /    │
-                               │ Google /    │
-                               │ Ollama /    │
-                               │ mock (tests)│
-                               └─────────────┘
+        ┌──────────────────┬───────────┼───────────┬──────────────────┐
+        ▼                  ▼           ▼           ▼                  ▼
+  ┌───────────┐     ┌─────────────┐ ┌────────┐ ┌──────────┐    ┌────────────┐
+  │  Tools    │     │  Audit log  │ │ Redact │ │ Providers│    │  KB (386)  │
+  │ bash, read│     │ JSONL, every│ │ at EVERY│ │Anthropic │    │ 31 packs,  │
+  │ write/edit│     │ call, args+ │ │ return │ │OpenAI    │    │ cached,    │
+  │ ps, hash, │     │ output      │ │boundary│ │Google    │    │ validated  │
+  │ netconns, │     │ redacted    │ │        │ │Ollama    │    └────────────┘
+  │ search,   │     └─────────────┘ └────────┘ │mock      │
+  │ webfetch, │     ┌─────────────┐            └──────────┘
+  │ kb_query, │     │ Subsystems  │
+  │ scan_trace│     │ scan/hunt/  │
+  │ respond,  │     │ watch/      │
+  │ MCP tools │     │ emulate/    │
+  └───────────┘     │ graph       │
+                    └─────────────┘
 ```
-
-Subsystems (also standalone CLI commands):
-
-| Command | What it does |
-|---|---|
-| `aegis scan <trace.jsonl>` | Offline analyzer: matches KB detection patterns + multi-step chains (injection→secret use, sensitive-read→unapproved exec, secret egress). |
-| `aegis guard …` | Live interceptor: `check` screens one call, `wrap -- cmd` runs a command through the guard, `kill --session` is the kill-switch. In-process API: `from aegis import guard`. |
-| `aegis respond <playbook>` | `rotate-keys` (OpenAI/Anthropic/Google runbooks), `kill-session`, `quarantine-workspace`, `incident-report`. Emits operator runbooks; takes no destructive provider actions in v1. |
-| `aegis kb <query>` | Search the 31-pack technique knowledge base. |
-| `aegis emulate --target <dir>` | Purple-team adversary emulation: 5-stage campaign narratives vs your own code, per-stage COVERED/GAP detection verification. |
-| `aegis graph <dir>` | Ranked attack paths (KB technique chains) for your own system, each with the defenses that break it. |
-| `aegis mcp list` | List tools from configured MCP servers (`~/.aegis/mcp.json`); all calls guard-screened. |
-| `aegis hunt <dir>` | Pattern-based vulnerability triage of **your own** local code. Refuses non-local targets. |
-
-### The knowledge base
-
-`aegis/kb/` — 31 YAML packs, 386 techniques, each a condensed threat-intel
-note (variants, real-world examples from public incident reports, concrete
-detection patterns, mitigations):
-
-- **Agent-attack packs:** prompt injection, tool-output poisoning, credential
-  exfiltration, egress exfiltration, persistence, privilege escalation,
-  supply chain, evasion
-- **Depth packs:** dark-web threat intel, APT tradecraft (public reporting
-  only), ransomware playbooks, social engineering, web exploitation,
-  network attacks, malware concepts
-- **Completeness packs:** hacker tools (detection-level catalog), attack
-  methods (kill chain / ATT&CK as defender doctrine), algorithms
-  (conceptual), hacker mindset (threat-modeling doctrine — shapes the
-  agent's system prompt)
-
-Every pack is strict-schema-validated at load; every technique carries
-machine-usable detection patterns that the scanner and guard execute.
 
 ## Honest scope
 
 - Aegis cannot protect keys **already stolen** before deployment.
 - It cannot see inside encrypted channels it doesn't terminate.
-- Human-approval fatigue is a residual risk — the guard escalates, the
-  human must still judge.
-- `/hunt` is pattern-based triage, not a proof of security.
-- Mock provider is for tests/demos; real work needs your own API key.
+- Human-approval fatigue is a residual risk — the guard escalates, the human must still judge.
+- `/hunt`, `watch`, and `graph` are triage, not proofs of security. `/emulate` is plan-level narrative, not a live attack.
+- Mock provider is for tests and demos; real work needs your own API key (or a local model).
 - Full ceiling: `docs/SCOPE_AND_LIMITS.md`. Threat model: `SECURITY.md`.
-
-## Parked for later
-
-- `/model` mid-session provider switching, watch same-line finding dedupe
-- MCP client, keybind config, themes (see `docs/OPENCODE_GAP_ANALYSIS.md`)
-- Network IDS integration, eBPF/syscall monitoring, hosted SaaS console,
-  auto-remediation that touches provider accounts, Windows support
 
 ## Project progress
 
@@ -229,26 +139,24 @@ machine-usable detection patterns that the scanner and guard execute.
 | v0.1.0 — first agent | ✅ done | REPL agent loop, 212-technique KB (19 packs), in-loop guard, scan/respond, 106 tests |
 | v0.2.0 — OpenCode parity push | ✅ done | Gap analysis vs OpenCode, 252 techniques (23 packs), sessions/palette/diffs, `aegis watch` SOC-in-a-box, 241 tests |
 | v0.3.0 — model-agnostic + one command | ✅ done | Google + Ollama providers, dev/plan modes, polished TUI, `install.sh` single-command setup, 291 tests |
-| v0.4.0 — godfather program | ✅ done (current) | 386 techniques / 31 packs, `aegis emulate` purple-team campaigns, `aegis graph` ranked attack paths, MCP client, 506+ tests |
-| v0.5.0 — team workflows | 🔄 next | `/model` switching, contributor docs, KB link-check pass |
+| v0.4.0 — Godfather Program | ✅ done | 8-specialist training panel → 386 techniques (31 packs); `aegis emulate`, `aegis graph`, MCP client; 576 tests |
+| v0.5.0 — god-level power | ✅ done (current) | Inspection arsenal (ps/netconns/hash/search), plan-then-execute, guard hardening (taint + live chains + reverse-shell rules), KB binary cache, 600 tests |
 
-Progress to 1.0: ████████░░░░░░░░░░ — the agent is real, tested, and installs
-with one command. Stars and contributors (below) are the fuel for what comes
-next.
+Progress to 1.0: ██████████░░░░░░░░ — the agent is real, tested, and installs with one command. Stars and contributors below are the fuel for what comes next.
 
 ## Development
 
 ```bash
+git clone https://github.com/anilkumara9/aegis.git
+cd aegis && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m pytest tests/ -q   # full suite, no network
 ```
 
-Engineering law: every capability is wired into the CLI and covered by real
-tests — no stubs, no demo systems.
+Engineering law: every capability is wired into the CLI and covered by real tests — no stubs, no demo systems. See `PROJECT_BRIEF.md` for the build spec and `docs/SCOPE_AND_LIMITS.md` for the defensive boundary.
 
 ## Contributors
 
-Aegis is built in the open — every contribution counts, from a typo fix to a
-whole new detection pack. PRs are welcome.
+Aegis is built in the open — every contribution counts, from a typo fix to a whole new detection pack. PRs are welcome.
 
 <a href="https://github.com/anilkumara9/aegis/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=anilkumara9/aegis" alt="contributors" />

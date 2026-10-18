@@ -303,6 +303,13 @@ def _handle_slash(line: str, loop: AgentLoop,
             print("PLAN mode: read-only. write/edit/bash are denied at the "
                   "guard layer.")
         return False
+    if cmd == "/planexec":
+        if not rest:
+            print("usage: /planexec <task> — the model proposes a step plan, "
+                  "the guard screens every step, then the approved plan runs")
+        else:
+            loop.run(rest, plan_first=True)
+        return False
     if cmd == "/guard":
         sub = (rest or "status").lower()
         if sub == "kill":

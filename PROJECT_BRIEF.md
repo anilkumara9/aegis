@@ -83,6 +83,29 @@ output. Own assets only.
 list/call tools THROUGH the guard (every MCP tool call guard-screened like a
 native tool). Config `~/.aegis/mcp.json`. Tests with a mock MCP server.
 
+**Lane D — God-level power + demo-ectomy (founder order 2026-10-18):**
+"Upgrade everything more powerfully; god-level super power; remove
+unnecessary demo stuff that weakens it."
+1. Demo-ectomy audit: grep for stubs, placeholders, TODO/FIXME, half-wired
+   features, mock references in user-facing paths. Each one: implement
+   properly or REMOVE. Report cut-vs-deepened list. (Mock provider stays as
+   test infra; SECURITY.md email placeholder stays — needs founder.)
+2. Power upgrades:
+   - Expand the defensive tool arsenal: read-only local system-inspection
+     tools (process list, network connections, file hashing/integrity, deep
+     code search) — local-only, guard-screened, tested. Makes hunt/watch/
+     emulate genuinely stronger.
+   - Explicit planning in the agent loop: plan-then-execute phase for complex
+     tasks (build on the /plan skill; model proposes a step plan, guard
+     approves the shape, loop executes).
+   - Guard hardening vs the 386-technique KB: every technique with a clear
+     tool-call signature gets an enforcement rule; report coverage delta.
+   - Performance: measure KB load + scan time on a large fixture; fix hot
+     spots; report before/after.
+3. Full pytest green. Final step: professional README rewrite (clean hacking
+   title, setup explained properly, professional tone, progress chart updated
+   to v0.5.0). Defensive boundary unchanged.
+
 **Doctrine cap decision (CEO, founder-deferred):** make it configurable —
 env `AEGIS_DOCTRINE_CHARS`, default raised to fit all current doctrine notes
 (coordinator measures and reports the number + per-call cost delta); founder

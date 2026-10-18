@@ -163,7 +163,7 @@ class MCPClient:
         result = self._request("initialize", {
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": {},
-            "clientInfo": {"name": "aegis", "version": "0.4.0"},
+            "clientInfo": {"name": "aegis", "version": "0.5.0"},
         }, timeout=timeout)
         # Tell the server we're ready; no response expected.
         self._write_message({"jsonrpc": "2.0", "method": "notifications/initialized"})

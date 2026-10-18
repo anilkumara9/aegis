@@ -1,7 +1,7 @@
 #!/bin/sh
 # Aegis installer — one-command setup, OpenCode/Claude Code style.
 #
-#   curl -fsSL https://raw.githubusercontent.com/anilkumara9/aegis/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/anilkumara9/aegis/master/install.sh | bash
 #
 # What it does:
 #   1. Checks for python3 >= 3.10 (and curl/wget when it must download).

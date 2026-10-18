@@ -269,6 +269,7 @@ SKILLS = {
     "/hunt": "Audit YOUR OWN local codebase for vulnerabilities: /hunt <dir>",
     "/plan": "Hacker-mindset attack plan for YOUR OWN code (read-only): /plan <dir>",
     "/emulate": "Purple-team adversary campaign emulation on YOUR OWN code: /emulate <dir> [campaign]",
+    "/planexec": "Plan-then-execute a complex task: model proposes steps, guard screens, approved plan runs",
     "/mode": "Switch dev/plan mode: /mode <dev|plan>",
     "/guard": "Guard session status and kill-switch: /guard [status|kill]",
     "/scan": "Analyze a tool-call trace: /scan <trace.jsonl>",

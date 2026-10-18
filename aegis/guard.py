@@ -24,7 +24,10 @@ from typing import Any, Callable
 from . import config
 from .audit import AuditLog
 from .detect import secrets as sec
-from .detect.engine import Finding, pattern_scan
+from .detect.engine import (
+    Finding, SENSITIVE_PATH_RE, chain_indirect_injection_to_secret_use,
+    chain_sensitive_read_to_unapproved_exec, pattern_scan, secret_egress,
+)
 from .kb import KB
 
 EXEC_TOOLS = {"bash", "exec", "shell", "run_command", "terminal"}
@@ -61,6 +64,13 @@ BUILTIN_DENY_ARG_PATTERNS = [
     r"\bmkfs\b",                              # filesystem format
     r"\bdd\s+.*\bof=/dev/",                   # dd to raw device
     r">\s*/dev/sd[a-z]",                      # raw disk write
+    # -- reverse shells / download cradles (unambiguous) -------------------
+    r"/dev/tcp/",                              # bash /dev/tcp reverse shell
+    r"\bmkfifo\b",                            # named-pipe backpipe shells
+    r"\b(nc|ncat|netcat)\b[^|;&]*\s-[a-z]*e\b",  # netcat -e shell
+    r"powershell[^|;&]*(IEX|Invoke-Expression)[^|;&]*Net\.WebClient",
+    r"\bcertutil\b[^|;&]*-urlcache",          # LOLBin download
+    r"\bbitsadmin\b[^|;&]*/transfer",         # LOLBin download
 ]
 
 
@@ -138,6 +148,13 @@ class GuardSession:
         self.audit = AuditLog(session_id)
         self._deny_res = [re.compile(p, re.IGNORECASE)
                           for p in BUILTIN_DENY_ARG_PATTERNS + policy.deny_arg_patterns]
+        # Taint tracking: a read of a sensitive path taints the session —
+        # any later network-bound call is treated as a potential exfil
+        # channel and escalated. _recent_calls is a rolling window of
+        # (tool, redacted args, output excerpt) used for LIVE chain
+        # detection (previously only available offline via `aegis scan`).
+        self._tainted = False
+        self._recent_calls: list[dict] = []
         # Preserve an existing kill-switch revocation across re-attachment.
         state = _read_session_state(session_id)
         state.update({"revoked": bool(state.get("revoked", False)),
@@ -148,6 +165,18 @@ class GuardSession:
     def _assert_live(self) -> None:
         if is_revoked(self.id):
             raise SessionRevoked(f"session {self.id} has been kill-switched")
+
+    def note_result(self, tool: str, output_excerpt: str = "") -> None:
+        """Record a completed tool call for live chain detection.
+
+        Called by the agent loop after execution with the (already
+        redacted) output excerpt. Rolling window of 20; in-memory only.
+        """
+        self._recent_calls.append({
+            "tool": tool, "args": {}, "output": (output_excerpt or "")[:2000],
+            "approval": False,
+        })
+        del self._recent_calls[:-20]
 
     def _egress_domains(self, args_text: str) -> list[str]:
         return URL_RE.findall(args_text)
@@ -191,6 +220,37 @@ class GuardSession:
 
         # 3. KB pattern scan on the call (pre-execution indicators)
         findings.extend(pattern_scan(f"{tool}\n{args_text}", self.kb))
+
+        # 3b. taint tracking: reading a sensitive path taints the session.
+        # A later network-bound call from a tainted session is treated as
+        # a potential exfil channel and escalated for human approval —
+        # even when the payload isn't secret-shaped (encoded exfil).
+        if tool_l in ("read", "search", "hash") and SENSITIVE_PATH_RE.search(args_text):
+            self._tainted = True
+        is_network = tool_l in NETWORK_TOOLS or bool(URL_RE.search(args_text))
+        if self._tainted and is_network:
+            t = self._kb_best("credential_exfiltration", "exfil")
+            findings.append(Finding(
+                technique_id=t.id if t else "AEG-POLICY",
+                technique_name=t.name if t else "Tainted session egress",
+                category=t.category if t else "policy",
+                severity="high", rule="guard_taint_escalation",
+                evidence=("session previously read a sensitive path; "
+                          f"outbound '{tool}' call requires approval"),
+                mitigation=(t.mitigations[0] if t and t.mitigations else
+                            "Approve the destination or clear the session.")))
+
+        # 3c. live chain detection: injection indicators in an EARLIER
+        # call's output followed by a secret-bearing CURRENT call.
+        # (Chains were previously only caught offline by `aegis scan`.)
+        window = self._recent_calls + [{
+            "tool": tool, "args": args, "output": "", "approval": False,
+        }]
+        try:
+            findings.extend(
+                chain_indirect_injection_to_secret_use(window, self.kb))
+        except Exception:
+            pass
 
         # 4. secret-shaped payload in a network-bound call -> deny outright
         is_network = tool_l in NETWORK_TOOLS or bool(URL_RE.search(args_text))

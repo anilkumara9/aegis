@@ -7,7 +7,9 @@ them. It never contains operational attack instructions or payloads.
 
 from __future__ import annotations
 
+import hashlib
 import os
+import pickle
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -124,11 +126,15 @@ class KB:
             self.by_category.setdefault(t.category, []).append(t)
 
     @classmethod
-    def load(cls, kb_dir: Path | None = None) -> "KB":
+    def load(cls, kb_dir: Path | None = None, use_cache: bool = True) -> "KB":
         kb_dir = Path(kb_dir) if kb_dir else config.KB_DIR
         files = sorted(kb_dir.glob("*.yaml"))
         if not files:
             raise KBValidationError(f"no KB packs found in {kb_dir}")
+        if use_cache:
+            cached = cls._load_cache(kb_dir, files)
+            if cached is not None:
+                return cached
         techniques: list[Technique] = []
         seen_ids: set[str] = set()
         for f in files:
@@ -147,7 +153,54 @@ class KB:
             for entry in entries:
                 techniques.append(_validate_entry(pack_name, entry, seen_ids))
         techniques.sort(key=lambda t: t.id)
-        return cls(techniques)
+        kb = cls(techniques)
+        if use_cache:
+            cls._save_cache(kb_dir, files, techniques)
+        return kb
+
+    # -- binary cache ------------------------------------------------------
+    # Full YAML parse + strict validation costs ~5s for 31 packs on every CLI
+    # invocation. The cache stores the validated technique list as pickle,
+    # keyed by a fingerprint of the YAML dir; any pack change invalidates it.
+    @staticmethod
+    def _cache_path(kb_dir: Path) -> Path:
+        digest = hashlib.sha256(str(kb_dir.resolve()).encode()).hexdigest()[:16]
+        return config.state_dir() / f"kb_cache_{digest}.pkl"
+
+    @staticmethod
+    def _fingerprint(files: list[Path]) -> tuple:
+        return tuple(
+            (f.name, f.stat().st_mtime_ns, f.stat().st_size) for f in files)
+
+    @classmethod
+    def _load_cache(cls, kb_dir: Path, files: list[Path]) -> "KB | None":
+        path = cls._cache_path(kb_dir)
+        if not path.is_file():
+            return None
+        try:
+            with open(path, "rb") as fh:
+                fingerprint, techniques = pickle.load(fh)
+            if fingerprint != cls._fingerprint(files):
+                return None
+            if not techniques or not isinstance(techniques[0], Technique):
+                return None
+            return cls(techniques)
+        except Exception:
+            return None  # corrupt cache -> fall through to full load
+
+    @classmethod
+    def _save_cache(cls, kb_dir: Path, files: list[Path],
+                    techniques: list[Technique]) -> None:
+        try:
+            path = cls._cache_path(kb_dir)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            with open(tmp, "wb") as fh:
+                pickle.dump((cls._fingerprint(files), techniques),
+                            fh, protocol=pickle.HIGHEST_PROTOCOL)
+            tmp.replace(path)
+        except Exception:
+            pass  # cache is best-effort; the KB itself loaded fine
 
     # -- accessors ------------------------------------------------------
     def packs(self) -> list[str]:

@@ -168,10 +168,13 @@ class AgentLoop:
         return True
 
     # -- single user turn ------------------------------------------------
-    def run(self, user_message: str) -> str:
+    def run(self, user_message: str, plan_first: bool = False) -> str:
         base = list(self.history) if self.history is not None else []
         messages = base + [{"role": "user", "content": user_message}]
-        result = self._run_turn(messages)
+        if plan_first:
+            result = self._run_plan_first(messages, user_message)
+        else:
+            result = self._run_turn(messages)
         # Persist the turn (user + assistant + tool messages) into the
         # conversation store and into the in-memory history.
         turn = messages[len(base):]
@@ -185,6 +188,97 @@ class AgentLoop:
                                          m.get("role", ""), m.get("content", ""),
                                          extra=extra or None)
         return result
+
+    # -- plan-then-execute ---------------------------------------------------
+    # For complex tasks: the model proposes an explicit step plan, the guard
+    # screens every step's shape BEFORE anything runs, and only a fully
+    # approved plan executes. A denied step aborts the run with an explanation
+    # instead of failing halfway through a half-built change.
+    _PLAN_PROMPT = (
+        "Break the task below into concrete tool steps. Respond with ONLY a "
+        "JSON array, no prose, no fences:\n"
+        '[{{"tool": "<tool name>", "args": {{<tool args>}}, '
+        '"purpose": "<one line on why this step>"}}]\n'
+        "Use only these tools: {tools}. Keep args minimal and exact. "
+        "Prefer read-only investigation steps before any write or execute "
+        "step. Task: {task}"
+    )
+
+    def _propose_plan(self, user_message: str):
+        """Ask the model for a JSON step plan. Returns (steps, error)."""
+        prompt = self._PLAN_PROMPT.format(
+            tools=", ".join(sorted(TOOLS)), task=user_message)
+        text_parts: list[str] = []
+        for kind, payload in self.provider.stream(
+                [{"role": "user", "content": prompt}],
+                self.tool_specs, self.system):
+            if kind == "text":
+                text_parts.append(str(payload))
+            elif kind == "error":
+                return None, str(payload)
+            elif kind == "done":
+                break
+        raw = "".join(text_parts)
+        start, end = raw.find("["), raw.rfind("]")
+        if start < 0 or end <= start:
+            return None, "model did not return a step plan"
+        try:
+            steps = json.loads(raw[start:end + 1])
+        except Exception as e:
+            return None, f"unparsable step plan: {e}"
+        if not isinstance(steps, list) or not steps:
+            return None, "empty step plan"
+        clean = []
+        for i, s in enumerate(steps):
+            if not isinstance(s, dict) or s.get("tool") not in TOOLS:
+                return None, f"plan step {i}: unknown tool {s.get('tool')!r}"
+            args = s.get("args") or {}
+            if not isinstance(args, dict):
+                return None, f"plan step {i}: args must be an object"
+            clean.append({"tool": s["tool"], "args": args,
+                          "purpose": str(s.get("purpose", ""))[:200]})
+        return clean, ""
+
+    def _run_plan_first(self, messages: list[dict], user_message: str) -> str:
+        steps, error = self._propose_plan(user_message)
+        if error or not steps:
+            self.on_text(f"\n[plan-then-execute] planning failed ({error}); "
+                         "falling back to a normal turn.\n")
+            return self._run_turn(messages)
+        # Guard screens the plan's shape before anything executes.
+        screened = []
+        blocked = False
+        self.on_text("\n[plan-then-execute] proposed plan:\n")
+        for i, s in enumerate(steps, 1):
+            verdict = self.guard.check_call(s["tool"], s["args"])
+            ok = self.guard.resolve(verdict)
+            screened.append((s, verdict, ok))
+            mark = "✓" if ok else "✗"
+            self.on_text(f"  {mark} step {i}: {s['tool']} — "
+                         f"{s['purpose'] or '(no purpose given)'} "
+                         f"[{verdict.decision}]\n")
+            if not ok:
+                blocked = True
+        plan_note = ("Plan proposed and guard-screened: " +
+                     "; ".join(f"step{i} {s['tool']}={v.decision}"
+                               for i, (s, v, _) in enumerate(screened, 1)))
+        messages.append({"role": "assistant",
+                         "content": f"[plan-then-execute] {plan_note}"})
+        if blocked:
+            self.on_text("[plan-then-execute] plan blocked by the guard — "
+                         "nothing executed. Adjust the task and retry.\n")
+            return ("Plan blocked by the guard; nothing was executed. "
+                    "See the per-step verdicts above.")
+        # Execute approved steps sequentially; each is re-screened live.
+        outputs = []
+        for i, (s, _, _) in enumerate(screened, 1):
+            tc = ToolCall(f"plan-{i}", s["tool"], s["args"])
+            result = self._guarded_execute(tc)
+            outputs.append(f"--- step {i} ({s['tool']}) ---\n{result}")
+            messages.append({"role": "tool", "tool_call_id": tc.id,
+                             "name": tc.name, "content": result})
+        self.on_text("[plan-then-execute] all steps executed.\n")
+        return "\n\n".join(outputs)
 
     def _run_turn(self, messages: list[dict]) -> str:
         final_text: list[str] = []
@@ -275,6 +369,11 @@ class AgentLoop:
         redacted, _ = sec.redact(raw)
         self._audit(tc, verdict.decision if verdict.decision == "allow" else "approved",
                     verdict.findings, redacted)
+        # Feed the live chain-detection window (redacted output only).
+        try:
+            self.guard.note_result(tc.name, redacted)
+        except Exception:
+            pass
         self._tool_end(tc, "allow" if verdict.decision == "allow" else "approved",
                        t0, redacted)
         return redacted

@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.5.0 (2026-10-18) — god-level power + demo-ectomy
+
+Founder order: "upgrade everything more powerfully; god-level super power;
+remove unnecessary demo stuff."
+
+- **Demo-ectomy audit**: swept the codebase for stubs, placeholders, and
+  half-wired features — all `pass` sites verified as legitimate defensive
+  exception handling; every CLI command exercised end to end. Fixed a
+  test-ordering dependency (`test_kb.py::test_ids_unique_and_in_range`
+  failed standalone): KB authoring-contract registration moved to
+  `tests/conftest.py` (imported on every run), frozen `test_kb.py`
+  byte-unchanged.
+- **Defensive inspection arsenal** (read-only, local-only, guard-screened):
+  `ps` (process list), `netconns` (connections), `hash` (SHA-256 +
+  integrity baselines), `search` (deep code search). Wired into the agent
+  loop.
+- **Plan-then-execute**: `/planexec <task>` — the model proposes an explicit
+  JSON step plan, the guard screens every step's shape before anything runs,
+  and only a fully approved plan executes. A blocked step aborts with an
+  explanation instead of failing halfway.
+- **Guard hardening vs the 386-technique KB**: reverse-shell and LOLBin
+  download-cradle deny patterns (`/dev/tcp`, `mkfifo`, `nc -e`, PowerShell
+  IEX+WebClient, certutil, bitsadmin); session taint tracking (sensitive
+  reads escalate later outbound calls); live multi-step chain detection in
+  the pre-execution path (previously scan-only).
+- **Performance**: KB binary cache — load 4.36s → 0.006s with
+  mtime-fingerprint invalidation; corrupt cache falls back to full load.
+- **Providers**: fixed silent provider errors in the REPL (now surfaced via
+  the display channel); MockProvider supports error turns for tests.
+
 ## v0.4.0 (2026-10-18) — Godfather Program
 
 "Make the agent the godfather of hacking: supreme defensive knowledge, then

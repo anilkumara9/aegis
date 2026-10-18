@@ -19,7 +19,6 @@ import re
 
 import pytest
 
-import test_kb
 from aegis.detect.engine import pattern_scan
 
 NEW_PACKS = {
@@ -29,11 +28,11 @@ NEW_PACKS = {
     "reconnaissance": (243, 252),
 }
 
-# Register the v0.2 packs with the frozen v0.1 authoring contract.
-test_kb.ID_RANGES.update(NEW_PACKS)
-for _pack in NEW_PACKS:
-    if _pack not in test_kb.EXPECTED_PACKS:
-        test_kb.EXPECTED_PACKS.append(_pack)
+# Contract registration note: tests/test_kb.py is FROZEN (the v0.1 authoring
+# contract). The v0.2 packs are registered centrally in tests/conftest.py,
+# which pytest imports on every run (full suite or single file) — the old
+# import-time mutation of test_kb.ID_RANGES here only worked under full-suite
+# collection order and broke standalone runs of test_kb.py.
 
 NEW_IDS = [f"AEG-T{n}" for lo, hi in NEW_PACKS.values() for n in range(lo, hi + 1)]
 
