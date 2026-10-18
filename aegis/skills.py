@@ -124,6 +124,9 @@ SKILLS = {
     "/scan": "Analyze a tool-call trace: /scan <trace.jsonl>",
     "/respond": "Emit an incident runbook: /respond <playbook> [detail]",
     "/kb": "Query the technique knowledge base: /kb <query>",
+    "/sessions": "List saved conversation sessions",
+    "/resume": "Resume a conversation: /resume <n|id>",
+    "/rename": "Rename the current conversation: /rename <title>",
     "/help": "Show help",
     "/exit": "Exit (also /quit)",
 }
