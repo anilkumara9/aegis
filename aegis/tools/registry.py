@@ -13,4 +13,13 @@ for _cls in (BashTool, ReadTool, WriteTool, EditTool, WebFetchTool,
 
 TOOL_NAMES = sorted(TOOLS)
 
+# Pillar 4 (MCP): discover configured MCP servers and register one native
+# tool per server tool (mcp__<server>__<tool>). Non-fatal by design — MCP is
+# optional, and a dead server must never break the agent loop.
+try:
+    from .. import mcp as _mcp
+    _mcp.register_mcp_tools(TOOLS)
+except Exception:
+    pass
+
 __all__ = ["TOOLS", "TOOL_NAMES"]
