@@ -1,0 +1,481 @@
+pack: attack_methods
+version: "1.0"
+techniques:
+  - id: AEG-T183
+    name: "The Cyber Kill Chain (phases and defender breakpoints)"
+    category: attack_methods
+    description: >-
+      Lockheed Martin's Cyber Kill Chain models an intrusion as seven sequential
+      phases: Reconnaissance, Weaponization, Delivery, Exploitation,
+      Installation, Command and Control, and Actions on Objectives. Its
+      defensive value is the core insight that breaking the chain at ANY phase
+      defeats the whole attack — defenders do not need to win everywhere, just
+      somewhere. It remains the standard narrative frame for describing how a
+      campaign unfolded and where it was stopped.
+    how_it_works: >-
+      Each phase is a required dependency for the next, and each leaves
+      distinct evidence. Defenders map breakpoints per phase: reconnaissance —
+      minimize public footprint and watch for scanning; weaponization —
+      intelligence on actor tooling (occurs off-target); delivery — email/web
+      filtering and user reporting; exploitation — patching and exploit
+      prevention; installation — application control and EDR; command and
+      control — egress filtering and beacon hunting; actions on objectives —
+      DLP, segmentation, and backup isolation. Campaign analysis links
+      indicators across phases into one intrusion story.
+    variants:
+      - "Classic 7-phase linear chain (Lockheed Martin model)"
+      - "Unified kill chain variants adding internal phases (pivoting, privilege escalation)"
+      - "Insider-adapted chains (phases collapse when the actor starts inside)"
+    indicators:
+      - "Reconnaissance: targeted scanning, domain-registration, and OSINT collection against the organization"
+      - "Delivery: malicious attachments or links detonating in sandboxes, user phishing reports clustering"
+      - "Installation: new persistence mechanisms (services, scheduled tasks, Run keys) appearing post-delivery"
+      - "Command and control: beaconing rhythms to external infrastructure after installation"
+      - "Actions on objectives: large or anomalous outbound transfers, mass encryption, or data staging"
+    detection:
+      rule: detect_killchain_progression
+      patterns:
+        - "correlated sequence: phishing delivery event on a host followed within 48h by new persistence plus first external beacon"
+        - "kill-chain phase coverage gap: incidents reaching C2 with no detection fired in delivery or exploitation phases"
+        - '(?i)kill[\s-]+chain'
+    severity: high
+    mitigations:
+      - "Break the chain early: invest most in delivery and exploitation defenses (email filtering, patching), where cost-per-break is lowest"
+      - "Maintain phase-mapped detection coverage so every phase has at least one alerting control"
+      - "Use threat intelligence to recognize weaponization indicators and pre-position defenses before delivery"
+      - "Assume some phases will be missed; ensure C2 and actions-on-objectives controls (egress, backups) as backstops"
+    examples:
+      - summary: "Lockheed Martin's own security team used kill-chain analysis to detect and stop an intrusion attempt following the RSA SecurID breach."
+        reference: "https://www.darkreading.com/cyberattacks-data-breaches/how-lockheed-martin-s-kill-chain-stopped-securid-attack"
+      - summary: "MITRE documents the TRITON attackers' pre-compromise network reconnaissance as a kill-chain early phase preceding the safety-system attack."
+        reference: "https://attack.mitre.org/techniques/T1595/"
+    references:
+      - "https://www.lockheedmartin.com/content/dam/lockheed-martin/rms/documents/cyber/LM-White-Paper-Intel-Driven-Defense.pdf"
+      - "https://www.darkreading.com/cyberattacks-data-breaches/how-lockheed-martin-s-kill-chain-stopped-securid-attack"
+
+  - id: AEG-T184
+    name: "MITRE ATT&CK Tactic Flow"
+    category: attack_methods
+    description: >-
+      MITRE ATT&CK organizes adversary behavior into tactics — the adversary's
+      tactical goals, from Reconnaissance and Initial Access through Execution,
+      Persistence, Privilege Escalation, Defense Evasion, Credential Access,
+      Discovery, Lateral Movement, Collection, Exfiltration, and Impact. Unlike
+      the linear kill chain, tactics can repeat and interleave. Defenders use
+      the tactic flow to ensure detection coverage exists for every stage an
+      intruder must pass through, and to narrate incidents in a common
+      language.
+    how_it_works: >-
+      Each tactic contains techniques (the 'how') with procedure examples from
+      real intrusions. Defender workflow: map every deployed detection to its
+      ATT&CK tactic and technique; identify uncovered tactics; hunt in order —
+      e.g. discovery commands followed by lateral logons, credential access
+      followed by remote authentication. Variants: enterprise, mobile, and ICS
+      matrices for different environments; PRE-ATT&CK for pre-compromise
+      preparation. Tactic sequencing in telemetry reveals campaign progress.
+    variants:
+      - "Enterprise matrix tactic flow (endpoint and network intrusions)"
+      - "ICS matrix tactic flow (operational technology environments)"
+      - "PRE-ATT&CK (reconnaissance and resource-development tactics)"
+    indicators:
+      - "Discovery commands (account, network, process enumeration) followed by lateral logon attempts"
+      - "Credential-access events (LSASS reads) followed by authenticated remote logons to new hosts"
+      - "Defense-evasion signals (log clearing, timestomping) interleaved with collection activity"
+      - "Collection staging directories followed by large outbound transfers (exfiltration tactic)"
+    detection:
+      rule: detect_attack_tactic_sequence
+      patterns:
+        - "discovery technique telemetry (process/network enumeration) on a host followed by lateral movement logons within 4 hours"
+        - "credential-access alert followed by first-time remote authentication to a tier-0 asset"
+        - '(?i)lateral\s+movement'
+    severity: high
+    mitigations:
+      - "Build an ATT&CK-mapped detection matrix and close coverage gaps tactic by tactic, prioritizing high-frequency adversary tactics"
+      - "Hunt across tactic boundaries — single-tactic alerts are noise, sequences are campaigns"
+      - "Standardize incident narration on ATT&CK so findings transfer between teams and reports"
+      - "Validate coverage with adversary emulation mapped to the same tactics"
+    examples:
+      - summary: "Bad Rabbit's documented techniques span defense evasion, credential access (Mimikatz), lateral movement (EternalRomance), and impact (disk encryption) — a full tactic-flow case study."
+        reference: "https://attack.mitre.org/versions/v17/software/S0606/"
+      - summary: "Ember Bear's profile shows the full flow from active scanning through brute force, DNS C2, and mass collection."
+        reference: "https://attack.mitre.org/groups/G1003/"
+    references:
+      - "https://attack.mitre.org/versions/v17/software/S0606/"
+      - "https://attack.mitre.org/groups/G1003/"
+
+  - id: AEG-T185
+    name: "Red-Team Operation Planning (conceptual — what defenders should expect)"
+    category: attack_methods
+    description: >-
+      Red teams plan operations like real adversaries: define objectives,
+      establish rules of engagement, build infrastructure, then execute in
+      phases while avoiding detection. Defenders study this planning not to
+      replicate attacks, but to know what pre-attack preparation looks like —
+      lookalike domains, test infrastructure, and probing — so the operation
+      can be detected before it starts. Real attackers follow the same planning
+      logic with fewer constraints.
+    how_it_works: >-
+      Conceptual phases defenders should anticipate: target scoping and OSINT;
+      infrastructure stand-up (domains, certificates, redirectors); initial
+      access attempts (phishing, external services); persistence and privilege
+      escalation; objective actions; and reporting. Variants: assumed-breach
+      (start inside, test lateral movement and detection); zero-knowledge
+      (full external simulation); objective-based (steal a specific crown
+      jewel). Each phase emits weak signals — certificate transparency entries,
+      low-volume probing, staged payloads — that defenders can catch.
+    variants:
+      - "Assumed-breach operations (start inside; test lateral movement and detection)"
+      - "Zero-knowledge external simulation (full recon-to-objective chain)"
+      - "Objective-based operations (single crown-jewel goal)"
+    indicators:
+      - "Certificate-transparency logs showing newly issued certificates for lookalike domains"
+      - "Low-volume probing of login portals and VPN endpoints from hosting-provider ranges"
+      - "Staged phishing infrastructure: fresh domains with mail records appearing before any lure is sent"
+      - "Red-team or adversary tooling artifacts (beacon configs, redirector patterns) in NetFlow"
+    detection:
+      rule: detect_operation_preparation
+      patterns:
+        - "certificate transparency: new certificate for a domain with edit distance <=2 from corporate brand, age < 7 days"
+        - "authentication portal receiving low-and-slow credential probes from cloud hosting ASNs"
+    severity: medium
+    mitigations:
+      - "Monitor certificate transparency and domain registrations for lookalikes; automate takedown requests"
+      - "Run your own authorized red team so defenses are tested by planning-grade adversaries, not discovered by real ones"
+      - "Deploy deception (honeypots, honeytokens) to catch pre-operation probing early"
+      - "Treat infrastructure stand-up signals as pre-incident intelligence, not noise"
+    examples:
+      - summary: "Mandiant M-Trends analysis shows real adversaries routinely abuse the same commercial red-team tooling (Cobalt Strike BEACON) that authorized teams use, blurring the line defenders must monitor."
+        reference: "https://www.fortra.com/blog/new-report-highlights-rogue-cobalt-strike-down-80-beacon-still-1-malware-family"
+      - summary: "The CISA/FBI DarkSide advisory shows ransomware affiliates planning operations with phishing initial access and Cobalt Strike C2 — the standard operation template."
+        reference: "https://redmondmag.com/articles/2021/05/12/security-advice-attack-on-fuel-pipeline.aspx"
+    references:
+      - "https://www.fortra.com/blog/new-report-highlights-rogue-cobalt-strike-down-80-beacon-still-1-malware-family"
+      - "https://redmondmag.com/articles/2021/05/12/security-advice-attack-on-fuel-pipeline.aspx"
+
+  - id: AEG-T186
+    name: "Attack Graphs for Defensive Path Analysis"
+    category: attack_methods
+    description: >-
+      Attack graphs model every path an intruder could take from entry points
+      to crown jewels — hosts, vulnerabilities, credentials, and trust
+      relationships as nodes and edges. Defenders use them to find choke
+      points: the single misconfigured ACL or unpatched host whose fix severs
+      dozens of paths at once. Continuous attack-path management turns the
+      graph from a one-time assessment into a living control.
+    how_it_works: >-
+      The graph is built from asset inventory, vulnerability data, AD/Entra ID
+      relationships, and network reachability. Analysts query shortest paths to
+      tier-0 assets and rank remediation by path-count reduction. Variants:
+      vulnerability-centric graphs (exploit chains); identity-centric graphs
+      (AD attack paths); hybrid graphs combining both. Defenders re-run the
+      graph after every change — new paths appear constantly as environments
+      evolve.
+    variants:
+      - "Vulnerability-centric graphs (chained exploit paths to critical hosts)"
+      - "Identity-centric graphs (AD/Entra ID privilege-escalation paths)"
+      - "Hybrid graphs (combined network, identity, and vulnerability paths)"
+    indicators:
+      - "Graph output showing new shortest paths to tier-0 assets after an environment change"
+      - "Critical assets reachable within few hops of an internet-facing host"
+      - "Choke-point analysis flagging a single ACL or account enabling many distinct paths"
+      - "Stale graph data: paths referencing decommissioned hosts (graph hygiene signal)"
+    detection:
+      rule: detect_attack_path_exposure
+      patterns:
+        - "continuous mapping: new attack path to a tier-0 asset appears where none existed in the prior run"
+        - "internet-facing host with a graph path of <=3 hops to a domain controller"
+    severity: medium
+    mitigations:
+      - "Remediate choke points first — one fix that severs many paths beats patching leaves"
+      - "Run attack-path analysis continuously, not annually; integrate it into change management"
+      - "Enforce tiering so user workstations never have direct paths to tier-0 assets"
+      - "Use the graph to prioritize detection placement on the most-traversed edges"
+    examples:
+      - summary: "SpecterOps' BloodHound Enterprise continuously maps identity attack paths and prioritizes choke-point remediation across AD and Entra ID."
+        reference: "https://www.helpnetsecurity.com/2026/07/28/specterops-bloodhound-hunter/"
+      - summary: "Defensive BloodHound analysis exposes shadow-admin paths — indirect ACL permissions granting effective domain control — that standard privileged-user reports miss."
+        reference: "https://blog.admindroid.com/find-privilege-escalation-attack-paths-in-active-directory-using-bloodhound/"
+    references:
+      - "https://www.helpnetsecurity.com/2026/07/28/specterops-bloodhound-hunter/"
+      - "https://blog.admindroid.com/find-privilege-escalation-attack-paths-in-active-directory-using-bloodhound/"
+
+  - id: AEG-T187
+    name: "Threat Modeling for Defenders"
+    category: attack_methods
+    description: >-
+      Threat modeling is the structured practice of asking what can go wrong
+      for a system before attackers do — mapping trust boundaries, data flows,
+      and attacker goals, then choosing controls. Frameworks like STRIDE,
+      attack trees, and PASTA give the process repeatability. Done early in
+      design, it is the cheapest place to kill entire attack classes; skipped,
+      it leaves architectural flaws that no amount of patching fixes.
+    how_it_works: >-
+      The team diagrams the system, marks trust boundaries, enumerates threats
+      per component (spoofing, tampering, repudiation, information disclosure,
+      denial of service, elevation — STRIDE), and ranks mitigations. Variants:
+      STRIDE (threat categories); attack trees (goal decomposition);
+      PASTA (risk-centric, business-impact driven). Output feeds directly into
+      detection engineering: each modeled threat gets a detection or an
+      accepted-risk decision.
+    variants:
+      - "STRIDE (threat categorization per component)"
+      - "Attack trees (adversary-goal decomposition)"
+      - "PASTA (risk-centric, business-impact-driven modeling)"
+    indicators:
+      - "Internet-facing assets or new data flows with no recorded threat model"
+      - "Trust-boundary crossings (e.g. user input to database) lacking modeled controls"
+      - "Post-incident reviews revealing attack paths the model never considered"
+      - "Architecture changes merged without threat-model review"
+    detection:
+      rule: detect_threat_model_gap
+      patterns:
+        - "production asset with internet exposure and no linked threat-model record in the asset inventory"
+        - "data flow crossing a trust boundary with no associated detection or DLP control"
+    severity: medium
+    mitigations:
+      - "Threat-model during design, not after deployment — cheapest point to kill attack classes"
+      - "Model crown jewels and their data flows first; expand coverage iteratively"
+      - "Convert every modeled threat into either a detection rule or a documented accepted risk"
+      - "Re-model on architecture changes; make it a merge-gate for significant designs"
+    examples:
+      - summary: "Log4Shell showed the cost of unmodeled supply-chain risk: a ubiquitous logging library became a remote-code-execution path nobody had threat-modeled, per the joint CISA/FBI/NSA advisory."
+        reference: "https://www.aha.org/h-isac-reports/2021-12-22-h-isac-tlp-white-vulnerability-cisa-releases-aa21-356a-mitigating"
+      - summary: "The Capital One breach is a canonical threat-modeling failure: SSRF against cloud metadata was an unmodeled trust-boundary crossing."
+        reference: "https://www.breachsense.com/blog/capital-one-data-breach-case-study/"
+    references:
+      - "https://www.aha.org/h-isac-reports/2021-12-22-h-isac-tlp-white-vulnerability-cisa-releases-aa21-356a-mitigating"
+      - "https://www.breachsense.com/blog/capital-one-data-breach-case-study/"
+  - id: AEG-T188
+    name: "Assume-Breach Methodology"
+    category: attack_methods
+    description: >-
+      Assume-breach starts from the premise that attackers are already inside
+      or will get inside, and designs controls around limiting blast radius,
+      detecting lateral movement fast, and making persistence hard. It inverts
+      the old perimeter mindset: prevention is still valuable, but detection
+      speed and containment decide outcomes. Zero-trust architecture is
+      assume-breach made operational.
+    how_it_works: >-
+      Defenders map what an insider-positioned attacker could reach, then
+      segment, monitor east-west traffic, and remove implicit trust. Key
+      practices: micro-segmentation so compromise of one host does not mean
+      compromise of the subnet; identity-centric access (every request
+      authenticated and authorized); aggressive lateral-movement detection;
+      tabletop exercises that start from 'the domain admin's laptop is owned'.
+      Success is measured in dwell time and blast radius, not in blocked
+      perimeter attempts.
+    variants:
+      - "Zero-trust implementation (assume-breach as architecture)"
+      - "Blast-radius exercises (start from a compromised crown-jewel-adjacent host)"
+      - "Dwell-time reduction programs (measure and drive down attacker residency)"
+    indicators:
+      - "Flat networks where any host can reach any other on management protocols"
+      - "Implicit trust: service accounts with broad access and no behavioral monitoring"
+      - "Long dwell times in incident retrospectives (weeks to months undetected)"
+      - "East-west traffic with no inspection or logging between segments"
+    detection:
+      rule: detect_lateral_movement_assumed_breach
+      patterns:
+        - "first-time host-to-host SMB/RDP/WinRM connection between different network segments"
+        - "service account performing interactive logon or accessing resources outside its normal scope"
+    severity: high
+    mitigations:
+      - "Segment aggressively (micro-segmentation, host firewalls) so lateral movement requires crossing monitored boundaries"
+      - "Make identity the perimeter: MFA, conditional access, and just-in-time privilege for every sensitive action"
+      - "Log and alert on all east-west administrative traffic; hunt lateral movement continuously"
+      - "Run assumed-breach exercises to find the paths your monitoring misses"
+    examples:
+      - summary: "Colonial Pipeline's OT networks were not directly affected because IT/OT segmentation held — the assume-breach backstop working as designed."
+        reference: "https://redmondmag.com/articles/2021/05/12/security-advice-attack-on-fuel-pipeline.aspx"
+      - summary: "BlackMatter's playbook — LDAP/SMB discovery then remote encryption of every found host — is exactly the lateral-movement scenario assume-breach segmentation is built to contain."
+        reference: "https://www.cybersecurity-help.cz/blog/2374.html"
+    references:
+      - "https://redmondmag.com/articles/2021/05/12/security-advice-attack-on-fuel-pipeline.aspx"
+      - "https://www.cybersecurity-help.cz/blog/2374.html"
+
+  - id: AEG-T189
+    name: "Detection Engineering (detections-as-code)"
+    category: attack_methods
+    description: >-
+      Detection engineering treats detections like software: version-controlled,
+      tested, peer-reviewed, mapped to ATT&CK, and continuously tuned. Instead
+      of buying alerts, the team builds a detection backlog from threat
+      intelligence and incident lessons, ships rules through CI, and measures
+      coverage and precision. It is how organizations convert threat knowledge
+      into reliable, low-noise alerting.
+    how_it_works: >-
+      The loop: ingest threat intel and post-incident findings, write a
+      detection hypothesis, implement and test the rule against benign and
+      malicious data, deploy, then measure true/false positive rates and
+      ATT&CK coverage. Variants: sigma-style portable rules; behavior-based
+      analytics over raw signatures; coverage-driven backlogs prioritized by
+      adversary frequency. Mature programs track mean-time-to-detect per
+      tactic and retire or tune rules that never fire.
+    variants:
+      - "Sigma-style portable detection rules (vendor-neutral)"
+      - "Behavioral analytics (anomaly and sequence detection over raw events)"
+      - "Coverage-driven backlogs (prioritized by ATT&CK frequency in the wild)"
+    indicators:
+      - "ATT&CK techniques with zero mapped detections in the coverage matrix"
+      - "Rules that have never fired in 90+ days despite relevant threat activity"
+      - "High false-positive rates causing analyst alert fatigue and ignored queues"
+      - "Incident retrospectives finding attacker TTPs that had no corresponding detection"
+    detection:
+      rule: detect_detection_gap
+      patterns:
+        - "ATT&CK technique observed in sector threat intel with zero mapped detections in the local matrix"
+        - "deployed rule with zero true-positive fires in 90 days and no documented tuning review"
+    severity: medium
+    mitigations:
+      - "Manage detections as code: version control, code review, automated testing, and staged rollout"
+      - "Maintain a living ATT&CK coverage map and prioritize gaps by real-world adversary frequency"
+      - "Validate every detection with adversary emulation before trusting it in production"
+      - "Measure MTTD and false-positive rates per rule; tune or retire ruthlessly"
+    examples:
+      - summary: "Mandiant's M-Trends 2025 found average attacker dwell time at 10 days, with C2 channels active throughout — the exact gap detection engineering exists to close, cutting dwell to under 48 hours where C2 detection works."
+        reference: "http://manageengine.com/log-management/cyber-security/command-and-control.html?src=whatissiem"
+      - summary: "Picus Labs' T1071 analysis shows how mapping one C2 technique to concrete log sources turns a framework entry into implementable detections."
+        reference: "https://www.picussecurity.com/resource/blog/t1071-application-layer-protocol-technique-explained"
+    references:
+      - "http://manageengine.com/log-management/cyber-security/command-and-control.html?src=whatissiem"
+      - "https://www.picussecurity.com/resource/blog/t1071-application-layer-protocol-technique-explained"
+
+  - id: AEG-T190
+    name: "Purple-Team Feedback Loops"
+    category: attack_methods
+    description: >-
+      Purple teaming fuses red (attack) and blue (defend) in tight feedback
+      loops: the red side executes a TTP, the blue side checks whether it was
+      detected, and gaps become detection-engineering tasks in the same cycle.
+      It converts exercises from pass/fail theater into measurable detection
+      improvement. The key metric is repeat-success rate — a TTP that succeeds
+      twice means the loop is broken.
+    how_it_works: >-
+      A typical loop: agree on a TTP and scope, execute it against production
+      telemetry, score detection (missed, alerted, blocked), immediately write
+      or tune the detection, then re-run to confirm. Variants: continuous
+      purple teaming (standing cadence, not annual events); atomic testing
+      (single TTPs validated in isolation); full-scenario loops (chained
+      tactics). Findings feed the detection backlog directly, closing the
+      red-blue gap within days instead of quarters.
+    variants:
+      - "Continuous purple teaming (standing cadence rather than annual events)"
+      - "Atomic TTP testing (single techniques validated in isolation)"
+      - "Full-scenario loops (chained tactics end to end)"
+    indicators:
+      - "Red-team findings with no corresponding detection update after the exercise"
+      - "The same TTP succeeding in consecutive exercises (broken loop)"
+      - "Detection backlog growing without purple-team validation of new rules"
+      - "Exercise reports measuring activity instead of detection outcomes"
+    detection:
+      rule: detect_purple_gap
+      patterns:
+        - "emulated TTP executed in exercise with zero alerts fired (missed detection)"
+        - "identical TTP succeeding in two consecutive purple-team cycles"
+    severity: medium
+    mitigations:
+      - "Run purple-team cycles on a standing cadence with detection-improvement as the scored outcome"
+      - "Convert every missed TTP into a detection-engineering ticket in the same sprint"
+      - "Track repeat-success rate as the program's headline metric; investigate any repeat"
+      - "Share sanitized findings across teams so one exercise improves the whole estate"
+    examples:
+      - summary: "The 2023 Fortra/Microsoft/law-enforcement disruption of rogue Cobalt Strike infrastructure — cutting wild BEACON sightings 80% — shows offense-informed defense working at ecosystem scale."
+        reference: "https://www.fortra.com/blog/new-report-highlights-rogue-cobalt-strike-down-80-beacon-still-1-malware-family"
+      - summary: "The Emotet takedown redirected victim machines to law-enforcement infrastructure and later pushed an uninstall — defender-side action informed by deep adversary understanding."
+        reference: "https://www.Welivesecurity.Com/2021/01/28/emotet-botnet-disrupted-global-operation/"
+    references:
+      - "https://www.fortra.com/blog/new-report-highlights-rogue-cobalt-strike-down-80-beacon-still-1-malware-family"
+      - "https://www.Welivesecurity.Com/2021/01/28/emotet-botnet-disrupted-global-operation/"
+
+  - id: AEG-T191
+    name: "Adversary Emulation for Defensive Validation"
+    category: attack_methods
+    description: >-
+      Adversary emulation reproduces the documented TTPs of specific threat
+      actors — not to break in creatively like a pentest, but to answer one
+      question: would our controls detect and stop THIS actor? Plans are built
+      directly from threat-intelligence reports and ATT&CK mappings. It is the
+      most honest test of a detection program, because the scenarios are the
+      ones actually seen in the wild.
+    how_it_works: >-
+      The team selects an actor profile, builds an emulation plan from its
+      known TTPs, executes in a controlled scope, and scores each step as
+      detected, alerted-but-missed, or invisible. Variants: full-kill-chain
+      emulation (end-to-end campaign); atomic emulation (single techniques for
+      regression testing). Every invisible step becomes a detection or control
+      gap with an owner and a deadline. Unlike pentests, novel exploitation is
+      out of scope — fidelity to the actor's known behavior is the point.
+    variants:
+      - "Full-kill-chain emulation (end-to-end actor campaign)"
+      - "Atomic emulation (single TTPs for detection regression testing)"
+    indicators:
+      - "Emulated C2 channels not blocked by egress controls"
+      - "Emulated persistence mechanisms generating no alerts"
+      - "Emulated credential-access steps invisible to EDR"
+      - "Scorecards showing the same gaps quarter after quarter"
+    detection:
+      rule: detect_emulation_gap
+      patterns:
+        - "emulated C2 beacon active for >24h with no alert from egress or EDR controls"
+        - "emulated persistence artifact present on host with no detection fired within the exercise window"
+    severity: medium
+    mitigations:
+      - "Scope emulations to the actors most likely to target your sector, using current threat intel"
+      - "Map every emulation step to ATT&CK and score detection explicitly — no vague 'we did fine'"
+      - "Assign owners and deadlines to every gap; re-emulate to confirm closure"
+      - "Keep emulation distinct from pentesting: fidelity to known TTPs, not novel exploitation"
+    examples:
+      - summary: "Ember Bear's documented TTP set (scanning, brute force, DNS tunneling, mass collection) is a ready-made emulation plan for defenders in government-adjacent sectors."
+        reference: "https://attack.mitre.org/groups/G1003/"
+      - summary: "TRITON/Temp.Veles campaign procedures give ICS defenders a concrete emulation target for safety-system environments."
+        reference: "https://attack.mitre.org/techniques/T1595/"
+    references:
+      - "https://attack.mitre.org/groups/G1003/"
+      - "https://attack.mitre.org/techniques/T1595/"
+
+  - id: AEG-T192
+    name: "Kill Chain vs ATT&CK Comparison for Defenders"
+    category: attack_methods
+    description: >-
+      The kill chain and ATT&CK answer different defender questions. The kill
+      chain is a linear, seven-phase narrative: it is ideal for telling the
+      story of a campaign and finding where it was (or could have been)
+      broken. ATT&CK is a matrix of tactics and techniques: it is ideal for
+      mapping detection coverage and hunting systematically. Mature programs
+      use both — kill chain for the campaign story, ATT&CK for the detection
+      engineering.
+    how_it_works: >-
+      Defender workflow: narrate incidents with the kill chain (which phase
+      did we break? which phases had no coverage?), then decompose each phase
+      into ATT&CK techniques for detection mapping. The kill chain's weakness
+      is linearity — real intrusions loop and skip phases; ATT&CK's weakness
+      is granularity — hundreds of techniques with no inherent priority.
+      Together they compensate: chain for prioritization of phases, ATT&CK for
+      completeness of technique coverage.
+    variants:
+      - "Kill-chain-first (campaign narrative, then technique decomposition)"
+      - "ATT&CK-first (coverage mapping, then campaign overlay)"
+      - "Diamond-model augmentation (adding adversary/victim/infrastructure context)"
+    indicators:
+      - "Incident timelines that cannot be mapped to ATT&CK techniques (coverage blind spot)"
+      - "Kill-chain phases with no corresponding detection in the ATT&CK-mapped matrix"
+      - "Threat-intel reports consumed as stories but never converted to technique mappings"
+    detection:
+      rule: detect_framework_mapping_gap
+      patterns:
+        - "closed incident with no ATT&CK technique tags on its timeline"
+        - "kill-chain phase (e.g. installation) with zero mapped detections in the coverage matrix"
+    severity: low
+    mitigations:
+      - "Use the kill chain to narrate and prioritize, ATT&CK to map and measure — never only one"
+      - "Require ATT&CK tagging on every incident timeline before closure"
+      - "Audit that each kill-chain phase has at least one ATT&CK-mapped detection"
+      - "Train analysts in both so handoffs between IR storytelling and detection work are seamless"
+    examples:
+      - summary: "Lockheed Martin's original kill-chain paper explicitly frames the model as intelligence-driven defense: mapping adversary indicators to defender courses of action phase by phase."
+        reference: "https://www.lockheedmartin.com/content/dam/lockheed-martin/rms/documents/cyber/LM-White-Paper-Intel-Driven-Defense.pdf"
+      - summary: "Comparative analyses show practitioners converging on using both frameworks together rather than choosing between them."
+        reference: "https://www.brierandthorn.com/post/framework-vs-lockheed"
+    references:
+      - "https://www.lockheedmartin.com/content/dam/lockheed-martin/rms/documents/cyber/LM-White-Paper-Intel-Driven-Defense.pdf"
+      - "https://www.brierandthorn.com/post/framework-vs-lockheed"

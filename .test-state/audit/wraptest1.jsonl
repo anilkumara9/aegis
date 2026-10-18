@@ -1,0 +1,1 @@
+{"ts": 1792309185.9409397, "session": "wraptest1", "event": "tool_call", "tool": "wrap:echo", "args": {"cmd": "echo hi", "argv": ["echo", "hi"]}, "verdict": "allow", "findings": [], "output_excerpt": "hi\n"}

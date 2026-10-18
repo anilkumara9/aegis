@@ -1,0 +1,541 @@
+pack: egress_exfiltration
+version: "1.0"
+techniques:
+  - id: AEG-T037
+    name: "DNS Tunneling for Data Theft"
+    category: egress_exfiltration
+    description: >-
+      Bulk data is tunneled out inside DNS queries and responses -- a protocol
+      firewalls almost universally allow outbound. Encoded chunks ride in
+      subdomain labels or TXT records to attacker-controlled nameservers,
+      bypassing web proxies and DLP that only watch HTTP(S). DNS tunneling
+      turns the internet's phone book into a freight channel.
+    how_it_works: >-
+      The client encodes data into DNS labels; the attacker's nameserver
+      answers with encoded TXT records, making the channel bidirectional.
+      Named variants: low-rate TXT exfiltration for stealth; high-throughput
+      tunneling tools for bulk theft; and DNS-over-HTTPS to attacker resolvers
+      to dodge on-path inspection. Defenders detect the channel's shape --
+      long high-entropy labels, abnormal TXT ratios -- rather than its
+      content, which is usually encrypted.
+    variants:
+      - "Low-rate TXT exfiltration: sparse encoded queries blending into baseline DNS"
+      - "High-throughput tunneling: bulk transfer via continuous TXT/A query streams"
+      - "Rogue-resolver DoH: DNS-over-HTTPS to attacker resolvers bypassing on-path monitors"
+    indicators:
+      - "DNS labels longer than 50 characters with high entropy in queried names"
+      - "Abnormal TXT query ratios per host, or query spikes to rarely-seen domains"
+      - "DNS traffic bypassing the corporate resolver (direct port 53/853 or DoH to unapproved endpoints)"
+    detection:
+      rule: detect_dns_tunneling
+      patterns:
+        - '(?i)^[a-z0-9+/=_-]{50,}\.'
+        - 'TXT queries exceeding 5% of a host''s DNS traffic, or more than 500 queries per hour to a single domain'
+        - 'DNS flows to non-corporate resolvers on ports 53, 853, or 443 (DoH) not on the allowlist'
+    severity: high
+    mitigations:
+      - "Log all DNS centrally and run entropy/volume analytics with alerting"
+      - "Deploy DNS firewalling / response-policy zones blocking newly-registered, uncategorized, and tunnel-shaped domains"
+      - "Force all DNS through inspected corporate resolvers; block unauthorized DNS-over-HTTPS"
+    examples:
+      - summary: "DNSpionage (Cisco Talos, 2018-2019): espionage malware targeting Middle Eastern governments added DNS tunneling for C2 and exfiltration; Talos's explicit lesson was that DNS must be monitored as closely as proxy logs."
+        reference: "https://www.kernel-sesias.net/cisco-dnspionage-attack-adds-new-tools-morphs-tactics/"
+      - summary: "DNSMessenger (Cisco Talos, 2017): a fileless PowerShell RAT that ran its entire bidirectional C2 inside DNS TXT queries and responses, chosen precisely because DNS is less monitored than HTTP."
+        reference: "https://blog.talosintelligence.com/dnsmessenger"
+    references:
+      - "https://www.kernel-sesias.net/cisco-dnspionage-attack-adds-new-tools-morphs-tactics/"
+      - "https://blog.talosintelligence.com/dnsmessenger"
+      - "https://apt.securelist.com/apt/project-sauron"
+
+  - id: AEG-T038
+    name: "Data Smuggled Inside Legitimate-Looking API Calls"
+    category: egress_exfiltration
+    description: >-
+      Stolen data is hidden inside API traffic that looks routine -- telemetry
+      uploads, analytics beacons, cloud-sync calls, SaaS API requests -- so it
+      blends into allowlisted, encrypted flows that firewalls and DLP wave
+      through. The API's legitimacy is the camouflage; the payload schema is
+      where the theft hides.
+    how_it_works: >-
+      The implant or agent piggybacks encoded data on legitimate API schemas:
+      extra fields, oversized values, or steganographic encoding inside normal
+      parameters. Named variants: telemetry masquerading (SUNBURST posed as
+      Orion Improvement Program traffic); trusted-SaaS carrier abuse (cloud
+      storage or productivity APIs as the exfil pipe); and diagnostic-channel
+      abuse (data encoded in error reports or crash dumps).
+    variants:
+      - "Telemetry masquerading: C2/exfil shaped to match a product's normal telemetry protocol"
+      - "Trusted-SaaS carrier: stolen data moved through legitimate cloud/SaaS API calls"
+      - "Diagnostic-channel abuse: data encoded in error reports, crash dumps, or health checks"
+    indicators:
+      - "API calls with anomalous payload sizes or field entropy versus the endpoint's schema baseline"
+      - "Telemetry endpoints receiving data types they never normally carry"
+      - "Cloud-API calls issued from unexpected processes"
+    detection:
+      rule: detect_api_smuggling
+      patterns:
+        - 'schema validation alerts: fields exceeding per-endpoint length or entropy baselines'
+        - 'process-to-API-endpoint pairs never observed in the trailing 30-day baseline'
+        - 'outbound payloads to telemetry or analytics hosts containing secret shapes or base64 blobs larger than 10KB'
+    severity: high
+    mitigations:
+      - "Perform schema-aware API inspection (with TLS interception) on egress, with per-endpoint anomaly baselines"
+      - "Issue least-privilege API tokens so a compromised agent cannot reach sensitive APIs"
+      - "Extend DLP to API payloads, not just email and web traffic"
+    examples:
+      - summary: "SUNBURST (FireEye, Dec 2020): the backdoor's traffic masqueraded as the Orion Improvement Program protocol over HTTP, with attacker IPs hidden behind in-country VPN exits to blend into normal telemetry."
+        reference: "https://cloud.google.com/blog/topics/threat-intelligence/evasive-attacker-leverages-solarwinds-supply-chain-compromises-with-sunburst-backdoor"
+      - summary: "Project Sauron (2016): exfiltrated data was 'disguised in day-to-day traffic' across multiple legitimate channels including email and DNS."
+        reference: "https://apt.securelist.com/apt/project-sauron"
+    references:
+      - "https://cloud.google.com/blog/topics/threat-intelligence/evasive-attacker-leverages-solarwinds-supply-chain-compromises-with-sunburst-backdoor"
+      - "https://apt.securelist.com/apt/project-sauron"
+      - "https://securityboulevard.com/2023/06/safebreach-coverage-for-us-cert-alert-aa23-158a-cve-2023-3462-moveit-vulnerability/"
+
+  - id: AEG-T039
+    name: "Clipboard and File-Write Staging Before Exfiltration"
+    category: egress_exfiltration
+    description: >-
+      Before exfiltration, attackers collect and consolidate loot in staging
+      locations -- clipboard buffers, temp directories, archives -- then move
+      it out in one or a few transfers. Staging is the observable chokepoint
+      between collection and egress: the moment scattered theft becomes a
+      shippable package.
+    how_it_works: >-
+      Data gathered from multiple sources is written to a staging area (temp
+      dirs, clipboard), often compressed or encrypted into archives, then
+      exfiltrated. Named variants: clipboard as a live staging buffer;
+      archive staging (ZIP/RAR/7z assembled before upload); and cloud-sync
+      folders as staging, where 'syncing' is the exfil.
+    variants:
+      - "Clipboard staging: harvested data buffered in the clipboard before transfer"
+      - "Archive staging: loot compressed/encrypted into archives in temp directories before upload"
+      - "Sync-folder staging: cloud-sync directories used as the exfil mechanism itself"
+    indicators:
+      - "Large archives appearing in temp directories, created by non-user processes"
+      - "Clipboard polling and file writes occurring in the same process tree"
+      - "Mass file reads followed by a single large outbound transfer"
+    detection:
+      rule: detect_exfil_staging
+      patterns:
+        - '(?i)\.(zip|rar|7z|tar\.gz)\b'
+        - '(?i)(/tmp/|/dev/shm/)[^\s]*\.(zip|rar|7z)'
+    severity: medium
+    mitigations:
+      - "EDR rules alerting on staging sequences (archive creation followed by egress)"
+      - "DLP coverage on removable-media and cloud-sync staging paths"
+      - "Restrict archive-creation and raw transfer tools on sensitive hosts"
+    examples:
+      - summary: "Cl0p/MOVEit (CISA AA23-158A, June 2023): the LEMURLOOT web shell staged data from MOVEit Transfer databases before theft; the campaign hit 3,000+ US and 8,000 global organizations."
+        reference: "https://securityboulevard.com/2023/06/safebreach-coverage-for-us-cert-alert-aa23-158a-cve-2023-3462-moveit-vulnerability/"
+      - summary: "CikaBika Bot (Darktrace, 2026): the Rust RAT compresses victim directories into ZIP archives and exfiltrates them via Ngrok, with Discord as the C2 channel."
+        reference: "https://www.securityweek.com/cikabika-bot-rat-uses-discord-for-cc/"
+    references:
+      - "https://securityboulevard.com/2023/06/safebreach-coverage-for-us-cert-alert-aa23-158a-cve-2023-3462-moveit-vulnerability/"
+      - "https://www.securityweek.com/cikabika-bot-rat-uses-discord-for-cc/"
+
+  - id: AEG-T040
+    name: "Model-Distillation-Style Probing (Extraction Queries)"
+    category: egress_exfiltration
+    description: >-
+      An adversary issues high volumes of carefully chosen queries against a
+      model or agent endpoint to reconstruct its behavior, training data, or
+      proprietary system behavior -- stealing the model's capabilities or the
+      data behind it without ever breaching the host. The queries look like
+      heavy legitimate usage; the theft is in the aggregate pattern.
+    how_it_works: >-
+      Systematic querying (adaptive, covering the input space) builds a labeled
+      dataset on which a student model is trained. Named variants:
+      functionality stealing via prediction APIs (Tramer et al. showed exact
+      weight recovery for simple models with query-only access); LLM
+      capability distillation via mass querying; and data extraction via
+      targeted probing (membership and attribute inference). OpenCode's 2026
+      breach showed the operational form: stolen provider keys burned on
+      repeated high-volume queries.
+    variants:
+      - "Functionality stealing: query-only reconstruction of model weights or decision boundaries"
+      - "Capability distillation: mass querying to train a cheaper student model"
+      - "Data probing: targeted queries extracting training-data membership or attributes"
+    indicators:
+      - "Query or token volumes orders of magnitude above the account's normal baseline"
+      - "Systematic input-space coverage (grids, sweeps) with low prompt diversity at high volume"
+      - "Many accounts or keys showing correlated query patterns (distributed extraction)"
+    detection:
+      rule: detect_distillation_probing
+      patterns:
+        - 'token or query volume exceeding 10x the account baseline, or more than 1M tokens per day on consumer keys'
+        - 'low input diversity (prompt entropy anomalously low) combined with high query volume'
+        - 'shared IP, ASN, or client fingerprint across multiple keys with synchronized query bursts'
+    severity: high
+    mitigations:
+      - "Enforce rate limits and usage quotas per key, with anomaly-triggered throttling and key suspension"
+      - "Apply output perturbation or watermarking to degrade student-model fidelity and prove theft"
+      - "Require verified identity for high-volume tiers; monitor for distributed extraction patterns"
+    examples:
+      - summary: "Tramer et al., USENIX Security 2016: demonstrated stealing machine-learning models via prediction APIs, including exact extraction of logistic-regression weights with query-only access."
+        reference: "https://www.usenix.org/conference/usenixsecurity16/technical-sessions/presentation/tramer"
+      - summary: "OpenCode, 17 Oct 2026: the company described its breach as 'a large scale distillation attack' -- stolen provider keys were immediately spent on repeated high-volume queries against frontier models."
+        reference: "https://thelatent.co/models/opencode-says-breach-tied-to-distillation-attack-exposed-users-ai-provider-keys"
+    references:
+      - "https://www.usenix.org/conference/usenixsecurity16/technical-sessions/presentation/tramer"
+      - "https://thelatent.co/models/opencode-says-breach-tied-to-distillation-attack-exposed-users-ai-provider-keys"
+      - "https://www.kodemsecurity.com/resources/owasp-top-10-for-llm-applications"
+
+  - id: AEG-T041
+    name: "Webhook Exfiltration"
+    category: egress_exfiltration
+    description: >-
+      Stolen data is POSTed to webhook URLs -- Discord, Slack, Teams, or
+      generic HTTP collectors -- infrastructure the attacker doesn't own,
+      that's allowlisted nearly everywhere, and where messages blend into
+      legitimate bot traffic. Discord webhooks are ideal for attackers:
+      write-only, with no retrievable history for defenders who find the URL.
+    how_it_works: >-
+      The implant or agent sends JSON payloads containing the loot to a
+      hard-coded webhook URL via ordinary HTTPS POST. Named variants: Discord
+      webhooks (the dominant choice in supply-chain malware); Slack/Teams
+      incoming webhooks; and generic collectors (webhook.site, ngrok
+      endpoints). Because the destination is a trusted SaaS domain, the
+      traffic rarely trips egress alarms.
+    variants:
+      - "Discord webhooks: write-only endpoints abused as resilient exfil drops"
+      - "Slack/Teams incoming webhooks: enterprise chat webhooks carrying stolen data as 'bot messages'"
+      - "Generic collectors: webhook.site / ngrok-style endpoints as disposable receivers"
+    indicators:
+      - "POSTs to discord.com/api/webhooks/* or hooks.slack.com/* from non-chat processes (build agents, installers, Python)"
+      - "Outbound payloads to collaboration domains containing secret shapes or file contents"
+      - "Webhook URLs hard-coded in package code, agent tooling, or config"
+    detection:
+      rule: detect_webhook_exfil
+      patterns:
+        - '(?i)discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+'
+        - '(?i)hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+'
+        - 'first-seen webhook destination receiving more than 1MB per day from a host'
+        - '(?i)\bwebhook\b'
+    severity: high
+    mitigations:
+      - "Egress allowlisting: only approved webhook URLs are reachable, enforced per-process"
+      - "Scan dependencies and agent tooling for hard-coded webhook URLs before deployment"
+      - "DLP inspection of outbound JSON payloads destined for collaboration domains"
+    examples:
+      - summary: "Socket (2025): malicious npm/PyPI/RubyGems packages -- e.g. mysql-dumpdiscord exfiltrating .env and config files -- used hard-coded Discord webhooks as the exfil point instead of attacker-owned servers."
+        reference: "https://securityonline.info/stealth-c2-hackers-abuse-discord-webhooks-for-covert-data-exfiltration-in-npm-pypi-and-rubygems-supply-chain-attacks/"
+      - summary: "Orca MALFEX (2026): the movinlike stealer harvested browser credentials and Telegram sessions and exfiltrated them via Discord webhook."
+        reference: "https://orca.security/resources/research/malicious-npm-campaign-malfex-delivers-rat-and-stealer-via-eight-packages-with-40000-downloads/"
+    references:
+      - "https://securityonline.info/stealth-c2-hackers-abuse-discord-webhooks-for-covert-data-exfiltration-in-npm-pypi-and-rubygems-supply-chain-attacks/"
+      - "https://orca.security/resources/research/malicious-npm-campaign-malfex-delivers-rat-and-stealer-via-eight-packages-with-40000-downloads/"
+
+  - id: AEG-T042
+    name: "Covert Channels Inside Legitimate Traffic"
+    category: egress_exfiltration
+    description: >-
+      Data leaves hidden inside traffic that is expected and trusted --
+      protocol mimicry, header or field abuse, or timing channels -- so
+      network monitors classify it as benign. The channel's legitimacy is the
+      camouflage; detection requires comparing observed traffic against the
+      protocol's normal profile, not just its destination.
+    how_it_works: >-
+      The attacker shapes malicious traffic to match a legitimate protocol's
+      profile: packet sizes, timing, endpoints, even TLS fingerprints. Named
+      variants: protocol impersonation (SUNBURST as Orion Improvement Program
+      telemetry); field abuse (data hidden in HTTP headers, cookies, or
+      certificate fields); and timing/size channels (information encoded in
+      inter-packet delays or payload lengths).
+    variants:
+      - "Protocol impersonation: malicious traffic shaped to match a trusted application's protocol"
+      - "Field abuse: data hidden in headers, cookies, or other legitimate protocol fields"
+      - "Timing/size channels: information encoded in packet timing or payload lengths"
+    indicators:
+      - "Subtle deviations from protocol baselines (odd inter-arrival times, unusual header values)"
+      - "Legitimate-protocol traffic destined for unexpected ASNs or geographies"
+      - "Decrypted-inspection mismatches: payload doesn't match the declared content type"
+    detection:
+      rule: detect_covert_channel
+      patterns:
+        - 'JA3/TLS fingerprint anomalies on otherwise normal-looking HTTPS flows'
+        - 'inter-packet timing entropy deviating from the per-application baseline'
+        - 'non-standard, oversized, or high-entropy headers and cookies on known-good endpoints'
+    severity: high
+    mitigations:
+      - "TLS-intercepting egress inspection with protocol-conformance checks"
+      - "Behavioral baselining per application and protocol, with anomaly alerting"
+      - "Zero-trust egress: default-deny with explicit per-destination policy"
+    examples:
+      - summary: "SUNBURST (FireEye, Dec 2020): C2 traffic masqueraded as Orion Improvement Program telemetry over HTTP, with attacker infrastructure hidden behind in-country VPN exits."
+        reference: "https://cloud.google.com/blog/topics/threat-intelligence/evasive-attacker-leverages-solarwinds-supply-chain-compromises-with-sunburst-backdoor"
+      - summary: "DNSMessenger (Cisco Talos, 2017): a fileless RAT ran its entire command-and-control inside DNS TXT queries and responses -- a protocol every network allows and few inspect."
+        reference: "https://blog.talosintelligence.com/dnsmessenger"
+    references:
+      - "https://cloud.google.com/blog/topics/threat-intelligence/evasive-attacker-leverages-solarwinds-supply-chain-compromises-with-sunburst-backdoor"
+      - "https://blog.talosintelligence.com/dnsmessenger"
+
+  - id: AEG-T043
+    name: "Slow-Drip Exfiltration Under Rate Limits"
+    category: egress_exfiltration
+    description: >-
+      To stay under volume-based alarms, attackers exfiltrate in small,
+      spaced-out transfers -- kilobytes per hour over weeks -- trading speed
+      for invisibility. Each transfer is individually unremarkable; only the
+      long-window aggregate tells the story. Per-session thresholds never
+      fire, which is exactly the point.
+    how_it_works: >-
+      A scheduler or implant trickles out chunks with jittered intervals,
+      often over an already low-volume channel such as DNS or email. Named
+      variants: time-jittered chunking; piggybacking on the victim's own
+      periodic traffic (backups, sync jobs); and multi-channel drip, spreading
+      small amounts across DNS, email, and HTTPS so no single channel looks
+      anomalous.
+    variants:
+      - "Time-jittered chunking: small transfers on randomized schedules to defeat periodicity detection"
+      - "Piggybacking: exfil hidden inside the victim's own routine bulk traffic"
+      - "Multi-channel drip: volumes split across several protocols so each stays under its alarm line"
+    indicators:
+      - "Long-lived, low-volume connections to rare external hosts"
+      - "Near-periodic micro-transfers with machine-regular intervals"
+      - "Aggregate egress to a destination climbing steadily without a matching business reason"
+    detection:
+      rule: detect_slow_drip_exfil
+      patterns:
+        - 'longitudinal: per-host egress to a single external destination accumulating more than 100MB over 30 days in sub-alarm chunks'
+        - 'beaconing analysis: spectral or interval analysis flagging near-periodic small transfers'
+        - 'ratio: outbound bytes to a host exceeding inbound by more than 50x sustained over weeks'
+        - '(?i)stay under the rate limit'
+        - '(?i)slow[\s-]*drip'
+    severity: medium
+    mitigations:
+      - "Maintain cumulative egress accounting per destination with long-window thresholds, not just per-session limits"
+      - "Baseline and alert on every new external destination regardless of volume"
+      - "Classify data and apply DLP so even small leaks of crown-jewel data trigger on content, not volume"
+    examples:
+      - summary: "Project Sauron (2016): an espionage platform that operated from 2011 to 2016 by exfiltrating data 'disguised in day-to-day traffic', with per-target customized artifacts to defeat IOC matching."
+        reference: "https://apt.securelist.com/apt/project-sauron"
+      - summary: "DNSpionage (Cisco Talos): the actor's shift toward DNS tunneling gave it a naturally low-bandwidth, hard-to-alarm exfil channel alongside its espionage tooling."
+        reference: "https://www.kernel-sesias.net/cisco-dnspionage-attack-adds-new-tools-morphs-tactics/"
+    references:
+      - "https://apt.securelist.com/apt/project-sauron"
+      - "https://www.kernel-sesias.net/cisco-dnspionage-attack-adds-new-tools-morphs-tactics/"
+
+  - id: AEG-T044
+    name: "Exfiltration via Generated Files the Agent Is Asked to Create"
+    category: egress_exfiltration
+    description: >-
+      The attacker never asks for secrets directly -- they ask the agent to
+      create a file (a report, config export, backup, or 'debug bundle') that
+      happens to include sensitive data, then arrange for it to be sent
+      somewhere convenient. The file-creation request is the
+      social-engineering wrapper around data theft, and it looks like normal
+      agent productivity.
+    how_it_works: >-
+      Injected instructions frame a legitimate-sounding deliverable ('export
+      the workspace config for migration', 'bundle the logs for support')
+      that sweeps secrets into the artifact; a second step moves the file
+      out. Named variants: config/log bundle requests; 'documentation' that
+      quotes credentials verbatim; and abuse of backup/export features through
+      the agent's own tools.
+    variants:
+      - "Config/log bundles: 'export' or 'backup' requests that sweep secrets into an archive"
+      - "Credential-quoting documentation: generated docs or reports that reproduce secrets"
+      - "Feature abuse: legitimate export/share features driven by injected instructions"
+    indicators:
+      - "Agent-created archives, reports, or bundles containing secret-shaped strings"
+      - "File-creation tool calls immediately followed by send, upload, or share actions to external parties"
+      - "Bundle or export requests originating from untrusted content the agent read"
+    detection:
+      rule: detect_generated_file_exfil
+      patterns:
+        - 'secret-shape regexes scanned across agent-created archives and reports before any send is permitted'
+        - 'sequence: file-write (zip, tar, log bundle) followed by external share or upload within the same session'
+        - '(?i)(export|bundle|backup|dump|exfiltrate).{0,30}(config|secret|credential|\.env|api[_-]?key)'
+    severity: high
+    mitigations:
+      - "Scan every agent-generated file for secret shapes before it can be transmitted; block on match"
+      - "Require human confirmation before the agent sends any file to an external party"
+      - "Never let untrusted content define the scope of what the agent collects (the EchoLeak lesson)"
+    examples:
+      - summary: "EchoLeak (CVE-2025-32711): a crafted email drove Microsoft 365 Copilot to collect internal files and exfiltrate them -- an innocuous-looking 'help me with my inbox' style request became the collection wrapper."
+        reference: "https://www.infosecurity-magazine.com/news/microsoft-365-copilot-zeroclick-ai/"
+      - summary: "GitHub MCP exploit (May 2025): a malicious issue tricked the agent into generating a pull request -- a generated artifact -- that disclosed the names of the user's private repositories."
+        reference: "https://simonwillison.net/2025/May/26/github-mcp-exploited/"
+    references:
+      - "https://www.infosecurity-magazine.com/news/microsoft-365-copilot-zeroclick-ai/"
+      - "https://simonwillison.net/2025/May/26/github-mcp-exploited/"
+      - "https://www.kodemsecurity.com/resources/owasp-top-10-for-llm-applications"
+
+  - id: AEG-T045
+    name: "Cloud-Storage Staging"
+    category: egress_exfiltration
+    description: >-
+      Stolen data is uploaded to cloud storage the attacker controls -- or to
+      a compromised legitimate bucket -- where it sits until retrieved. Cloud
+      uploads are normal enterprise traffic (SDKs, sync clients, backup
+      jobs), so the staging blends into the background, and the attacker never
+      exposes their own infrastructure during the theft itself.
+    how_it_works: >-
+      The implant or agent uses standard cloud SDKs and APIs to push archives
+      to buckets; sometimes the victim's own cloud account serves as the dead
+      drop before the data is moved. Named variants: attacker-owned buckets
+      (S3, GCS, Azure Blob, Mega); victim-account dead drops (uploads to the
+      victim's own storage, exfiltrated later); and SaaS-drive C2-plus-exfil
+      (ZOHOMURK used an attacker-controlled Zoho WorkDrive account for both
+      tasking and stolen-output upload).
+    variants:
+      - "Attacker-owned buckets: direct uploads to adversary cloud storage via standard SDKs"
+      - "Victim-account dead drops: the victim's own storage abused as temporary staging"
+      - "SaaS-drive C2: collaboration storage used simultaneously for tasking and exfiltration"
+    indicators:
+      - "Uploads to buckets or accounts never seen in the environment's baseline"
+      - "Large PUT operations from servers that should not generate them"
+      - "Cloud-storage API calls issued from unexpected processes"
+    detection:
+      rule: detect_cloud_staging
+      patterns:
+        - 'first-seen external bucket or account receiving more than 500MB from a host'
+        - 'CloudTrail or audit-log PutObject/Upload calls from unusual IAM roles or source IPs'
+        - 'uploads to anonymous file-share services from server-class hosts'
+    severity: high
+    mitigations:
+      - "Enforce cloud egress policy at proxy and endpoint: only approved buckets and accounts are reachable"
+      - "Alert on every first-seen external storage destination"
+      - "Enable object-level logging and DLP scanning of uploads"
+    examples:
+      - summary: "Mustang Panda / ZOHOMURK (Acronis TRU, 2026): the implant used an attacker-controlled Zoho WorkDrive account to receive commands and exfiltrate stolen output, making malicious traffic look like normal cloud activity."
+        reference: "https://vpncentral.com/mustang-panda-abuses-zoho-workdrive-for-command-control-and-data-exfiltration-in-india-attacks/"
+      - summary: "Cl0p/MOVEit (CISA AA23-158A, June 2023): mass file theft from managed-file-transfer servers, with exfiltrated enterprise data staged at scale before extortion."
+        reference: "https://securityboulevard.com/2023/06/safebreach-coverage-for-us-cert-alert-aa23-158a-cve-2023-3462-moveit-vulnerability/"
+    references:
+      - "https://vpncentral.com/mustang-panda-abuses-zoho-workdrive-for-command-control-and-data-exfiltration-in-india-attacks/"
+      - "https://securityboulevard.com/2023/06/safebreach-coverage-for-us-cert-alert-aa23-158a-cve-2023-3462-moveit-vulnerability/"
+
+  - id: AEG-T046
+    name: "Email-Based Exfiltration by an Agent"
+    category: egress_exfiltration
+    description: >-
+      The agent -- or malware on its host -- sends stolen data out as email:
+      SMTP to attacker-controlled mailboxes, or abuse of the victim's own
+      mail APIs. Email is universally allowed outbound and is rarely
+      content-inspected deeply, making it one of the oldest and most reliable
+      exfil channels.
+    how_it_works: >-
+      Harvested credentials and files are attached to or inlined in messages
+      sent via SMTP or mail APIs. Named variants: classic infostealer SMTP
+      exfil (AgentTesla's signature channel, still active in 2026); agent
+      social-engineering ('email the config to support@attacker-controlled
+      domain'); and legitimate-channel abuse in the Project Sauron style,
+      where stolen data is disguised in day-to-day email traffic.
+    variants:
+      - "Infostealer SMTP: harvested credentials mailed to attacker-controlled accounts"
+      - "Agent send-mail abuse: the agent's own email tool driven by injected instructions"
+      - "Legitimate-channel blending: exfil disguised inside ordinary business email flows"
+    indicators:
+      - "SMTP connections (ports 25/587/465) from processes other than approved mail clients or agents"
+      - "Mail-API send calls with attachments issued by agents to first-seen external addresses"
+      - "Outbound messages containing secret-shaped strings in bodies or attachments"
+    detection:
+      rule: detect_email_exfil
+      patterns:
+        - 'EDR/network: port 25, 587, or 465 connections from processes other than approved mail clients'
+        - 'DLP: secret-shape regexes matched in outbound message bodies or attachments'
+        - 'agent send_email tool calls with attachments to external addresses never seen before'
+    severity: high
+    mitigations:
+      - "Block direct SMTP from endpoints; force all mail through inspected gateways"
+      - "Require human approval for agent email tools when recipients are external or attachments are present"
+      - "Apply DLP with secret-pattern redaction to all outbound mail"
+    examples:
+      - summary: "AgentTesla: a .NET infostealer whose hallmark exfil channel is SMTP -- stolen credentials are emailed to attacker-controlled accounts; Fortinet analyzed new campaigns still using it in February 2026."
+        reference: "https://www.gatewatcher.com/en/lab/malware-analysis-agent-tesla/"
+      - summary: "Project Sauron (2016): used legitimate email channels among its exfiltration routes, with stolen data disguised in day-to-day traffic."
+        reference: "https://apt.securelist.com/apt/project-sauron"
+    references:
+      - "https://www.gatewatcher.com/en/lab/malware-analysis-agent-tesla/"
+      - "https://apt.securelist.com/apt/project-sauron"
+
+  - id: AEG-T047
+    name: "WebSocket Exfiltration Channels"
+    category: egress_exfiltration
+    description: >-
+      Data leaves over WebSocket connections -- persistent, bidirectional,
+      usually over HTTPS on port 443, and ubiquitous in modern web apps --
+      giving the attacker an interactive, low-suspicion channel that most
+      egress controls treat as ordinary web traffic. One connection serves
+      for both tasking and theft.
+    how_it_works: >-
+      The implant opens a wss:// connection to attacker infrastructure and
+      streams stolen data; the same channel carries interactive commands.
+      Named variants: dedicated RAT WebSocket C2 (long-lived wss sessions);
+      piggybacking on a legitimate application's WebSocket; and
+      browser-based exfil via injected scripts using the page's own
+      WebSocket.
+    variants:
+      - "Dedicated RAT WebSocket: long-lived wss:// sessions to attacker infrastructure"
+      - "Piggybacked WebSocket: exfil riding a legitimate application's existing socket"
+      - "Browser-injected WebSocket: page scripts opening attacker sockets with the user's session"
+    indicators:
+      - "Long-lived wss:// connections to rare domains with sustained outbound bytes"
+      - "Non-browser processes initiating WebSocket connections"
+      - "TLS fingerprints inconsistent with the claiming application on WebSocket flows"
+    detection:
+      rule: detect_websocket_exfil
+      patterns:
+        - 'WebSocket sessions longer than 1 hour to first-seen domains with sustained outbound byte counts'
+        - 'EDR: non-browser processes initiating wss:// connections'
+        - 'JA3 fingerprint mismatch: browser-like TLS ClientHello from a non-browser binary on WebSocket flows'
+    severity: high
+    mitigations:
+      - "Route egress through a WebSocket-aware proxy with domain allowlisting and inspection"
+      - "EDR rules on non-browser WebSocket initiation"
+      - "Authenticate and restrict internal WebSocket endpoints; never expose unauthenticated control sockets"
+    examples:
+      - summary: "VulcanRAT (Morphisec, Oct 2026): a WhatsApp-delivered RAT that establishes a WebSocket connection to its command-and-control server for hands-on post-compromise control and data collection."
+        reference: "https://www.cyware.com/resources/threat-briefings/daily-threat-briefing/cyware-daily-threat-intelligence-october-12-2026"
+      - summary: "Mustang Panda MINIRECON (Acronis TRU, 2026): a backdoor implant communicating with attacker infrastructure over WebSocket on HTTPS during espionage campaigns against Indian government and energy targets."
+        reference: "https://vpncentral.com/mustang-panda-abuses-zoho-workdrive-for-command-control-and-data-exfiltration-in-india-attacks/"
+    references:
+      - "https://www.cyware.com/resources/threat-briefings/daily-threat-briefing/cyware-daily-threat-intelligence-october-12-2026"
+      - "https://vpncentral.com/mustang-panda-abuses-zoho-workdrive-for-command-control-and-data-exfiltration-in-india-attacks/"
+
+  - id: AEG-T048
+    name: "ICMP Tunneling Concepts (Detection-Focused)"
+    category: egress_exfiltration
+    description: >-
+      Data is smuggled in the payload fields of ICMP echo request and reply
+      packets ('pings'). ICMP has no ports, bypasses many firewalls and
+      netstat-style monitors, and is rarely logged -- a purpose-built covert
+      channel hiding inside diagnostic traffic. Defenders need the concept and
+      its signatures, not the implementation.
+    how_it_works: >-
+      Conceptually, arbitrary bytes ride where ping padding normally sits: the
+      implant encodes data or commands in ICMP echo payloads with agreed
+      sequence numbers, and the peer replies in kind. Named variants: pure
+      ICMP request/reply tunneling; hybrid modes mixing ICMP with TCP for
+      reliability; and ICMPv6 tunneling on modern stacks. The Pingback case
+      shows the defender-visible shape: fixed unusual sequence numbers and
+      oversized, high-entropy payloads.
+    variants:
+      - "Pure ICMP tunneling: data and commands in echo request/reply payloads"
+      - "Hybrid ICMP+TCP: ICMP for stealth signaling with TCP for bulk transfer"
+      - "ICMPv6 tunneling: the same concept on IPv6 diagnostic traffic"
+    indicators:
+      - "ICMP echo packets with abnormally large or high-entropy payloads"
+      - "Fixed unusual ICMP sequence numbers (Pingback used 1234/1235/1236)"
+      - "ICMP volumes far above diagnostic baselines, or ICMP to external hosts from servers"
+    detection:
+      rule: detect_icmp_tunneling
+      patterns:
+        - 'NIDS: ICMP echo with data length of 788 bytes or more and sequence number in {1234, 1235, 1236} (Pingback signature)'
+        - 'per-host ICMP byte volume beyond 3 standard deviations of baseline, or echo payload entropy above 7.0'
+        - '(?i)(download|upload|exec|shell|rexec) tokens inside ICMP echo payload data'
+    severity: medium
+    mitigations:
+      - "Log and alert on ICMP at the perimeter (NetFlow/NIDS) -- Trustwave's core guidance is to monitor ICMP, not disable it"
+      - "Firewall rules limiting ICMP types and sizes outbound; block ICMP to non-essential external hosts"
+      - "EDR: flag processes opening raw ICMP sockets that are not diagnostic tools"
+    examples:
+      - summary: "Pingback (Trustwave SpiderLabs, 2021): a Windows backdoor using ICMP tunneling for covert C2 -- persistence via DLL hijack through msdtc, with commands smuggled in echo payloads keyed to sequence numbers 1234-1236."
+        reference: "https://levelblue.com/en-us/resources/blogs/spiderlabs-blog/backdoor-at-the-end-of-the-icmp-tunnel/"
+      - summary: "Corelight's detection analysis of the same Pingback campaign, detailing network-level detection methods for ICMP-payload command-and-control."
+        reference: "https://corelight.com/blog/pingback-icmp-tunneling-malware?hs_amp=true"
+    references:
+      - "https://levelblue.com/en-us/resources/blogs/spiderlabs-blog/backdoor-at-the-end-of-the-icmp-tunnel/"
+      - "https://corelight.com/blog/pingback-icmp-tunneling-malware?hs_amp=true"

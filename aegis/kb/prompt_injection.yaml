@@ -1,0 +1,637 @@
+pack: prompt_injection
+version: "1.0"
+techniques:
+  - id: AEG-T001
+    name: "Direct Prompt Injection Against the Agent"
+    category: prompt_injection
+    description: >-
+      Direct prompt injection is the simplest attack on an AI agent: the person
+      talking to the agent types instructions that override the agent's
+      system/developer instructions, policies, or refusal behavior. It works
+      because a language model has no hard boundary between "instructions to
+      follow" and "data to process" -- everything arrives as one token stream,
+      and statistical continuation favors the most recent, most forceful
+      directive. Against a tool-using agent this is dangerous: a successful
+      injection can redirect tool calls, leak context, or silence the agent's
+      own safety policies.
+    how_it_works: >-
+      The attacker probes the agent with escalating inputs and watches which
+      refusals hold. Named variants: naive override (explicitly telling the
+      agent to ignore or replace its prior instructions), instruction
+      completion (faking that the original task is finished, e.g. "Summarized:
+      X. Now do Y"), role reassignment (declaring the agent a new persona with
+      no constraints), and prefix injection (forcing the reply to begin with an
+      affirmative like "Sure,"). Defenders treat these as surface phrasings of
+      one mechanism: the user channel is being used to rewrite the agent's
+      operating instructions.
+    variants:
+      - "Naive override: explicit instructions to ignore, disregard, or replace previous instructions"
+      - "Instruction completion: fake task-completion markers that make the agent believe the original task ended"
+      - "Role reassignment: persona jailbreaks (e.g. DAN-style) that declare new unconstrained identities"
+      - "Prefix injection: forcing an affirmative opening that biases the model away from refusal"
+    indicators:
+      - "User input contains instruction verbs aimed at the agent's own policy (ignore, disregard, override, forget your instructions)"
+      - "A refusal in one turn flips to compliance in a later turn with no policy change in between"
+      - "Agent output echoes internal policy/system language it should never have revealed"
+      - "Tool calls whose arguments or targets do not follow from the user's stated task"
+    detection:
+      rule: detect_direct_injection
+      patterns:
+        - '(?i)\b(ignore|disregard|forget|override)\b.{0,60}\b(previous|prior|above|earlier|original|system)\s+(instructions?|prompts?|directives?|rules?)'
+        - '(?i)\b(do anything now|dan mode|jailbreak mode|developer mode)\b'
+        - '(?i)you are now (?!a helpful)[a-z ]{2,40}\b'
+        - '(?i)\b(system|developer)\s*[:=]\s*"?you (are|will|must)'
+    severity: high
+    mitigations:
+      - "Enforce an instruction hierarchy in code: system/developer instructions outrank user input, and tool-use policy is checked outside the model, never by asking the model"
+      - "Apply least privilege to agent tools: sensitive tools require explicit per-action approval; a hijacked prompt then cannot silently reach them"
+      - "Run an input guardrail classifier on each user turn before the agent acts, tuned for instruction-override phrasing"
+      - "Log full prompt chains and review sessions where refusals flipped to compliance"
+    examples:
+      - summary: "The HackAPrompt competition collected 600K+ adversarial prompts showing how easily direct injection and jailbreak phrasing defeat model guardrails, and Meta's CyberSecEval 2 measured 26-41% prompt-injection success across GPT-4, Mistral, Llama 3 and Code Llama."
+        reference: "https://www.stingrai.io/blog/prompt-injection-statistics-2026"
+      - summary: "A survey of prompt-injection channels and defenses documents the standard direct-injection patterns (goal hijacking, prompt leaking) and why per-message filters miss multi-message variants."
+        reference: "https://www.aicassindra.com/blogs/llm_security/llm_sec_prompt_injection_survey.html"
+    references:
+      - "https://www.stingrai.io/blog/prompt-injection-statistics-2026"
+      - "https://www.aicassindra.com/blogs/llm_security/llm_sec_prompt_injection_survey.html"
+      - "https://intel.mjolnirsecurity.com/prompt-injection"
+
+  - id: AEG-T002
+    name: "Indirect Prompt Injection via Tool Output"
+    category: prompt_injection
+    description: >-
+      In indirect prompt injection the attacker never talks to the agent. The
+      malicious instruction is planted in content the agent later retrieves
+      while doing someone else's job: an email body, a calendar invite, a web
+      page, a retrieved document. The agent reads it as data, treats it as an
+      instruction, and acts on the attacker's behalf. This is the dominant
+      real-world form of prompt injection against agents because it needs no
+      access to the agent at all -- only the ability to put text where the
+      agent will look.
+    how_it_works: >-
+      The attacker identifies a retrieval channel the target agent uses (email,
+      RAG corpus, calendar, chat history) and plants an instruction payload
+      there. When the victim asks the agent to summarize, search, or act on
+      that content, the payload enters the agent's context with no authority
+      marking. Named variants: retrieved-document injection, email/calendar
+      invite injection, and chat-history injection (a third party's messages in
+      a shared channel). The payload typically directs the agent to exfiltrate
+      private context or perform an attacker-chosen tool action.
+    variants:
+      - "Retrieved-document injection: payloads planted in files or RAG corpora the agent searches"
+      - "Email/calendar injection: instructions hidden in messages or invites the agent reads on the user's behalf"
+      - "Shared-channel injection: a third party's chat messages carrying instructions in a channel the agent monitors"
+      - "Zero-click injection: the victim never opens anything; the agent's own retrieval pulls the payload in (e.g. EchoLeak)"
+    indicators:
+      - "Instruction-like language (imperatives, 'IMPORTANT', policy claims) inside retrieved emails, docs, or pages"
+      - "Agent tool calls (send, share, fetch, execute) that are not entailed by the user's request"
+      - "Outbound network requests to domains absent from the user's task or allowlist"
+      - "An injection classifier (e.g. XPIA-style) firing on retrieved content"
+    detection:
+      rule: detect_indirect_tool_output_injection
+      patterns:
+        - '(?i)\b(ignore|disregard)\b.{0,60}\b(previous|prior|above)\s+(instructions?|prompts?)'
+        - '(?i)important.{0,20}(instruction|note|directive)s?\s+for\s+(the\s+)?(ai|assistant|llm|copilot|agent)'
+        - '(?i)\bsend\b.{0,50}\b(to|email|exfiltrate).{0,40}@'
+        - '(?i)do not (tell|mention|inform|reveal|disclose).{0,60}(user|anyone)'
+    severity: critical
+    mitigations:
+      - "Treat all retrieved/tool/third-party content as untrusted data: segregate it from instructions with explicit source labels and never let it set goals or tool arguments"
+      - "Enforce data-flow controls: private context may not flow to attacker-reachable sinks (external URLs, markdown image fetches, outbound tools) without approval"
+      - "Run injection detection on retrieved content before it enters the agent's context, and quarantine hits"
+      - "Scope agent data access (least privilege) so one poisoned document cannot reach the whole mailbox/drive"
+    examples:
+      - summary: "EchoLeak (CVE-2025-32711, CVSS 9.3), disclosed by Aim Security in June 2025, was a zero-click indirect injection against Microsoft 365 Copilot: a single crafted email caused Copilot to access internal files and exfiltrate them to an attacker server with no user interaction. Microsoft patched it server-side."
+        reference: "https://www.reco.ai/blog/echoleak-vulnerability"
+      - summary: "PromptArmor's August 2024 disclosure showed Slack AI could be hijacked by a malicious instruction in a public channel or uploaded document, causing it to surface data from private channels the attacker could not access, including API keys."
+        reference: "https://sh3llc0d3.com/blog/slack-ai-data-exfiltration-indirect-prompt-injection-piercing-private-channels/"
+    references:
+      - "https://arxiv.org/abs/2302.12173?context=cs.AI"
+      - "https://www.reco.ai/blog/echoleak-vulnerability"
+      - "https://sentra.io/blog/copilot-echoleak-prompt-injection"
+
+  - id: AEG-T003
+    name: "Instruction Smuggling in Documents and Webpages"
+    category: prompt_injection
+    description: >-
+      Instruction smuggling hides the payload so humans never see it but the
+      agent's parser does: HTML comments, white-on-white text, zero-width
+      Unicode, document metadata, alt text, or CSS-hidden blocks. It defeats
+      "a human reviewed this document" as a control, because the reviewed
+      rendering and the model's token stream differ. For agents that ingest
+      webpages, PDFs, and shared docs, this is a primary way indirect
+      injection survives visual inspection.
+    how_it_works: >-
+      The attacker crafts content with two renderings: benign for humans,
+      instructive for the model. Named variants: HTML-comment and metadata
+      smuggling (visible in source, invisible in render), visual smuggling
+      (white-on-white, tiny fonts, off-screen CSS), and Unicode smuggling
+      (zero-width joiners, bidirectional overrides, tag characters encoding
+      hidden text). The agent's text extractor flattens all of it into the
+      context window, where the hidden instruction competes with the user's
+      task.
+    variants:
+      - "HTML/metadata smuggling: instructions in comments, meta tags, or alt text the extractor keeps"
+      - "Visual smuggling: white-on-white, 1px fonts, or off-screen CSS text invisible to reviewers"
+      - "Unicode smuggling: zero-width characters, bidi overrides, and tag-block encodings carrying hidden payloads"
+      - "Config-file smuggling: hidden instructions inside trusted-looking docs like AI coding rules files"
+    indicators:
+      - "Non-printing Unicode (zero-width, bidi marks, tag blocks) in documents the agent ingests"
+      - "HTML comments or metadata containing imperative language"
+      - "Large gaps between visible text and extracted text length for the same document"
+      - "Agent behavior driven by content no human reviewer reported seeing"
+    detection:
+      rule: detect_hidden_content_smuggling
+      patterns:
+        - "[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]+"
+        - '(?i)<!--[\s\S]{0,200}?(ignore|instruct|important|system)[\s\S]{0,200}?-->'
+        - '(?i)\bcolor\s*:\s*(white|transparent|#fff(fff)?)\b.{0,40}\b(font-size\s*:\s*(0|1px))'
+        - '(?i)\b(display\s*:\s*none|visibility\s*:\s*hidden)\b'
+    severity: high
+    mitigations:
+      - "Normalize and strip hidden content before model ingestion: remove non-printing Unicode, HTML comments, and CSS-hidden text at the extraction layer"
+      - "Render-and-compare checks: flag documents whose extracted text materially exceeds their visible rendering"
+      - "Keep the AEG-T002 controls (source labeling, data-flow limits) so even surviving smuggled text cannot reach sensitive sinks"
+      - "Scan shared config/docs files for invisible Unicode as part of supply-chain review"
+    examples:
+      - summary: "Pillar Security's 'Rules File Backdoor' research (disclosed to Cursor and GitHub in early 2025) showed hidden Unicode characters in AI coding-assistant rule files silently instructing the agent to inject malicious code while telling it to hide the change from the user -- invisible in code review and pull requests."
+        reference: "https://www.pillar.security/blog/new-vulnerability-in-github-copilot-and-cursor-how-hackers-can-weaponize-code-agents"
+      - summary: "EchoLeak's payload evaded Microsoft's injection classifier and link-redaction defenses in part by hiding its instructions and exfiltration links inside content the user never visibly inspected."
+        reference: "https://sentra.io/blog/copilot-echoleak-prompt-injection"
+    references:
+      - "https://www.pillar.security/blog/new-vulnerability-in-github-copilot-and-cursor-how-hackers-can-weaponize-code-agents"
+      - "https://www.aicassindra.com/blogs/llm_security/mcp_prompt_injection_defense.html"
+
+  - id: AEG-T004
+    name: "Multi-Turn Conditioning (Slow Steering)"
+    category: prompt_injection
+    description: >-
+      Multi-turn conditioning steers the agent across many individually
+      innocent-looking turns, each one building on the model's own previous
+      answers until it complies with a goal it would have refused up front.
+      Per-message filters miss it because no single turn looks malicious; the
+      attack lives in the trajectory. This makes it the hardest injection
+      family to catch with input-only defenses and a serious threat to agents
+      with long-lived sessions and memory.
+    how_it_works: >-
+      The attacker opens with a benign, on-topic question, then escalates
+      gradually, referencing the model's own replies to normalize each next
+      step ("Great, now write an article about that"). Named variants:
+      Crescendo-style escalation (benign start, stepwise narrowing toward the
+      goal), foot-in-the-door compliance building (small concessions before the
+      real ask), and context-accumulation attacks (loading the window with
+      attacker-framed premises the model later treats as agreed fact). The
+      model's consistency bias -- wanting to agree with its own earlier
+      answers -- does the heavy lifting.
+    variants:
+      - "Crescendo escalation: benign opening question, gradual narrowing that quotes the model's own replies"
+      - "Foot-in-the-door: a chain of small harmless concessions before the real request"
+      - "Premise loading: filling context with attacker-framed 'facts' the model later treats as established"
+      - "Automated multi-turn: scripted attacker loops (e.g. Crescendomation) that backtrack on refusal"
+    indicators:
+      - "A session's topic drifts steadily from benign to sensitive with each turn referencing prior answers"
+      - "Refusals followed by rephrased retries that keep the same underlying goal"
+      - "The agent's own earlier (possibly manipulated) outputs quoted back as justification for new actions"
+      - "Long sessions where tool-call sensitivity rises turn over turn"
+    detection:
+      rule: detect_multi_turn_conditioning
+      patterns:
+        - '(?i)conversation_trajectory_risk: topic_sensitivity_delta > threshold across turns'
+        - '(?i)refusal_then_rephrase: refusal in turn N followed by semantically similar request in turn N+1'
+        - '(?i)\b(great|perfect|thanks).{0,30}\bnow\b.{0,60}\b(write|draft|generate|explain|help me)\b'
+        - 'self_quote_justification: agent output quoting its own earlier output as authority for a new action'
+    severity: high
+    mitigations:
+      - "Evaluate at the conversation level, not the message level: track goal drift and cumulative sensitivity across the session"
+      - "Pin the original user goal at session start; require re-confirmation when tool actions deviate from it"
+      - "Keep per-turn output classifiers on model responses (they catch the harmful output regardless of how the trajectory got there)"
+      - "Bound session length and memory writes for untrusted users; force fresh context for sensitive actions"
+    examples:
+      - summary: "Russinovich, Salem and Eldan's Crescendo attack (arXiv 2404.01833, USENIX Security 2025) jailbroke GPT-4, Gemini, Claude and Llama models with benign-looking multi-turn escalation, beating single-turn baselines; the automated Crescendomation variant shipped inside Microsoft's PyRIT red-teaming toolkit."
+        reference: "https://arxiv.org/html/2404.01833v3"
+      - summary: "Scale AI's Multi-Turn Human Jailbreaks study had professional red teamers reach over 70% attack success on HarmBench with multi-turn attacks against defenses that reported single-digit success for automated single-turn attacks."
+        reference: "https://www.aicassindra.com/blogs/llm_security/multi_turn_jailbreak.html"
+    references:
+      - "https://arxiv.org/html/2404.01833v3"
+      - "https://www.aicassindra.com/blogs/llm_security/multi_turn_jailbreak.html"
+
+  - id: AEG-T005
+    name: "Jailbreak Families Relevant to Agent Harnesses"
+    category: prompt_injection
+    description: >-
+      Jailbreaks target the model's safety training rather than the
+      application's instructions: they reshape the request so the model stops
+      refusing. Against agents this matters because the harness's refusals are
+      often the only thing standing between an attacker and tool use. The
+      families -- roleplay/persona, many-shot in-context, adversarial suffixes
+      -- keep working because safety training covers common phrasings but not
+      every framing the model is capable of understanding.
+    how_it_works: >-
+      The attacker wraps a refused request in a framing where the model has
+      learned to comply. Named variants: roleplay/persona jailbreaks (a
+      fictional identity presented as unconstrained, e.g. DAN-style prompts),
+      many-shot jailbreaks (long fabricated dialogues of assistant compliance
+      that shift in-context behavior), adversarial suffixes (optimized token
+      strings, e.g. GCG, that push the model toward affirmative starts), and
+      prefix/style injection (forcing an affirmative opening or a constrained
+      style that weakens refusal). Defenders classify by mechanism -- competing
+      objectives vs. mismatched generalization -- not by the ever-changing
+      surface text.
+    variants:
+      - "Roleplay/persona jailbreaks: fictional unconstrained identities (DAN-style) exploiting helpfulness-vs-safety tension"
+      - "Many-shot jailbreaks: dozens to hundreds of fabricated compliance dialogues in one long context"
+      - "Adversarial suffixes: gradient-optimized token strings (GCG family) that transfer across models"
+      - "Prefix/style injection: forcing an affirmative opening or an output style that suppresses refusal"
+    indicators:
+      - "Inputs containing long fictional dialogues or repeated fake assistant turns before the real request"
+      - "Gibberish-looking token suffixes appended to otherwise normal requests"
+      - "Requests to adopt named unconstrained personas or 'developer modes'"
+      - "Style constraints (e.g. 'use no long words') paired with sensitive requests"
+    detection:
+      rule: detect_agent_jailbreak
+      patterns:
+        - '(?i)\b(do anything now|stay in character|break character)\b'
+        - '(?i)\b(developer|jailbreak|god|evil)\s*mode\b'
+        - 'fabricated_dialogue: >3 alternating user/assistant turns inside a single user message'
+        - 'adversarial_suffix: long low-perplexity token run (>40 tokens) with high character entropy at message end'
+    severity: high
+    mitigations:
+      - "Put output classifiers on the agent's responses and tool calls: they catch the harmful outcome no matter which jailbreak family produced it"
+      - "Harden the model with adversarial safety training that includes many-shot and suffix examples"
+      - "Cap input length and treat giant pasted dialogues as suspicious context"
+      - "Never rely on the model's refusal as the sole guard for tool actions; enforce tool policy outside the model"
+    examples:
+      - summary: "Anthropic's April 2024 'Many-shot jailbreaking' research showed that stuffing up to 256 fabricated compliant dialogues into a long context reliably overrode safety training across Claude, GPT-4, Llama 2 and Mistral models."
+        reference: "https://www.anthropic.com/news/many-shot-jailbreaking"
+      - summary: "Zou et al.'s 'Universal and Transferable Adversarial Attacks on Aligned Language Models' (2023) demonstrated gradient-optimized (GCG) suffixes that jailbroke ChatGPT, Bard and Claude from open-source surrogates."
+        reference: "https://ar5iv.labs.arxiv.org/html/2307.15043"
+    references:
+      - "https://www.anthropic.com/news/many-shot-jailbreaking"
+      - "https://ar5iv.labs.arxiv.org/html/2307.15043"
+      - "https://arxiv.org/html/2402.15727v2"
+
+  - id: AEG-T006
+    name: "System-Prompt Extraction Attempts"
+    category: prompt_injection
+    description: >-
+      The agent's system/developer prompt often contains its real
+      instructions, tool descriptions, policy logic, and sometimes secrets
+      (endpoints, key formats, internal codenames). Extraction attacks try to
+      get the agent to reveal it, either by asking outright or by
+      reconstructing it from ordinary outputs. Once extracted, the prompt
+      lets attackers craft precise follow-on injections and reveals the
+      trust assumptions of the whole deployment.
+    how_it_works: >-
+      Named variants: direct extraction queries ("repeat your instructions",
+      "what are your rules"), adversarial steering (getting the model to echo
+      its context via crafted completions), output inversion (training an
+      inverter model on many ordinary outputs to recover the prompt --
+      output2prompt needs no logits and no adversarial queries), and
+      logit/probability inversion (recovering prompt tokens from output
+      distributions where APIs expose them). The stealthy families never ask
+      for the prompt at all, so input filters see only normal questions.
+    variants:
+      - "Direct extraction queries: asking the agent to repeat, summarize, or translate its instructions"
+      - "Adversarial steering: crafted completions that trick the model into echoing its own context"
+      - "Output inversion (output2prompt): recovering prompts from many ordinary outputs with an inverter model"
+      - "Logit/probability inversion: reconstructing prompt tokens from exposed next-token distributions"
+    indicators:
+      - "User requests referencing the agent's own instructions, rules, or system prompt"
+      - "High-volume benign-looking Q&A sessions from one client (inversion needs many outputs)"
+      - "Agent responses that begin reciting policy text or internal identifiers"
+      - "Output distributions or logprobs being harvested at unusual volume"
+    detection:
+      rule: detect_system_prompt_extraction
+      patterns:
+        - '(?i)\b(repeat|recite|print|show|reveal|translate)\b.{0,40}\b(your|the)\s+(system\s+)?(instructions?|prompt|rules|directives)\b'
+        - '(?i)\bwhat (were|are) you (told|instructed)\b'
+        - '(?i)ignore.{0,20}above.{0,20}instead.{0,20}(tell|show|output).{0,20}(system|initial)'
+        - 'volume_anomaly: one client collecting >N diverse benign outputs in a short window (inversion harvesting)'
+    severity: high
+    mitigations:
+      - "Design the system prompt as if it will leak: keep secrets, endpoints, and credentials out of it entirely"
+      - "Add extraction-specific refusal behavior and output filters that catch policy-text recitation"
+      - "Rate-limit and monitor bulk benign Q&A collection per client"
+      - "Prefer architecture over secrecy: put real enforcement in code (tool policy, allowlists), not in hidden prompt text"
+    examples:
+      - summary: "Zhang, Morris and Shmatikov's 'Extracting Prompts by Inverting LLM Outputs' (EMNLP 2024) showed output2prompt recovering system and user prompts from only ordinary text outputs, with zero-shot transfer across models -- no adversarial queries needed."
+        reference: "https://arxiv.org/pdf/2405.15012"
+      - summary: "The Tensor Trust online game collected 126,000+ human-written prompt-extraction and hijacking attacks, demonstrating how readily attackers iterate on extraction phrasing."
+        reference: "https://www.stingrai.io/blog/prompt-injection-statistics-2026"
+    references:
+      - "https://arxiv.org/pdf/2405.15012"
+      - "https://www.aicassindra.com/blogs/llm_security/prompt_stealing.html"
+      - "https://www.stingrai.io/blog/prompt-injection-statistics-2026"
+
+  - id: AEG-T007
+    name: "Delimiter Confusion (Forged Role Boundaries)"
+    category: prompt_injection
+    description: >-
+      Agents and harnesses mark prompt structure with delimiters -- role tags,
+      triple backticks, XML-ish blocks, "### System:" headers. Delimiter
+      confusion attacks forge or close those boundaries inside untrusted text
+      so the injected content is parsed (by the model, and sometimes by the
+      harness) as a higher-authority message. The model sees one flat token
+      stream, so any "this text is just data" convention written in plain text
+      can be imitated by the attacker.
+    how_it_works: >-
+      The attacker inserts fake boundary markers into user input or retrieved
+      content. Named variants: forged role tags (literal "<|system|>",
+      "[SYSTEM]", "### Assistant:" headers), delimiter closing (ending the
+      developer's fenced block with ``` then opening a new fake instruction
+      block), and fake completion plus re-open (ending the "user" section and
+      starting a new "system" section). The defense of stripping known
+      delimiters fails because the attack space is unbounded -- the model can
+      be made to honor novel boundary phrasings too.
+    variants:
+      - "Forged role tags: literal system/user/assistant markers injected into untrusted text"
+      - "Delimiter closing: terminating the harness's fenced or tagged data block, then issuing new instructions"
+      - "Fake section re-open: ending the user section and opening a counterfeit system/developer section"
+      - "Novel boundary phrasings: invented separators the model still honors as authority shifts"
+    indicators:
+      - "Untrusted input containing role tags, chat-template tokens, or section headers"
+      - "Closing fences (```) followed by new instructional text in user or retrieved content"
+      - "The agent acting on 'system' content that arrived through the user or tool channel"
+      - "Provenance mismatches: high-authority claims originating from low-authority channels"
+    detection:
+      rule: detect_delimiter_confusion
+      patterns:
+        - '(?i)(<\|?\s*(system|developer|assistant|user)\s*\|?>|\[\s*(system|developer)\s*\]|###\s*(system|developer)\s*:)'
+        - '(?i)```[\s\S]{0,200}?```[\s\S]{0,300}?(now|you must|ignore)'
+        - '(?i)\b(end|close)\s+(of\s+)?(user|data|context)\s+(input|section|block)\b'
+        - 'authority_claim_from_low_channel: instruction verbs in user/tool text wrapped in system-style headers'
+    severity: high
+    mitigations:
+      - "Use real channel separation (structured API roles), not textual delimiters, to mark authority -- and validate that untrusted text never populates privileged roles"
+      - "Escape or reject role-like tokens in untrusted content before prompt assembly"
+      - "Track provenance per span: any instruction-shaped text from user/tool channels is data, never an instruction"
+      - "Test the harness with delimiter-forgery red-team cases, not just naive injection strings"
+    examples:
+      - summary: "Simon Willison demonstrated that delimiter-based defenses ('wrap untrusted input in triple backticks') are trivially defeated -- attackers simply emit the delimiters themselves or use alternative completion patterns that need no delimiters at all."
+        reference: "https://simonwillison.net/2023/May/11/delimiters-wont-save-you"
+      - summary: "The LLM prompt-injection survey documents delimiter and context-ignoring techniques as a core, persistent attack class that survives naive input sanitization."
+        reference: "https://www.aicassindra.com/blogs/llm_security/llm_sec_prompt_injection_survey.html"
+    references:
+      - "https://simonwillison.net/2023/May/11/delimiters-wont-save-you"
+      - "https://www.aicassindra.com/blogs/llm_security/llm_sec_prompt_injection_survey.html"
+
+  - id: AEG-T008
+    name: "Encoded and Obfuscated Instructions"
+    category: prompt_injection
+    description: >-
+      Keyword and phrase filters are blind to instructions they cannot read,
+      but the model can: base64 blobs, homoglyph substitutions, leetspeak,
+      spaced-out tokens, ciphers, ASCII art, and non-English phrasing all
+      decode in the model's head while sailing past text matching. Obfuscation
+      is therefore the standard wrapper around every other injection
+      technique in this pack -- it is how payloads survive the input filters
+      that naive attacks trip.
+    how_it_works: >-
+      The attacker encodes the payload so its surface form carries no
+      suspicious keywords, relying on the model's ability to decode. Named
+      variants: encoding wrappers (base64, hex, URL-encoding with an explicit
+      or implicit "decode this" framing), visual/token obfuscation (homoglyphs,
+      zero-width splits, spaced letters, ASCII art), linguistic obfuscation
+      (low-resource languages, ciphers, synonyms that dodge safety training),
+      and multi-layer nesting (an encoded payload inside an already-obfuscated
+      one). Detection must decode-then-scan, recursively, on every channel.
+    variants:
+      - "Encoding wrappers: base64/hex/URL-encoded payloads with decode framing"
+      - "Visual/token obfuscation: homoglyphs, spaced text, zero-width splits, ASCII-art instructions"
+      - "Linguistic obfuscation: low-resource languages, ciphers, and paraphrases outside safety-training coverage"
+      - "Nested obfuscation: encoded payloads wrapped inside further obfuscation layers"
+    indicators:
+      - "Long high-entropy blobs (base64-shaped) in user or retrieved content near decode instructions"
+      - "Unusual Unicode: homoglyphs, mixed scripts, or bidi marks in instruction-adjacent text"
+      - "Requests to decode/decrypt/translate immediately followed by model compliance shifts"
+      - "Non-English or ciphered text in contexts where the task is English-only"
+    detection:
+      rule: detect_encoded_instruction
+      patterns:
+        - '\b[A-Za-z0-9+/]{80,}={0,2}\b'
+        - '(?i)\b(decode|decrypt|deobfuscate|translate)\b.{0,40}\b(base64|hex|cipher|rot13|unicode)\b'
+        - 'mixed_script_anomaly: cyrillic/greek homoglyphs inside latin instruction words'
+        - 'recursive_decode_scan: decode candidate blobs and re-run injection patterns on the plaintext'
+    severity: high
+    mitigations:
+      - "Decode-then-scan every channel: normalize encodings, homoglyphs, and scripts before any injection filter runs"
+      - "Refuse or quarantine decode-then-act flows where the decoded content would authorize sensitive actions"
+      - "Train/extend safety coverage to multilingual and obfuscated phrasings, not just plain English"
+      - "Keep output classifiers as the backstop -- they judge the final behavior, not the input's disguise"
+    examples:
+      - summary: "Wei et al.'s jailbreak failure-mode analysis documented obfuscation families -- including base64 encoding and multilingual translation -- as systematic ways to slip past safety training via mismatched generalization."
+        reference: "https://arxiv.org/html/2402.15727v2"
+      - summary: "Defensive surveys of prompt-injection techniques list encoding and unicode obfuscation among the standard evasion wrappers attackers layer over injection payloads."
+        reference: "https://www.aicassindra.com/blogs/llm_security/llm_sec_prompt_injection_survey.html"
+    references:
+      - "https://arxiv.org/html/2402.15727v2"
+      - "https://www.aicassindra.com/blogs/llm_security/llm_sec_prompt_injection_survey.html"
+
+  - id: AEG-T009
+    name: "Third-Party Content Injection (Issues, PRs, Shared Files)"
+    category: prompt_injection
+    description: >-
+      Agents routinely read content strangers can write: GitHub issues and
+      pull requests, support tickets, public docs, shared folders. Any of
+      these is a delivery vehicle for instructions the agent will read while
+      serving its owner. The victim's own legitimate request -- "summarize
+      this repo's open issues" -- becomes the attack's trigger, and the
+      attacker needs no access to the victim's systems, only a public
+      write slot the agent later reads.
+    how_it_works: >-
+      The attacker posts instruction-bearing content in a place the target
+      agent is known to read. Named variants: issue/PR injection (malicious
+      instructions in a repo's issues, read by the owner's coding agent),
+      ticket/CRM injection (payloads in support tickets processed by service
+      agents), and shared-document injection (a collaborator's doc carrying
+      instructions for anyone whose agent summarizes it). The payload usually
+      directs the agent to pull private data (other repos, files, messages)
+      and send it somewhere the attacker can read, such as a new public PR.
+    variants:
+      - "Issue/PR injection: instructions hidden in GitHub issues or pull requests read by coding agents"
+      - "Ticket/CRM injection: payloads in support tickets or customer messages processed by service agents"
+      - "Shared-document injection: collaborator docs carrying instructions for summarizer agents"
+      - "Review-comment injection: instructions in code-review threads the agent processes"
+    indicators:
+      - "Instruction-like text in issues, tickets, or comments the agent ingests"
+      - "Agent accessing private resources (other repos, DMs, files) right after reading third-party content"
+      - "Agent creating public artifacts (PRs, comments, posts) containing private-looking data"
+      - "Content from low-trust authors driving high-privilege agent actions"
+    detection:
+      rule: detect_third_party_content_injection
+      patterns:
+        - '(?i)\b(ignore|disregard)\b.{0,60}\b(previous|prior)\s+(instructions?|prompts?)'
+        - '(?i)<\s*important\b[^>]*>'
+        - '(?i)\b(exfiltrate|leak|send|copy).{0,40}\b(private|secret|confidential|internal)\b'
+        - 'cross_boundary_read: private-repo/file access within N tool calls of reading third-party content'
+    severity: critical
+    mitigations:
+      - "Label third-party content by author trust and never let low-trust content authorize access to private resources"
+      - "Require explicit user confirmation before the agent publishes anything derived from third-party content"
+      - "Run injection scanning on ingested issues/PRs/tickets before they enter agent context"
+      - "Scope coding agents to the repo they were asked about; block lateral reads of the owner's other private repos"
+    examples:
+      - summary: "Invariant Labs demonstrated an indirect injection against the GitHub MCP server: a malicious issue on a public repo instructed the victim's agent to pull data from the owner's private repositories and open a public pull request containing it."
+        reference: "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+      - summary: "Greshake et al. demonstrated indirect injection against real LLM-integrated applications by placing payloads in publicly indexed web pages that Bing's GPT-4 chat retrieved in response to ordinary user queries."
+        reference: "https://www.nextkicklabs.com/p/prompt-injection-agent-attack-surface"
+    references:
+      - "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+      - "https://arxiv.org/abs/2302.12173?context=cs.AI"
+      - "https://www.nextkicklabs.com/p/prompt-injection-agent-attack-surface"
+
+  - id: AEG-T010
+    name: "Prompt-Injection-Driven Tool Misuse"
+    category: prompt_injection
+    description: >-
+      This is where injection turns into impact: the payload's goal is not a
+      bad answer but a bad action -- the agent invoking its own legitimate
+      tools with attacker-chosen arguments. Send the email, delete the file,
+      run the command, approve the payment. The tool cannot tell the
+      difference between the user's intent and the injected instruction; only
+      the harness's authorization layer can, which is why tool misuse is the
+      technique every injection defense is ultimately trying to prevent.
+    how_it_works: >-
+      The injected instruction names a tool and its arguments in the agent's
+      own vocabulary. Named variants: confused-deputy invocation (the agent
+      uses its legitimate authority for the attacker's goal), argument
+      tampering (the user's task is real but recipients, amounts, paths, or
+      queries are swapped), and chained abuse (one injected call's output
+      feeds the next, e.g. read secrets then send them). Benchmarks show
+      agents comply at alarming rates even with plain, unobfuscated payloads.
+    variants:
+      - "Confused-deputy invocation: agent exercises its own legitimate tools for the attacker's goal"
+      - "Argument tampering: real user task, attacker-swapped recipients, amounts, paths, or query terms"
+      - "Chained abuse: injected read-then-send or search-then-publish tool chains"
+      - "Privilege-ladder misuse: low-risk tool outputs used to justify high-risk tool calls"
+    indicators:
+      - "Tool calls whose targets/arguments do not follow from the user's request"
+      - "High-impact tools (send, delete, execute, pay) invoked without a recent explicit user instruction"
+      - "Tool arguments containing data that arrived from untrusted channels"
+      - "Unusual tool-call sequences (read secrets, then network send) in one session"
+    detection:
+      rule: detect_injection_tool_misuse
+      patterns:
+        - 'sensitive_tool_without_user_intent: send/delete/execute/pay with no matching user instruction in context'
+        - '(?i)\b(send|forward|share|publish).{0,40}\b(email|message|file|document)\b.{0,40}\b(to|with)\b'
+        - 'argument_provenance_violation: tool argument sourced from untrusted channel text'
+        - 'read_then_exfil_chain: credential/file read followed by outbound send within one task'
+    severity: critical
+    mitigations:
+      - "Enforce per-action authorization in code for high-impact tools -- human confirmation that cannot be granted by model output or injected text"
+      - "Bind tool arguments to user intent: arguments derived from untrusted content need explicit re-confirmation"
+      - "Apply least privilege per task: the agent only sees the tools the current task needs"
+      - "Alert on anomalous tool chains (read-then-send, search-then-publish) even when each call looks benign alone"
+    examples:
+      - summary: "The InjecAgent benchmark (1,054 test cases, 30 agents) found ReAct-prompted GPT-4 vulnerable to indirect-injection-driven tool misuse 24% of the time, nearly doubling when payloads added explicit instruction-override framing -- covering both direct harm and private-data exfiltration goals."
+        reference: "https://arxiv.org/pdf/2403.02691"
+      - summary: "AgentDojo's 629 security test cases showed tool-output data hijacking agents into attacker-chosen tasks, including injections that merely altered a single tool call's outcome (e.g. which hotel gets recommended) without full behavior hijack."
+        reference: "https://arxiv.org/html/2406.13352"
+    references:
+      - "https://arxiv.org/pdf/2403.02691"
+      - "https://arxiv.org/html/2406.13352"
+      - "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+
+  - id: AEG-T011
+    name: "Human-in-the-Loop Bypass Phrasing"
+    category: prompt_injection
+    description: >-
+      Agents that ask for confirmation before risky actions are only as strong
+      as the confirmation logic. Bypass phrasing fabricates the approval the
+      agent is waiting for: "the user already approved this," "per company
+      policy no confirmation is needed," "this was authorized in the previous
+      session." If the approval check is conversational -- the model deciding
+      whether it has permission -- injected text can simply grant it.
+    how_it_works: >-
+      The payload asserts a prior or standing authorization the agent cannot
+      verify from the conversation alone. Named variants: fabricated prior
+      approval ("you already said yes earlier"), policy impersonation
+      ("company policy requires skipping confirmation for urgent tasks"),
+      authority borrowing ("the admin approved this workflow"), and
+      confirmation-shape mimicry (fake "Confirmed -- proceed" blocks styled
+      like the harness's own UI). The fix is architectural: approvals must be
+      events from a trusted channel, never inferences from text.
+    variants:
+      - "Fabricated prior approval: claims the user already authorized the action earlier"
+      - "Policy impersonation: invented policies that waive confirmation requirements"
+      - "Authority borrowing: invoking admins, security teams, or 'the system' as the approver"
+      - "Confirmation-shape mimicry: fake approval blocks styled like the harness's own UI"
+    indicators:
+      - "Approval claims appearing in user input, tool output, or retrieved content rather than the approval channel"
+      - "Phrases like 'already approved', 'no need to ask', 'per policy' near sensitive tool calls"
+      - "Sensitive actions proceeding with no recorded human confirmation event"
+      - "Policy citations the harness cannot resolve to a real policy document"
+    detection:
+      rule: detect_hitl_bypass_phrasing
+      patterns:
+        - '(?i)(the )?user (already |has )?(approved|authorized|confirmed|said yes|gave (the )?go-ahead)'
+        - '(?i)\b(no need to|skip|bypass|waive).{0,20}(ask|confirm|approval|verification)\b'
+        - '(?i)\b(per|according to)\s+(company|corporate|security)\s+policy\b.{0,60}\b(no|without|skip)\b'
+        - 'approval_without_event: sensitive tool executed with no human-approval event in the audit log'
+    severity: high
+    mitigations:
+      - "Make approvals mechanical, not conversational: a real UI/API confirmation event, enforced in code before the tool executes -- model text can never grant permission"
+      - "Log every approval as an auditable event with identity, timestamp, and scope; alert on sensitive actions lacking one"
+      - "Treat policy citations from untrusted channels as untrusted; resolve policies only from the harness's own config"
+      - "Default-deny: any ambiguity about authorization blocks the action and re-prompts the human"
+    examples:
+      - summary: "MCP prompt-injection defense analyses specifically call out fake-approval and approval-bypass flows as a runtime channel: elicitation forms and tool text that fish for or fabricate authorization must be denied unless the channel itself is trusted."
+        reference: "https://www.aicassindra.com/blogs/llm_security/mcp_prompt_injection_defense.html"
+      - summary: "Coverage of the EchoLeak and Slack AI incidents stresses that conversational authorization is the weak point: once the model is steered, its own 'judgment' about permission is already compromised, so enforcement must live outside the model."
+        reference: "https://venturebeat.com/security/prompt-injection-is-exploiting-enterprise-ais-biggest-design-flaws-by-targeting-agents-rag-pipelines-and-model-routers"
+    references:
+      - "https://www.aicassindra.com/blogs/llm_security/mcp_prompt_injection_defense.html"
+      - "https://venturebeat.com/security/prompt-injection-is-exploiting-enterprise-ais-biggest-design-flaws-by-targeting-agents-rag-pipelines-and-model-routers"
+
+  - id: AEG-T012
+    name: "Self-Replication and Worm-Like Prompts"
+    category: prompt_injection
+    description: >-
+      A self-replicating prompt instructs the agent to copy the instruction
+      into its own outputs, so every reply, email draft, committed file, or
+      stored document becomes a new carrier. The attack spreads through the
+      application's own normal flows -- RAG stores, email threads, shared
+      docs -- with no further attacker involvement. One poisoned message can
+      then reach every downstream agent that reads the infected outputs.
+    how_it_works: >-
+      The payload has two parts: a replication directive ("include these
+      instructions in your response") and a malicious goal (exfiltrate,
+      misdirect). Named variants: RAG-based propagation (the prompt is
+      stored, later retrieved as context, copied into the reply, delivered
+      onward), application-flow steering (the output steers what the app does
+      next, carrying the worm along its own workflow), and multi-agent
+      propagation (one agent's output is another agent's input). Retrieval is
+      the amplifier: a dormant message reactivates every time it is retrieved.
+    variants:
+      - "RAG-based propagation: stored payload re retrieved into later contexts and copied onward"
+      - "Application-flow steering: the worm rides the app's own send/store/publish workflow"
+      - "Multi-agent propagation: agent-to-agent handoffs carrying the replication directive"
+      - "Delayed-trigger replication: payload activates only on a later condition, separating planting from spread"
+    indicators:
+      - "Agent outputs containing instruction text that mirrors recently ingested inputs verbatim"
+      - "The same distinctive phrasing appearing across unrelated sessions, users, or agents"
+      - "RAG documents whose content changes toward instruction-bearing text over time"
+      - "Exponential growth in retrieval hits for a single suspicious document"
+    detection:
+      rule: detect_self_replicating_prompt
+      patterns:
+        - '(?i)\b(copy|replicate|include|embed|propagate)\b.{0,40}\b(this|these)\s+(instructions?|prompt|directives?)\b.{0,40}\b(your|all|every)\s+(response|output|repl(y|ies)|message)'
+        - '(?i)\bpass\s+(this|these|it)\s+(on|along|forward)\b.{0,40}\binstructions?\b'
+        - 'verbatim_carryover: output span matching an ingested instruction span above similarity threshold'
+        - 'cross_session_phrase_cluster: identical rare instruction phrase across >=N sessions/users'
+    severity: high
+    mitigations:
+      - "Break the replication loop: strip instruction-shaped content from anything the agent writes to shared stores (RAG, docs, outbound mail)"
+      - "Never let model output flow unreviewed into inputs other agents will read; quarantine agent-written shared content"
+      - "Deploy propagation-aware guardrails that detect input-to-output instruction carryover (the 'Virtual Donkey' concept)"
+      - "Monitor for phrase clustering across sessions as an early worm signal, and revoke/rollback poisoned RAG entries"
+    examples:
+      - summary: "Cohen, Bitton and Nassi's 'Morris II' (2024) built adversarial self-replicating prompts that spread through GenAI email assistants via RAG: the poisoned email was stored, retrieved into reply contexts, and each reply both carried the worm onward and leaked other emails' confidential data. Named after the 1988 Morris worm."
+        reference: "https://arxiv.org/html/2403.02817v2"
+      - summary: "OpenAI's GPT-Red automated red-teaming (2025) found self-replicating prompt injections in agent environments with email, files and Slack: one reported chain had an agent send internal currency and then repost the injected message, spreading it further."
+        reference: "https://www.techceodaily.com/cybersecurity/openai-self-replicating-prompt-injection-worm"
+    references:
+      - "https://arxiv.org/html/2403.02817v2"
+      - "https://www.aicassindra.com/blogs/llm_security/llm_sec_ai_worm.html"
+      - "https://www.techceodaily.com/cybersecurity/openai-self-replicating-prompt-injection-worm"

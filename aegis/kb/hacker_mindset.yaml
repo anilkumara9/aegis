@@ -1,0 +1,567 @@
+pack: hacker_mindset
+version: "1.0"
+techniques:
+  - id: AEG-T203
+    name: "Target Selection: Opportunistic vs Targeted"
+    category: hacker_mindset
+    description: >-
+      You defend against two different hunters. The opportunist scans the whole
+      internet for whatever is open — an unpatched VPN, exposed RDP, an old
+      Struts server — and takes whatever falls over. The targeted operator picks
+      YOU specifically: they study your org chart, your vendors, your tech stack,
+      and they keep coming back for years. Your posture must account for both:
+      cheap universal hygiene starves the opportunist, and knowing your own
+      attractiveness (sector, data, suppliers, geopolitics) prepares you for the
+      targeted one.
+    how_it_works: >-
+      Attackers select targets through two distinct modes, and they switch modes
+      freely. OPPORTUNISTIC SELECTION: automated internet-wide scanning finds
+      victims by vulnerability, not by name — Mandiant M-Trends 2025 found
+      exploits were the top initial vector (33%) and stolen credentials second
+      (16%); WannaCry hit 300,000+ machines in 150 countries in May 2017 because
+      unpatched SMB was the selector, not any victim list. TARGETED SELECTION:
+      the attacker names the victim first and then invests — the SolarWinds
+      campaign compromised the Orion build pipeline to ship a signed backdoor to
+      ~18,000 customers, from which roughly a hundred (US federal agencies and
+      others) were hand-picked for deeper intrusion. HYBRID SELECTION: initial
+      access brokers sell opportunistically gained access that targeted operators
+      then buy and develop. Your job: assess which profile fits your organization
+      and price your defenses accordingly.
+    variants:
+      - "Opportunistic scanning and mass exploitation (victims chosen by exposure)"
+      - "Targeted campaign selection (espionage, ransomware, pre-positioning)"
+      - "Hybrid: initial-access brokers selling opportunist access to targeted buyers"
+    indicators:
+      - "No documented assessment of the organization's targeting profile (sector, data value, geopolitical relevance), or it is older than a year"
+      - "External attack-surface inventory (internet-facing IPs, domains, vendor portals) is missing or has not been refreshed within 30 days"
+      - "Threat intelligence names the organization's sector or region as actively targeted, but no corresponding control review was triggered"
+      - "Third-party or supplier network access was granted without asking how an attacker would view that supplier as a stepping stone (Verizon DBIR 2025: third-party involvement in breaches doubled to 30%)"
+    detection:
+      rule: detect_targeting_exposure_gap
+      patterns:
+        - '(?i)(attack[- ]?surface|asset)\s+inventory\s+(missing|stale|outdated|never)'
+        - '(?i)(threat[- ]?profile|targeting\s+assessment)\s+(missing|none|outdated)'
+        - '(?i)(vendor|supplier|third[- ]party)\s+access\s+(review|recertification)\s+(overdue|missing|none)'
+    severity: medium
+    mitigations:
+      - "Maintain a continuously refreshed external attack-surface inventory plus a short targeting-profile document naming the 2-3 threat-actor classes most likely to select you and why"
+      - "Harden the universal opportunist paths first: patch internet-facing edge devices on a KEV-driven SLA, enforce phishing-resistant MFA everywhere, retire unneeded exposed services"
+      - "Subscribe to sector-specific threat intelligence (CISA alerts, vendor reports) and trigger a control review each time your sector is named in a major report"
+      - "Treat vendor and supplier connections as part of your own attack surface; re-certify every third-party connection quarterly with the question 'what does this look like to an attacker who compromised them first?'"
+    examples:
+      - summary: "WannaCry (May 2017): purely opportunistic selection — the EternalBlue SMB worm encrypted 300,000+ computers across 150 countries; victims were chosen by unpatched exposure, not by name."
+        reference: "https://en.wikipedia.org/wiki/WannaCry_ransomware_attack"
+      - summary: "SolarWinds/SUNBURST (disclosed December 2020): purely targeted selection — attackers compromised the Orion build pipeline, shipped a signed backdoor to ~18,000 customers, then hand-selected roughly a hundred high-value targets for deeper intrusion."
+        reference: "https://www.cisecurity.org/solarwinds"
+    references:
+      - "https://www.Verizon.com/about/news/2025-data-breach-investigations-report-apac"
+      - "https://www.scworld.com/brief/exploits-still-top-entry-point-says-mandiant-report"
+
+  - id: AEG-T204
+    name: "Path-of-Least-Resistance Reasoning"
+    category: hacker_mindset
+    description: >-
+      Attackers are lazy by design. They do not defeat your strongest control;
+      they walk around it through your weakest one — the vendor portal, the
+      legacy VPN, the misconfigured WAF, the help desk. Aegis rule: when you
+      review a system, do not start at the crown jewels; start at the cheapest
+      door and ask whether it opens into the castle. Defenders who harden the
+      cheap paths first make every remaining path expensive, and expensive paths
+      are paths most attackers abandon.
+    how_it_works: >-
+      Path-of-least-resistance reasoning has three named variants defenders must
+      model. VENDOR/DEPENDENCY PATHS: attackers enter through a trusted third
+      party — Target (2013) was breached via stolen credentials from HVAC
+      contractor Fazio Mechanical Services, whose billing-portal access was never
+      cordoned off from payment systems. LEGACY/CONVENIENCE PATHS: attackers reuse
+      the account nobody remembers — Colonial Pipeline (May 2021) fell to a
+      single compromised password on a disused legacy VPN account with no
+      multi-factor authentication. CONFIGURATION PATHS: attackers walk through
+      the setting that was 'fine in dev' — Capital One (2019) was breached when
+      an SSRF against a misconfigured WAF reached the cloud metadata service and
+      returned credentials for an over-privileged IAM role. In each case the
+      front door was strong; the side door was unguarded.
+    variants:
+      - "Vendor and dependency paths (trusted third parties as the entry point)"
+      - "Legacy and convenience paths (stale accounts, legacy VPN, default configs)"
+      - "Configuration paths (misconfigured WAFs, open storage, over-scoped IAM roles)"
+    indicators:
+      - "Vendor, contractor, or MSP accounts hold standing network access that has not been re-scoped or re-certified in over 90 days"
+      - "Legacy or single-factor remote-access paths (VPN, RDP, vendor portals) remain enabled with no documented business need"
+      - "Cloud IAM roles or service accounts hold permissions far beyond their function (e.g., a WAF role able to read data stores)"
+      - "Security reviews cover the 'main' application while integrations, admin panels, staging environments, and legacy systems sit out of scope"
+    detection:
+      rule: detect_cheap_path_exposure
+      patterns:
+        - '(?i)(legacy|stale|dormant|disused)\s+(vpn|account|service|portal)\s+.*(enabled|active)'
+        - '(?i)\b(no|without|missing|lacking)\s+(mfa|multi[- ]factor|2fa)\b'
+        - '(?i)(vendor|contractor|third[- ]party)\s+access\s+.*(unreviewed|standing|permanent|never\s+expires)'
+        - '(?i)path\s+of\s+least\s+resistance'
+    severity: medium
+    mitigations:
+      - "Inventory and continuously re-certify every remote-access path: kill dormant accounts, put phishing-resistant MFA on everything that remains, and segment vendor access so a billing login can never reach payment or production systems"
+      - "Apply least privilege ruthlessly to cloud roles and service accounts — a WAF or monitoring role must never hold data-plane permissions it does not need"
+      - "Run 'cheapest door' reviews: for each critical asset, list the five cheapest ways an attacker could reach it, and harden those before funding exotic controls"
+      - "Track CISA KEV-listed vulnerabilities in internet-facing edge devices and patch inside the catalog's due dates — the KEV list is the opportunist's price sheet"
+    examples:
+      - summary: "Target (2013): attackers phished HVAC vendor Fazio Mechanical Services, stole its vendor-portal credentials, moved through an unsegmented network, and deployed POS malware that harvested ~40 million payment cards."
+        reference: "https://www.darkreading.com/cyberattacks-data-breaches/target-breach-phishing-attack-implicated"
+      - summary: "Colonial Pipeline (May 2021): a DarkSide affiliate entered through one compromised password on a disused legacy VPN account without MFA, exfiltrated ~100 GB, and forced a six-day shutdown of the largest US fuel pipeline."
+        reference: "https://www.darkreading.com/cyber-risk/colonial-pipeline-cyberattack-proves-a-single-password-isn-t-enough"
+    references:
+      - "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
+      - "https://www.cisa.gov/stopransomware/ransomware-guide"
+
+  - id: AEG-T205
+    name: "Attacker OODA Loops and Loop Disruption"
+    category: hacker_mindset
+    description: >-
+      Every attacker runs a decision loop: Observe, Orient, Decide, Act. The
+      defender's goal is to live inside the attacker's loop — to change the
+      environment faster than the attacker can adapt. When you patch Log4Shell
+      in hours while the attacker is still weaponizing it, you win the loop.
+      When the attacker dwells in your network for five years undetected, they
+      win it — speed of observation and speed of re-orientation are your weapons.
+    how_it_works: >-
+      John Boyd's OODA loop maps directly onto intrusions. OBSERVE: the attacker
+      scans, phishes, and reads your telemetry gaps; your logs and alerts are
+      your own observation. ORIENT: both sides update their mental model — the
+      attacker orients on your defenses, you orient on their TTPs. DECIDE/ACT:
+      the attacker pivots; you contain. Two named variants matter. SPEED
+      ASYMMETRY: mass exploitation compresses the loop — Log4Shell
+      (CVE-2021-44228) went from disclosure to worldwide exploitation in hours,
+      and defenders who needed weeks lost. DWELL ASYMMETRY: patient actors
+      stretch the loop — CISA advisory AA24-038A documents Volt Typhoon
+      maintaining footholds in US critical-infrastructure networks for at least
+      five years by keeping their loop slow and quiet. Disrupt the loop at any
+      phase: deny observation (shrink attack surface, detect recon), corrupt
+      orientation (deception, canaries), and shorten your own decide-act cycle
+      with pre-authorized containment playbooks.
+    variants:
+      - "Speed asymmetry: mass-exploitation loops measured in hours"
+      - "Dwell asymmetry: patient-actor loops measured in years"
+      - "Loop disruption: deny observation, corrupt orientation, outpace decide-act"
+    indicators:
+      - "Mean time to detect (MTTD) and mean time to respond (MTTR) are not measured, or exceed the dwell times reported for threat actors targeting your sector"
+      - "Containment actions (isolate host, revoke session, rotate keys) require manual multi-person approval with no pre-authorized playbook"
+      - "Reconnaissance signals (port scans, credential-stuffing spikes, subdomain enumeration) are logged but carry no alerting threshold"
+      - "Incident lessons are not converted into detection rules within days of a drill or real event — the orient phase is broken"
+    detection:
+      rule: detect_decision_loop_lag
+      patterns:
+        - '(?i)(mttd|mean\s+time\s+to\s+detect|mttr|mean\s+time\s+to\s+respond)\s*[:=]?\s*(unknown|not\s+measured|n/?a)'
+        - '(?i)recon\w*\s+(logged|recorded|observed)\s+but\s+(no|without)\s+alert'
+        - '(?i)containment\s+(requires|needs)\s+.*(approval|ticket|change\s+board)\s+.*(no|without)\s+pre[- ]?authoriz'
+    severity: medium
+    mitigations:
+      - "Pre-authorize containment playbooks (host isolation, credential revocation, key rotation) so the decide-act phase takes minutes, not meetings"
+      - "Instrument the observe phase: alert on reconnaissance patterns (scanning, enumeration, credential stuffing) so you detect the attacker's OODA loop before exploitation"
+      - "Run purple-team exercises that measure your loop against real attacker timelines; compress MTTD/MTTR until you sit inside the attacker's expected dwell time"
+      - "Deploy deception (canary tokens, honeypots, fake credentials) to corrupt attacker orientation — every false path they follow buys you observation time"
+    examples:
+      - summary: "Log4Shell (December 2021): CVE-2021-44228 in Apache Log4j went from public disclosure to mass internet-wide exploitation within hours and entered CISA's KEV catalog — rewarding defenders whose patch loops ran in hours rather than weeks."
+        reference: "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
+      - summary: "Volt Typhoon: the joint CISA/NSA/FBI advisory AA24-038A documents the PRC state-sponsored group maintaining footholds in US critical-infrastructure IT networks for at least five years — a masterclass in dwell asymmetry."
+        reference: "https://stateofsurveillance.org/articles/government/volt-typhoon-2026-tracker/"
+    references:
+      - "https://www.lockheedmartin.com/en-us/capabilities/cyber/cyber-kill-chain.html"
+      - "https://attack.mitre.org/"
+
+  - id: AEG-T206
+    name: "Assumption Challenging"
+    category: hacker_mindset
+    description: >-
+      Attackers get in by questioning the sentence you never questioned. 'The
+      metadata service is only reachable from inside.' 'The WAF role cannot read
+      data.' 'Nobody would attack our file-transfer appliance.' Every breach
+      report is an obituary for an untested assumption. Your discipline: write
+      down what your design assumes, then attack each assumption as if you were
+      paid to break it. If an assumption is load-bearing, it must be monitored,
+      not merely believed.
+    how_it_works: >-
+      Assumption-challenging attacks three named variants of defender belief.
+      TRUSTED-BOUNDARY ASSUMPTIONS: defenders assume some component is inherently
+      trustworthy — Cl0p assumed nothing and exploited a zero-day SQL injection
+      (CVE-2023-34362) in Progress Software's MOVEit Transfer, a 'trusted'
+      managed file-transfer appliance, compromising thousands of organizations
+      (CISA/FBI joint advisory AA23-158A). INTERNAL-ONLY ASSUMPTIONS: defenders
+      assume internal services stay internal — Capital One's 2019 breach used
+      SSRF against a misconfigured WAF to reach the AWS instance metadata
+      service and extract credentials for the over-privileged ISRM-WAF-Role.
+      SCOPE ASSUMPTIONS: defenders assume a role's permissions match its job —
+      the WAF role needed zero S3 data access yet held it, turning one HTTP
+      request into ~106 million exposed records. The defense is an assumption
+      inventory: list every 'obviously true' security belief, then verify each
+      with a test.
+    variants:
+      - "Trusted-boundary assumptions (appliances, vendors, 'safe' components)"
+      - "Internal-only assumptions (metadata services, admin panels, 'unreachable' endpoints)"
+      - "Scope assumptions (roles and service accounts holding permissions beyond their function)"
+    indicators:
+      - "Design documents or runbooks contain untested claims like 'internal only', 'not reachable from the internet', or 'trusted' with no verification test attached"
+      - "Cloud instance metadata services are reachable from application tiers without IMDSv2 enforcement or network-policy restriction"
+      - "IAM roles, service accounts, or API keys have not had a permissions-vs-function review in over 90 days"
+      - "Patching cadence for 'trusted' appliances (file transfer, VPN, firewall, backup) lags behind server patching because they are assumed safe"
+    detection:
+      rule: detect_unexamined_assumptions
+      patterns:
+        - '(?i)\b(assume[sd]?|assumed)\b\s+(it\s+is\s+)?(safe|internal|trusted|unreachable|not\s+exposed)'
+        - '(?i)169\.254\.169\.254\s+.*(reachable|allowed|open|not\s+blocked)'
+        - '(?i)(role|policy|service\s+account)\s+review\s+(missing|overdue|never|none)'
+    severity: medium
+    mitigations:
+      - "Maintain a written assumption register for every critical system; each assumption gets an owner, a verification test, and a re-check date — test the load-bearing ones continuously"
+      - "Enforce least privilege on every role and service account, and block cloud metadata access from application tiers (IMDSv2, egress policies, network segmentation)"
+      - "Patch 'trusted' appliances and edge devices on the same KEV-driven SLA as everything else — appliances are attack surface, not architecture"
+      - "Run assumption-busting exercises: hand a defender the system diagram and 90 minutes to list how they would reach the data if they believed none of the documented assumptions"
+    examples:
+      - summary: "Capital One (2019): an SSRF against a misconfigured WAF reached the AWS metadata service and yielded credentials for an over-privileged IAM role; ~30 GB across 700+ S3 buckets was exfiltrated, exposing ~106 million records. The assumptions that died: the metadata service is unreachable, and the WAF role's scope is harmless."
+        reference: "https://www.breachsense.com/blog/capital-one-data-breach-case-study/"
+      - summary: "MOVEit Transfer (May 2023): Cl0p exploited a zero-day SQL injection (CVE-2023-34362) in Progress Software's trusted managed file-transfer appliance, deploying the LEMURLOOT web shell and extorting thousands of downstream organizations; CISA and the FBI issued joint advisory AA23-158A."
+        reference: "https://thecyberwire.com/podcasts/cisa-cybersecurity-alerts/51/transcript"
+    references:
+      - "https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html"
+      - "https://www.nist.gov/publications/technical-guide-information-security-testing-and-assessment?pub_id=152164"
+
+  - id: AEG-T207
+    name: "Creativity Under Constraints"
+    category: hacker_mindset
+    description: >-
+      Attackers rarely have your tools, your budget, or your access — so they
+      improvise with yours. Blocked from dropping malware, they live off your
+      land: your admin utilities, your remote-access tools, your scripting
+      languages. Expecting the unexpected means expecting the mundane: the most
+      dangerous binary on a Windows host is often the one Microsoft signed.
+      Defend behavior, not binaries.
+    how_it_works: >-
+      Constraint-driven improvisation has three named variants. LIVING OFF THE
+      LAND (LOTL): with custom malware blocked by EDR, attackers drive signed,
+      pre-installed utilities — Volt Typhoon's campaign (CISA AA24-038A) relied
+      on certutil, wmic, ntdsutil, netsh, and PowerShell for discovery and
+      persistence across multi-year intrusions, publicly documented as rarely
+      using malware after initial access. LEGITIMATE-TOOL REUSE: attackers adopt
+      the defender's own remote-access stack — CISA/NSA/MS-ISAC advisory
+      AA23-025A documents financially motivated actors deploying portable copies
+      of legitimate RMM tools (ScreenConnect, AnyDesk) via help-desk-themed
+      phishing, bypassing antivirus because the software is signed and trusted.
+      DUAL-USE CATALOGS: the community LOLBAS project catalogs Windows binaries,
+      scripts, and libraries with abusable functions (execution, download,
+      credential theft, log evasion), with GTFOBins doing the same for Unix —
+      the same lists defenders use for baselining are the attacker's menu. Your
+      controls must key on behavior — parent-child process anomalies, unusual
+      command lines, off-hours use — not on file reputation.
+    variants:
+      - "Living off the land (signed OS utilities as the attack toolkit)"
+      - "Legitimate-tool reuse (RMM, admin and remote-access software as backdoors)"
+      - "Dual-use catalog exploitation (LOLBAS/GTFOBins binaries with abusable functions)"
+    indicators:
+      - "Endpoint detection keys primarily on file hashes or signatures, with weak behavioral rules for parent-child process anomalies (e.g., Office spawning script hosts, certutil fetching remote content)"
+      - "No inventory of which dual-use admin tools (RMM agents, script interpreters, remote shells) are authorized on each host class, so malicious use is indistinguishable from admin use"
+      - "PowerShell script-block logging, command-line process auditing (4688/Sysmon), or equivalent telemetry is not enabled or not centralized"
+      - "Allowlisting trusts publisher signatures without behavioral constraints, so any signed binary runs with full latitude"
+    detection:
+      rule: detect_dual_use_tool_blindspot
+      patterns:
+        - '(?i)(certutil|bitsadmin|mshta|regsvr32|rundll32)\.exe\s+.*(https?://|urlcache|/transfer|/decode)'
+        - '(?i)(winword|excel|outlook|acrord32)\.exe\s+.*(powershell|cmd|cscript|wscript|mshta)\.exe'
+        - '(?i)(anydesk|screenconnect|teamviewer).*(portable|\.exe\s+--)'
+    severity: medium
+    mitigations:
+      - "Enable and centralize behavioral telemetry first: PowerShell script-block logging, command-line auditing (4688/Sysmon event 1), and EDR rules on parent-child anomalies — detect the behavior, not the binary"
+      - "Build an allowlist of authorized dual-use tools per host class and alert on any RMM, script host, or LOLBin execution outside that baseline, using the LOLBAS project as your reference catalog"
+      - "Constrain signed binaries behaviorally: application control (WDAC/AppLocker) with path and publisher rules plus constrained language mode for script hosts, so trusted tools cannot be freely repurposed"
+      - "Govern remote-access tooling: require approval workflows for RMM installs, log all remote sessions, and treat any unauthorized RMM process as a compromise indicator per CISA AA23-025A guidance"
+    examples:
+      - summary: "Volt Typhoon: per the joint CISA/NSA/FBI advisory AA24-038A, the group sustained multi-year access to US critical infrastructure using living-off-the-land tradecraft — cmd, certutil, wmic, ntdsutil, PowerShell — rarely deploying malware after initial access."
+        reference: "https://stateofsurveillance.org/articles/government/volt-typhoon-2026-tracker/"
+      - summary: "RMM abuse: CISA/NSA/MS-ISAC advisory AA23-025A documents financially motivated actors using portable, legitimate RMM tools (ScreenConnect, AnyDesk) delivered through help-desk-themed phishing as backdoors and C2 — signed software that bypasses antivirus and software-control assumptions."
+        reference: "https://www.sentinelone.com/cybersecurity-101/cybersecurity/remote-monitoring-and-management-rmm/"
+    references:
+      - "https://lolbas-project.github.io/"
+      - "https://attack.mitre.org/"
+
+  - id: AEG-T208
+    name: "Economics of Attack: Attacker ROI"
+    category: hacker_mindset
+    description: >-
+      Every attacker runs a profit-and-loss statement. Expected gain minus the
+      cost of the attack plus the risk of getting caught must stay positive, or
+      the attack does not happen. You cannot change their gain much — but you
+      can raise their cost and their risk until your organization is the deal
+      they walk away from. Ransomware crews already do this math in public: when
+      victims stopped paying, they pivoted from big targets to small ones — make
+      your shop the expensive target they abandon.
+    how_it_works: >-
+      Attacker ROI has three named levers defenders can move. COST OF ATTACK:
+      tooling, access, and labor — Chainalysis reports the average dark-web
+      price for victim access fell from $1,427 (early 2023) to $439 (early
+      2026), keeping opportunist volume high; every control that forces custom
+      tooling or manual effort raises this price. EXPECTED GAIN: the payout —
+      Chainalysis' 2026 Crypto Crime Report found ransomware actors collected
+      ~$820M on-chain in 2025 even as claimed attacks rose 50%, while the share
+      of victims paying fell to a record low of 28%; lower payment rates directly
+      shrink expected gain. RISK OF EXPOSURE: attribution and disruption — the
+      DOJ's seizure of 63.7 bitcoin from the Colonial Pipeline ransom and
+      takedowns of laundering infrastructure raise the risk term. Colonial's
+      $4.4M payment (May 2021) funded the next wave of attacks, which is why
+      defenders now treat 'do not pay, keep tested offline backups' as an
+      economic weapon, not just an IT policy — Verizon DBIR 2025 notes
+      ransomware present in 44% of breaches, with 64% of victims choosing not
+      to pay.
+    variants:
+      - "Cost of attack (tooling, access price, labor per victim)"
+      - "Expected gain (payment rates, ransom size, monetization friction)"
+      - "Risk of exposure (attribution, takedowns, laundering difficulty)"
+    indicators:
+      - "No offline, tested backups of critical systems — the organization is economically positioned to pay a ransom rather than recover"
+      - "Security budget is allocated by compliance checkbox rather than by which controls raise attacker cost per target class"
+      - "Incident response plans have no pre-decided ransom-payment policy, no pre-retained counsel, and no practiced recovery runbook — decisions will be made under extortion pressure"
+      - "High-value data (PII, IP, credentials) is concentrated without proportional monitoring, making the expected-gain term attractive"
+    detection:
+      rule: detect_attacker_roi_mispricing
+      patterns:
+        - '(?i)(backup|recovery)\s+(test|restore\s+test|drill)\s+(never|missing|not\s+performed|overdue)'
+        - '(?i)(ransom|extortion)\s+(payment\s+)?(policy|playbook|decision)\s+(missing|none|undefined|undecided)'
+    severity: medium
+    mitigations:
+      - "Make recovery cheaper than ransom: maintain offline, immutable, regularly restore-tested backups and a practiced recovery runbook — this single control collapses the attacker's expected gain"
+      - "Raise per-victim attack cost where it counts: phishing-resistant MFA, EDR with behavioral rules, network segmentation, and rapid KEV patching force attackers from cheap automation to expensive manual work"
+      - "Shrink the gain term structurally: minimize stored PII, encrypt data at rest with keys attackers cannot reach, and pre-decide (with counsel and leadership) a no-pay stance so extortion pressure meets a made decision, not a panicked one"
+      - "Raise exposure risk: preserve forensic evidence, report incidents to law enforcement and CISA, and share IOCs — every shared indicator makes the next identical attack more expensive for the operator"
+    examples:
+      - summary: "Colonial Pipeline (May 2021): paid ~$4.4M in bitcoin to DarkSide after a single-password VPN compromise; the DOJ later seized 63.7 bitcoin of the payment — a case study in ransom economics funding further attacks, and in law enforcement raising the risk term."
+        reference: "https://www.darkreading.com/cyber-risk/colonial-pipeline-cyberattack-proves-a-single-password-isn-t-enough"
+      - summary: "Chainalysis 2026 Crypto Crime Report: ransomware attacks rose ~50% in 2025 yet on-chain payments fell ~8% to ~$820M and the share of victims paying hit a record low of 28% — attackers are working harder for diminishing returns as defense raises costs and lowers gains."
+        reference: "https://cointelegraph.com/news/ransomware-attacks-rose-50-in-2025-chainalysis"
+    references:
+      - "https://www.cisa.gov/stopransomware/ransomware-guide"
+      - "https://www.Verizon.com/about/news/2025-data-breach-investigations-report-apac"
+
+  - id: AEG-T209
+    name: "Defender Anticipation Playbook"
+    category: hacker_mindset
+    description: >-
+      Do not wait for the breach report to tell you how you failed. Run the
+      failure in your head first: gather the team, declare the project already
+      breached, and demand the story of how it happened. The pre-mortem converts
+      polite optimism into frank diagnosis and surfaces the risks nobody would
+      voice in a normal review. Anticipation is a scheduled discipline, not a
+      personality trait — put it on the calendar or it will not happen.
+    how_it_works: >-
+      The anticipation playbook has three named practices. PRE-MORTEMS:
+      psychologist Gary Klein's method (Harvard Business Review, 2007) — instead
+      of asking what might go wrong, the team assumes the project has already
+      failed and writes down why; the underlying 'prospective hindsight'
+      research (Mitchell, Russo, Pennington, 1989) found this increases correct
+      identification of failure causes by ~30% versus forward prediction. 'HOW
+      WOULD I BREAK THIS' REVIEWS: structured adversarial design reviews where a
+      defender takes the attacker's seat for one system and must produce a
+      written attack plan within a timebox — the output is a prioritized fix
+      list, not a vulnerability scan. GAME DAYS AND TABLETOPS: scheduled
+      rehearsals of the incident you fear most (ransomware, cloud-account
+      takeover, supply-chain compromise) run with the real team, real runbooks,
+      and real communications — gaps found in a game day cost nothing; the same
+      gaps found at 3 AM cost everything.
+    variants:
+      - "Pre-mortems (prospective hindsight on planned changes and new systems)"
+      - "'How would I break this' adversarial design reviews"
+      - "Game days and tabletop exercises (rehearsed incident response)"
+    indicators:
+      - "No pre-mortem or adversarial review is recorded for systems deployed or significantly changed in the last 12 months"
+      - "Incident response runbooks exist but have never been exercised in a tabletop or game day with the actual on-call team"
+      - "Security reviews only happen after deployment (or after incidents), never at design time when fixes are cheap"
+      - "The same failure modes recur across incidents or audits, indicating lessons are logged but never rehearsed into behavior"
+    detection:
+      rule: detect_missing_premortem
+      patterns:
+        - '(?i)(pre[- ]?mortem|adversarial\s+review|break[- ]?this\s+review)\s+(missing|none|not\s+performed|never|n/?a)'
+        - '(?i)(tabletop|game\s*day|ir\s+drill|ir\s+exercise)\s+(never|missing|overdue|not\s+run|n/?a)'
+    severity: low
+    mitigations:
+      - "Institutionalize pre-mortems: require a written pre-mortem (assumed breach, causes listed, an owner assigned to each cause) before any major launch or architecture change"
+      - "Run quarterly tabletop exercises and at least one annual full game day with the real on-call team, real runbooks, and executive participation — measure and fix whatever breaks"
+      - "Assign a rotating 'attacker seat' in design reviews: one reviewer is responsible solely for producing a written compromise plan for the system under review"
+      - "Close the loop: convert every pre-mortem finding and exercise lesson into tracked remediation with an owner and a date, then re-run the exercise to confirm the fix"
+    examples:
+      - summary: "Gary Klein's pre-mortem (Harvard Business Review, 2007): a structured exercise where a team assumes its project has already failed and works backward to causes; research on prospective hindsight shows ~30% better identification of real failure reasons than forward-looking risk brainstorming — directly applicable to pre-deployment security reviews."
+        reference: "https://nesslabs.com/pre-mortem-anticipate-failure-with-prospective-hindsight"
+    references:
+      - "https://industry-insight.uk/content/files/2026/06/Pre-Mortem-Framework-Industry-Insight-v2_1.pdf"
+      - "https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html"
+
+  - id: AEG-T210
+    name: "STRIDE Threat Modeling"
+    category: hacker_mindset
+    description: >-
+      STRIDE is the defender's checklist against blank-page blindness. For every
+      component, data flow, and trust boundary in your design, ask six
+      questions: can it be Spoofed, Tampered with, Repudiated, disclosed
+      (Information disclosure), Denied (Denial of service), or used for
+      Elevation of privilege? Six questions, asked everywhere, beat a brilliant
+      brainstorm that only covers what the loudest person in the room imagined.
+      Run STRIDE at design time, when a fix costs a whiteboard marker instead of
+      a breach.
+    how_it_works: >-
+      Developed at Microsoft in the late 1990s and embedded in the Microsoft
+      Security Development Lifecycle, STRIDE maps six threat categories to the
+      security properties they violate. SPOOFING defeats authentication (forged
+      tokens, impersonated services); TAMPERING defeats integrity (modified
+      payloads, altered stored data); REPUDIATION defeats non-repudiation
+      (actions with no audit trail); INFORMATION DISCLOSURE defeats
+      confidentiality (over-broad API responses, verbose errors); DENIAL OF
+      SERVICE defeats availability (resource exhaustion, flooding); ELEVATION OF
+      PRIVILEGE defeats authorization (misconfigured roles, crossed privilege
+      boundaries). The method: draw the data-flow diagram, mark trust
+      boundaries, then apply all six categories to every element — published
+      applications include an MDPI study applying STRIDE to an in-vehicle
+      infotainment system, identifying per-interaction threats with mitigations.
+      Pair STRIDE with a ranking step (e.g., DREAD or risk scoring) so the
+      resulting threat list becomes a prioritized fix list.
+    variants:
+      - "Per-element STRIDE (all six categories applied to each DFD element)"
+      - "STRIDE paired with DREAD or risk scoring for prioritization"
+      - "STRIDE via the Microsoft Threat Modeling Tool or OWASP Threat Dragon for automation"
+    indicators:
+      - "Design documents exist with no threat model, or the model covers only familiar threat types (e.g., injection) while ignoring repudiation, DoS, or elevation paths"
+      - "Data-flow diagrams are missing or lack marked trust boundaries, leaving no surface to apply the six categories against"
+      - "Security findings repeatedly arrive from production (pen tests, bug bounty) for threat classes a design-time STRIDE pass would have listed"
+      - "Mitigations are not traced back to the threats they address — no threat-to-control mapping exists"
+    detection:
+      rule: detect_stride_coverage_gap
+      patterns:
+        - '(?i)(threat\s*model|stride)\s+(missing|none|not\s+done|outdated|n/?a)'
+        - '(?i)(data[- ]?flow|dfd)\s+(missing|absent)'
+        - '(?i)no\s+trust\s+boundar'
+    severity: low
+    mitigations:
+      - "Run STRIDE at design time for every new system and major change: DFD with trust boundaries, all six categories per element, threats recorded with owners"
+      - "Rank every STRIDE finding by impact and likelihood (DREAD or simple risk scoring) and map each to a concrete mitigation and control owner before code is written"
+      - "Re-run the model on architectural changes, new integrations, and new data flows — a stale threat model is an unexamined assumption (see AEG-T206)"
+      - "Automate the baseline with the Microsoft Threat Modeling Tool or OWASP Threat Dragon, but keep the human review: tools generate candidates, reviewers add the attacker's creativity"
+    examples:
+      - summary: "Applied STRIDE research (MDPI, 2024): STRIDE was systematically applied to an in-vehicle infotainment system — each component assessed against the six categories (e.g., NFC-to-onboard-computer interactions yielding DoS, information-disclosure, and tampering threats) with generated mitigations — demonstrating the method's completeness as a design-time discipline."
+        reference: "https://Www.Mdpi.com/2624-8921/6/3/54"
+    references:
+      - "https://learn.microsoft.com/en-gb/training/modules/design-solutions-secure-applications/4-evaluate-application-threats-threat-modeling"
+      - "https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html"
+
+  - id: AEG-T211
+    name: "Attack Trees and PASTA for Defenders"
+    category: hacker_mindset
+    description: >-
+      Attack trees turn 'what if an attacker...' into a map you can price. Put
+      the attacker's goal at the root, branch every way of achieving it, and
+      annotate each leaf with cost, difficulty, and required access — the
+      cheapest complete branch is your priority fix. PASTA goes further: it
+      chains seven stages from business objectives to risk-ranked
+      countermeasures, so technical threats translate into business decisions.
+      Together they replace ad-hoc brainstorming with structured, reusable
+      attacker modeling.
+    how_it_works: >-
+      Two complementary methods. ATTACK TREES (Bruce Schneier, Dr. Dobb's
+      Journal, December 1999): represent attacks as a tree with the goal as the
+      root node and different ways of achieving it as leaf nodes; AND/OR
+      refinements decompose the attack, and defenders annotate leaves with cost,
+      probability, and required capabilities — then cut the cheapest branches
+      with countermeasures. Trees are reusable: build a library of attack trees
+      for common components and re-apply them to new systems. PASTA (Process for
+      Attack Simulation and Threat Analysis, UcedaVelez and Morana, VerSprite,
+      documented in 'Risk Centric Threat Modeling', Wiley 2015): a seven-stage
+      risk-centric methodology — 1. Define Objectives, 2. Define Technical Scope,
+      3. Application Decomposition, 4. Threat Analysis, 5. Vulnerability Analysis,
+      6. Attack Modeling, 7. Risk and Impact Analysis. PASTA correlates real
+      threat intelligence and attack trees against the attack surface and ties
+      countermeasures to business impact, which suits organizations that must
+      justify security spend to non-technical stakeholders.
+    variants:
+      - "Attack trees (goal-rooted AND/OR decomposition with cost annotations)"
+      - "PASTA (seven-stage risk-centric methodology, business-impact aligned)"
+      - "Combined: PASTA stages 5-6 built on attack-tree libraries"
+    indicators:
+      - "Risk decisions are made from ad-hoc brainstorming with no structured enumeration of attacker paths — the same 'what about...' gaps recur"
+      - "No attack-tree library exists for the organization's common components (auth, file transfer, VPN, CI/CD), so each review starts from a blank page"
+      - "Security findings cannot be traced to business impact, so remediation is deprioritized by stakeholders who were never shown the risk in their own terms"
+      - "Threat intelligence is collected but never correlated against the organization's own attack surface (the PASTA stage-4 gap)"
+    detection:
+      rule: detect_unmodeled_attack_paths
+      patterns:
+        - '(?i)(attack\s*tree|threat\s*model)\s+(missing|none|not\s+maintained|n/?a)'
+        - '(?i)(business\s*impact|risk\s*register)\s+.*(not\s+linked|missing|unmapped)\s+.*threat'
+    severity: low
+    mitigations:
+      - "Build attack trees for your crown-jewel assets and most common components; annotate leaves with cost and difficulty, and cut the cheapest complete branches first"
+      - "Adopt PASTA (or an equivalent staged method) for high-value systems so threat analysis is explicitly tied to business objectives and produces risk-ranked, budget-justifiable countermeasures"
+      - "Maintain the trees and models as living documents: update on architecture changes, new threat intel, and after every incident — a stale model is a blind spot"
+      - "Reuse ruthlessly: a library of vetted attack trees for authentication, file transfer, remote access, and CI/CD beats a fresh brainstorm every time"
+    examples:
+      - summary: "Schneier's 'Attack Trees' (Dr. Dobb's Journal, December 1999): the foundational paper formalizing goal-rooted AND/OR attack decomposition with cost and countermeasure analysis — the method defenders still use to enumerate and price attacker paths."
+        reference: "https://www.schneier.com/academic/archives/1999/12/attack_trees.html"
+      - summary: "PASTA in practice: VerSprite's methodology page documents the seven-stage process (objectives through risk/impact analysis) with threat-intel correlation and attack modeling used to prioritize countermeasures by business impact."
+        reference: "https://versprite.com/cybersecurity-listings/devsecops/pasta-threat-modeling/"
+    references:
+      - "https://www.schneier.com/academic/archives/1999/12/attack_trees.html"
+      - "https://link.springer.com/chapter/10.1007/978-3-031-73709-1_22"
+
+  - id: AEG-T212
+    name: "Think-Like-an-Attacker Doctrine and Ethical Boundaries"
+    category: hacker_mindset
+    description: >-
+      This is the capstone rule of the whole pack: reason with an attacker's
+      creativity, act with a defender's responsibility. You study how attackers
+      think — their targeting, their cheap paths, their loops, their
+      improvisation, their economics — for one purpose only: to defend systems
+      you are authorized to defend. The line is absolute: only your own systems
+      or systems you have explicit, documented authorization to test; only
+      defensive outcomes; never curiosity, never retaliation, never 'just
+      looking'. Creativity without authorization is not research — it is an
+      attack.
+    how_it_works: >-
+      The doctrine has three named pillars. AUTHORIZED SCOPE: adversarial
+      thinking is exercised only against your own systems or within explicitly
+      authorized engagements (internal red teams, contracted penetration tests,
+      bug-bounty programs) — NIST SP 800-115 defines the methodology for
+      planning, conducting, and reporting such authorized assessments, and the
+      (ISC)² Code of Ethics binds practitioners to protect society and act
+      honorably, honestly, justly, responsibly, and legally. COORDINATED
+      DISCLOSURE: when adversarial thinking finds a weakness in someone else's
+      system, the finding goes to the vendor or owner through responsible
+      channels with a remediation window — Pwn2Own's rules require every
+      demonstrated exploit to be disclosed to the affected vendor with a patch
+      window before any publication, which is why the contest has run since 2007
+      without becoming an attack marketplace. DEFENSE-FIRST INTENT: every
+      technique in this pack exists to anticipate, detect, or preempt harm — if
+      a line of thinking cannot be tied to a defensive outcome (a control, a
+      detection, a fix), it does not belong in this knowledge base. Paige
+      Thompson's Capital One case is the cautionary tale: she used the same
+      scanning methods ethical hackers use, but without authorization and for
+      personal gain — a jury convicted her of wire fraud and unauthorized
+      computer access in 2022.
+    variants:
+      - "Authorized-scope adversarial thinking (own systems, contracted tests, bug bounties)"
+      - "Coordinated disclosure (vendor notification with remediation window before publication)"
+      - "Defense-first intent (every technique tied to a control, detection, or fix)"
+    indicators:
+      - "Adversarial testing (red team, pentest, bug bounty) is performed without a written, signed scope and rules of engagement"
+      - "Vulnerabilities found in third-party systems are discussed publicly or probed further instead of being reported through coordinated-disclosure channels"
+      - "Security tooling or knowledge is applied to systems the operator does not own and has no authorization to test — the 'just looking' rationalization"
+      - "No ethics or authorization checkpoint exists in the workflow before offensive-capable tooling is used"
+    detection:
+      rule: detect_authorization_boundary_gap
+      patterns:
+        - '(?i)(pentest|pen\s*test|red\s*team|security\s+assessment)\s+.*(scope|authorization|rules\s+of\s+engagement|roe)\s+(missing|unsigned|none|verbal)'
+        - '(?i)(third[- ]party|external|other)\s+(system|target|network)\s+.*(test|scan|probe|assess)\s+.*(without|no|lacking)\s+authorization'
+        - '(?i)think\s+like\s+an\s+attacker'
+    severity: low
+    mitigations:
+      - "Require written, signed authorization with explicit scope, rules of engagement, and data-handling terms before any adversarial testing — no exceptions, no verbal scopes"
+      - "Route all third-party findings through coordinated disclosure: notify the vendor or owner, allow a remediation window, and publish only after the fix or the agreed deadline"
+      - "Build the authorization checkpoint into the agent workflow itself: Aegis must verify scope and authorization before using any offensive-capable technique, and refuse when either is absent"
+      - "Train to the (ISC)² Code of Ethics standard: protect society and infrastructure first, act honorably and legally, and treat certification and trust as privileges that unauthorized testing revokes"
+    examples:
+      - summary: "Pwn2Own (running since 2007): the longest-running authorized hacking contest — researchers demonstrate zero-days against fully patched software on stage, every finding is disclosed to the vendor with a patch window before publication, and the model has fixed critical vulnerabilities without becoming an attack marketplace."
+        reference: "https://en.wikipedia.org/wiki/Pwn2Own"
+      - summary: "Paige Thompson / Capital One (convicted June 2022): used the same scanning methods ethical hackers use, but without authorization and for personal gain — convicted of wire fraud and unauthorized computer access; the DOJ's position draws the line between good-faith security research and criminal hacking at authorization and intent."
+        reference: "https://www.darkreading.com/cyberattacks-data-breaches/capital-one-attacker-exploited-misconfigured-aws-databases"
+    references:
+      - "https://www.isc2.org/Ethics"
+      - "https://www.nist.gov/publications/technical-guide-information-security-testing-and-assessment?pub_id=152164"

@@ -1,0 +1,1 @@
+{"revoked": false, "policy": {"allowed_tools": ["bash", "edit", "kb_query", "read", "respond", "scan_trace", "webfetch", "write"], "denied_tools": [], "deny_arg_patterns": [], "egress_allowlist": [], "name": "agent-test"}, "created": 1792309253.0277956}

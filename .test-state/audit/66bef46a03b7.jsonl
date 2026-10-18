@@ -1,0 +1,1 @@
+{"ts": 1792309394.1065364, "session": "66bef46a03b7", "event": "tool_call", "tool": "wrap:echo", "args": {"cmd": "echo hello-aegis", "argv": ["echo", "hello-aegis"]}, "verdict": "allow", "findings": [], "output_excerpt": "hello-aegis\n"}

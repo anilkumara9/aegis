@@ -1,0 +1,1 @@
+{"ts": 1792309253.0348108, "session": "aead090afd3c", "event": "tool_call", "tool": "read", "args": {"path": "leak.txt"}, "verdict": "allow", "findings": [], "output_excerpt": "     1  config: key=[REDACTED:anthropic_key]"}

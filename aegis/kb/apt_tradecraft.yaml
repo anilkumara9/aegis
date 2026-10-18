@@ -1,0 +1,560 @@
+pack: apt_tradecraft
+version: "1.0"
+techniques:
+  - id: AEG-T107
+    name: "Living-Off-the-Land Binaries (LOLBins)"
+    category: apt_tradecraft
+    description: >-
+      Living off the land (LOTL) is the practice of abusing legitimate,
+      signed, pre-installed operating-system utilities and admin tools instead
+      of deploying custom malware. Because the binaries are trusted and
+      expected on the system, this style defeats signature-based antivirus,
+      complicates allowlisting, and blends hostile activity into routine
+      administration. It is the signature playbook of PRC actor Volt Typhoon
+      and is pervasive across ransomware operations as well.
+    how_it_works: >-
+      The adversary drives tools defenders expect to see — PowerShell,
+      WMI/WMIC, certutil, rundll32, mshta, regsvr32, bitsadmin, msiexec —
+      to execute code, download payloads, move laterally, and persist. No
+      single technique covers LOTL; MITRE groups the main cluster under
+      System Binary Proxy Execution (T1218) alongside scripting (T1059),
+      WMI (T1047), BITS jobs (T1197), ingress tool transfer (T1105), and
+      decoding (T1140). Detection therefore works by flagging anomalous
+      *usage* of the binary (unusual parent process, rare command-line
+      switches, unexpected network egress) rather than the binary itself.
+    variants:
+      - "Proxy execution: rundll32, regsvr32, mshta, msiexec used to execute payloads through signed binaries (T1218)."
+      - "Transfer and staging: certutil, bitsadmin abused to download or decode remote payloads (T1105, T1140)."
+      - "Lateral movement and recon: WMI/WMIC, PowerShell remoting, and PsExec-style service execution against remote hosts (T1047, T1059, T1569.002)."
+    indicators:
+      - "A signed system binary spawning with command-line switches it almost never uses in your fleet (e.g. certutil with download-style flags, bitsadmin transfer jobs)."
+      - "Anomalous parent-child process trees: e.g. an Office application or browser spawning script hosts, or mshta/rundll32 launching without a visible parent UI context."
+      - "BITS jobs created by non-administrative contexts, or encoded/powershell-style content decoded via system utilities shortly before new process creation."
+      - "WMIC or PowerShell remoting sessions originating from hosts that have no administrative role, especially during off-hours."
+    detection:
+      rule: detect_lolbin_abuse
+      patterns:
+        - '(?i)(certutil|bitsadmin|rundll32|regsvr32|mshta|msiexec|wmic|powershell)\.exe.*(urlcache|/transfer|/download|/decode|/execute|-enc|frombase64|invoke-mimikatz|sekurlsa)'
+        - '(?i)(bitsadmin\s+/create|New-BitsTransfer|wmic\s+process\s+call\s+create|regsvr32\s+/s\s+/u)'
+        - 'parent_process:(winword|excel|outlook|chrome|iexplore)\s+child:(powershell|wscript|cscript|mshta|rundll32)'
+        - '(?i)living[\s-]+off[\s-]+the[\s-]+land'
+    severity: high
+    mitigations:
+      - "Application control (WDAC/AppLocker) restricting which system binaries may execute with network or child-process capabilities in each role."
+      - "Behavioral EDR rules on LOLBins keyed to parent process, command-line rarity, and network egress — alert on anomaly, not presence."
+      - "Disable or constrain unused scripting surfaces (PowerShell Constrained Language Mode, AMSI, disabling mshta/Office macro execution where unused)."
+      - "Baseline normal LOLBin usage per host role with process-creation and command-line logging (Sysmon/ETW) so deviations are visible."
+    examples:
+      - summary: "CISA/NSA/FBI (with Five Eyes partners) assessed with high confidence in advisory AA24-038A (Feb 2024) that PRC actor Volt Typhoon used living-off-the-land techniques to pre-position on U.S. critical-infrastructure networks for potential disruption, relying on native Windows tooling rather than malware."
+        reference: "https://intel.mjolnirsecurity.com/living-off-the-land"
+      - summary: "Bitdefender's LOTL explainer documents how real investigations see certutil, bitsadmin, rundll32, and mshta abused for download, execution, and evasion, and points defenders to the LOLBAS/GTFOBins catalogs for coverage mapping."
+        reference: "https://techzone.bitdefender.com/en/tech-explainers/living-of-the-land-attacks.html"
+    references:
+      - "https://techzone.bitdefender.com/en/tech-explainers/living-of-the-land-attacks.html"
+      - "https://intel.mjolnirsecurity.com/living-off-the-land"
+      - "https://www.socradar.io/blog/living-off-the-land-lotl-the-invisible-cyber-threat-lurking-in-your-system/"
+
+  - id: AEG-T108
+    name: "Zero-Day Exploitation Usage Patterns"
+    category: apt_tradecraft
+    description: >-
+      Advanced actors — state espionage groups and top-tier cybercrime
+      operations — maintain stockpiles of zero-day vulnerabilities and burn
+      them for initial access, persistence, and evasion. Google TAG and
+      Mandiant counted 97 zero-days exploited in the wild in 2023, with
+      enterprise security appliances increasingly targeted alongside
+      end-user platforms. Defenders cannot detect the exploit itself in
+      advance, so detection focuses on the *behavioral pattern* of
+      zero-day usage: exploitation of internet-facing edge devices,
+      rapid weaponization after disclosure, and post-exploitation
+      tradecraft.
+    how_it_works: >-
+      Actors select zero-days against high-value chokepoints — VPN
+      concentrators, firewalls, email gateways, virtualization hosts —
+      where a single exploit yields broad access. Mandiant found the
+      time-to-exploit for actively exploited flaws had shrunk to about five
+      days in 2023, so zero-day campaigns often begin as "1-day" waves the
+      moment a patch ships. Variants: end-user platform zero-days (browser,
+      mobile OS) used for targeted surveillance; enterprise-appliance
+      zero-days used for mass initial access; third-party component flaws
+      that fan out across many products at once. The post-exploit pattern —
+      web-shell drops, credential dumping, rapid lateral movement — is what
+      defenders can actually see.
+    variants:
+      - "End-user zero-days: browser and mobile OS flaws used by espionage actors and commercial surveillance vendors for targeted compromise."
+      - "Enterprise-appliance zero-days: VPN, firewall, and email-security flaws exploited for mass initial access against many victims at once."
+      - "Third-party component flaws: a single bug in a shared library or driver fanning out across multiple vendor products."
+    indicators:
+      - "Exploitation-shaped crashes or unexpected child processes on internet-facing appliances, followed within hours by web-shell artifacts or new admin accounts."
+      - "A burst of exploitation attempts against the same device class across many external IPs immediately after a vendor patch release (1-day weaponization wave)."
+      - "Post-exploitation tradecraft without a matching phishing or credential-access precursor: an actor already inside with no email or VPN logon trail."
+      - "Vendor threat-intel or CISA KEV catalog listing the affected product — correlated with your own asset inventory to find exposure."
+    detection:
+      rule: detect_zero_day_exploitation_pattern
+      patterns:
+        - '(?i)(w3wp|httpd|nginx|tomcat|vpn|firewall).*child:(cmd|powershell|sh|bash|python)\b'
+        - '(?i)web[\s_-]?shell|(shell\.aspx|shell\.php|shell\.jsp)\s+(created|uploaded|accessed)'
+        - '(?i)(kev|cisa.*known.exploited|zero[\s_-]?day).*(exploit|poc|in.the.wild)'
+    severity: high
+    mitigations:
+      - "Risk-based patch prioritization driven by exploitability and CISA KEV membership — patch internet-facing edge systems first, within days not months."
+      - "Reduce edge attack surface: remove or isolate internet-facing management interfaces; require VPN plus phishing-resistant MFA for admin access."
+      - "Behavioral monitoring on edge appliances for post-exploitation artifacts (new processes, web shells, config changes) since the exploit itself is invisible."
+      - "Maintain an asset inventory mapped to KEV/CVE feeds so newly disclosed zero-days can be triaged against actual exposure within hours."
+    examples:
+      - summary: "Google TAG and Mandiant's first joint zero-day report found 97 zero-days exploited in 2023 — a 50%+ jump over 2022 — with espionage the dominant motive and PRC actors the top state-backed exploiters; enterprise security appliances were a rising target class."
+        reference: "https://www.bleepingcomputer.com/news/security/google-spyware-vendors-behind-50-percent-of-zero-days-exploited-in-2023/"
+      - summary: "Google Mandiant's analysis of 138 actively exploited vulnerabilities in 2023 found 70% were zero-days and time-to-exploit had collapsed to roughly five days, down from 63 days in 2018-19."
+        reference: "https://www.scworld.com/news/threat-actors-exploit-zero-days-within-5-days-says-googles-mandiant"
+    references:
+      - "https://cloud.google.com/blog/topics/threat-intelligence/2023-zero-day-trends?hl=en"
+      - "https://www.scworld.com/news/threat-actors-exploit-zero-days-within-5-days-says-googles-mandiant"
+      - "https://www.bleepingcomputer.com/news/security/google-spyware-vendors-behind-50-percent-of-zero-days-exploited-in-2023/"
+
+  - id: AEG-T109
+    name: "Supply-Chain Compromise"
+    category: apt_tradecraft
+    description: >-
+      Instead of attacking hardened targets directly, advanced actors
+      compromise a trusted vendor, build system, or software dependency, then
+      ride the vendor's legitimate distribution channel downstream into
+      thousands of victims at once. The SolarWinds Orion compromise —
+      malicious code inserted into signed product updates — remains the
+      canonical case: CISA judged it a grave risk to government and critical
+      infrastructure. Because the payload arrives via a trusted update
+      mechanism, it bypasses perimeter controls and arrives pre-authorized.
+    how_it_works: >-
+      The actor identifies a chokepoint with broad downstream trust: a
+      software vendor's build pipeline, a managed service provider's remote
+      tooling, or a popular open-source package. After compromising that
+      chokepoint (via stolen build credentials, CI/CD intrusion, or
+      maintainer account takeover), they inject a backdoor into a signed
+      release. Variants: upstream build compromise (SolarWinds-style
+      trojanized updates); MSP tooling abuse (trusted remote-management
+      agents as the delivery path); open-source dependency poisoning
+      (malicious versions of widely used packages, e.g. the 300+ npm
+      dependencies compromised in a single day by one actor in 2026, per
+      CrowdStrike). Detection centers on software provenance: SBOMs,
+      build attestation, and behavioral monitoring of vendor tools acting
+      out of character.
+    variants:
+      - "Upstream build compromise: backdoor injected into a vendor's signed product build (SolarWinds Orion / SUNBURST)."
+      - "MSP and trusted-tool abuse: managed service providers' remote tooling used as the delivery and access path into client networks."
+      - "Open-source dependency poisoning: malicious versions of popular packages (notably npm) spreading through developer dependency trees."
+    indicators:
+      - "A signed vendor update or agent begins beaconing to new external infrastructure or spawning unexpected child processes after an update."
+      - "Code-signing or build-pipeline anomalies: releases signed outside the normal build environment, or hashes that do not match vendor-published values."
+      - "Vendor tooling (RMM agents, update services) performing credential access or lateral movement inconsistent with its administrative role."
+      - "Threat-intel or vendor advisory naming a specific compromised product version — cross-referenced against your deployed inventory."
+    detection:
+      rule: detect_supply_chain_anomaly
+      patterns:
+        - '(?i)(solarwinds|kaseya|3cx|npm|pip).*(backdoor|compromise|trojanized|malicious.version)'
+        - '(?i)hash.mismatch|signature.(invalid|untrusted)|signed.by.unknown'
+        - '(?i)update.service.*(beacon|c2|exfil|credential.dump)'
+    severity: critical
+    mitigations:
+      - "Software provenance: require SBOMs, reproducible builds, and signed build attestations from critical vendors; verify before deployment."
+      - "Behavioral monitoring of vendor agents and update services — alert when trusted tooling deviates from its expected process, network, and credential behavior."
+      - "Network segmentation and least privilege for vendor remote-access paths; treat MSP/vendor connections as untrusted by default."
+      - "Incident-response playbooks for vendor compromise: rapid inventory of affected versions, isolation of vendor update channels, and credential rotation."
+    examples:
+      - summary: "The SolarWinds Orion supply-chain compromise inserted the SUNBURST backdoor into signed Orion platform updates (versions 2019.4 HF 5, 2020.2 unpatched, 2020.2 HF 1), giving the actor privileged access across victim networks; CISA issued Emergency Directive 21-01 and Alert AA20-352A calling it a grave risk."
+        reference: "https://www.solarwinds.com/sa-overview/certadvisory"
+      - summary: "CISA's Alert AA20-352A (Dec 2020) confirmed the APT actor behind SolarWinds demonstrated patience, operational security, and complex tradecraft, and warned the supply-chain vector was not the only initial access used."
+        reference: "https://www.jonesday.com/en/insights/2020/12/cisa-issues-urgent-message-on-cyber-threat-to-government-and-businesses"
+    references:
+      - "https://www.solarwinds.com/sa-overview/certadvisory"
+      - "https://www.jonesday.com/en/insights/2020/12/cisa-issues-urgent-message-on-cyber-threat-to-government-and-businesses"
+      - "https://www.crowdstrike.com/en-gb/cybersecurity-101/cyberattacks/supply-chain-attack/?utm_activation=corporate+blog%2Crsa+conference"
+
+  - id: AEG-T110
+    name: "Long-Dwell Persistence Mechanisms"
+    category: apt_tradecraft
+    description: >-
+      APT actors design intrusions to survive for months or years, outlasting
+      incident-response windows and routine remediation. The SolarWinds actor
+      was active from at least March 2020 before discovery in December; some
+      APT campaigns maintain access for years. Long-dwell persistence layers
+      multiple footholds — scheduled tasks, WMI subscriptions, rogue
+      accounts, cloud API tokens — so that removing any single one does not
+      evict the actor.
+    how_it_works: >-
+      After initial access, the actor seeds redundant persistence across
+      independent control planes: OS-level (services, scheduled tasks, WMI
+      event subscriptions, registry run keys), identity-level (new
+      privileged accounts, golden-ticket-style Kerberos artifacts,
+      federated-identity trust manipulation), and cloud-level (malicious
+      OAuth app grants, API tokens, mail-forwarding rules). Variants: quiet
+      maintenance (long sleep intervals and low-volume beaconing to avoid
+      anomaly detection); persistence re-seeding (a watchdog mechanism
+      restores removed footholds); identity-plane persistence that survives
+      endpoint rebuilds entirely. Defenders detect long-dwell by hunting for
+      aged, anomalous persistence artifacts and correlating identity and
+      endpoint telemetry over long lookback windows.
+    variants:
+      - "OS-layer persistence: services, scheduled tasks, WMI event subscriptions, and registry run keys providing redundant re-entry."
+      - "Identity-layer persistence: rogue privileged accounts, Kerberos ticket forging, and federated trust manipulation that survives endpoint rebuilds."
+      - "Cloud-layer persistence: malicious OAuth grants, API tokens, and mail rules maintaining access independent of the on-prem footprint."
+    indicators:
+      - "Persistence artifacts with creation timestamps far older than the incident window — services, tasks, or WMI subscriptions created months before detection."
+      - "Privileged accounts or OAuth app grants with no matching HR/onboarding record and no recent interactive logon."
+      - "Long-interval, low-volume beaconing to external infrastructure that predates the investigation's start date."
+      - "Remediation that 'fails': persistence artifacts reappearing after removal, indicating a watchdog or unreached foothold."
+    detection:
+      rule: detect_aged_persistence
+      patterns:
+        - '(?i)(schtasks|wmi.*event|run.key|service.*created).*(suspicious|unsigned|rare|obfuscated)'
+        - '(?i)(oauth|app.grant|consent).*(admin|mail.read|directory.readwrite).*(unapproved|unknown.vendor)'
+        - '(?i)account.created.*(domain.admins|enterprise.admins).*(no.ticket|no.onboarding)'
+        - '(?i)long[\s-]*dwell'
+    severity: critical
+    mitigations:
+      - "Assume-breach eviction: coordinated, simultaneous removal across OS, identity, and cloud planes — never remediate one layer while others stand."
+      - "Identity hygiene: periodic privileged-account and OAuth-consent audits; alert on any new admin grant or app consent outside change control."
+      - "Long-retention telemetry (12+ months) for authentication, persistence creation, and DNS so aged artifacts are visible when an intrusion surfaces."
+      - "Credential and trust reset after confirmed APT activity: rotate KRBTGT twice, rebuild federated trusts, revoke all OAuth grants, re-image endpoints."
+    examples:
+      - summary: "The SolarWinds intrusion began at least as early as March 2020 and was not broadly discovered until December 2020 — nine months of dwell — with CISA noting the actor used multiple initial access vectors beyond the supply-chain vector itself."
+        reference: "https://news.clearancejobs.com/2020/12/18/cisa-solarwinds-compromise-puts-government-and-national-infrastructure-at-grave-risk/"
+      - summary: "FireEye's December 2020 disclosure that a highly sophisticated, state-sponsored actor had breached its own systems — stealing red-team tools — demonstrated that even top-tier defenders can host long-undetected APT dwell."
+        reference: "https://www.nozominetworks.com/blog/cisa-alert-sophisticated-ongoing-cyberattacks-go-beyond-solarwinds"
+    references:
+      - "https://news.clearancejobs.com/2020/12/18/cisa-solarwinds-compromise-puts-government-and-national-infrastructure-at-grave-risk/"
+      - "https://www.nozominetworks.com/blog/cisa-alert-sophisticated-ongoing-cyberattacks-go-beyond-solarwinds"
+      - "https://www.ahadata.com/system/files/media/file/2021/01/hisac-tlp-white-threat-bulletins-jan-8-2021.pdf"
+
+  - id: AEG-T111
+    name: "Custom Implant Families (Behavior Level)"
+    category: apt_tradecraft
+    description: >-
+      APT groups develop bespoke implants — SUNBURST, MoonBounce's
+      in-memory stagers, EchoAgent-class modular RATs — tailored to evade
+      the defenses of their specific targets. Unlike commodity malware,
+      custom implants use long sleep timers, traffic mimicking, and
+      memory-only operation to minimize forensic footprint. Defenders
+      cannot rely on signatures; they must recognize the *behavioral
+      signature*: staged loading, DGA or algorithmically generated
+      infrastructure, and plugin-style modularity.
+    how_it_works: >-
+      Implants are typically staged: a small loader establishes the
+      foothold, then fetches modular plugins on demand so only needed
+      capability is ever present. Common behavioral traits: delayed
+      execution (sleeping days to weeks after installation to outlast
+      sandbox analysis), DGA-generated or algorithmically varied C2
+      domains, legitimate-protocol traffic mimicking (HTTP/DNS shaped to
+      look like ordinary browsing), and in-memory-only payload chains that
+      leave no disk artifacts. Variants: first-stage droppers with minimal
+      functionality; modular RATs that download plugins per task;
+      firmware/bootkit-resident loaders that re-stage user-mode implants
+      after every reboot.
+    variants:
+      - "First-stage loaders: minimal droppers whose only job is to establish C2 and fetch the real payload later."
+      - "Modular RATs: plugin architectures where capabilities (credential theft, keylogging, lateral movement) are downloaded on demand."
+      - "Firmware-resident loaders: below-OS implants that re-stage memory-only user-mode payloads each boot, leaving no disk trace."
+    indicators:
+      - "A process with a long initial sleep/dormancy period that later begins periodic beaconing to algorithmically varied domains."
+      - "DNS query patterns consistent with DGAs: high-entropy labels, high NXDOMAIN rates, short-lived resolutions."
+      - "Staged network behavior: a small initial download followed by larger, plugin-shaped transfers after a delay."
+      - "Memory-resident code with no corresponding on-disk file — visible only via memory scanning or ETW, not file inventory."
+    detection:
+      rule: detect_implant_behavior
+      patterns:
+        - '(?i)(dga|nxdomain.burst|high.entropy.domain|algorithmic.domain)'
+        - '(?i)(beacon|callback).*(jitter|sleep.\d+.days|long.dormancy)'
+        - '(?i)(reflective|in.memory|fileless).*(inject|load|execute)'
+    severity: critical
+    mitigations:
+      - "Network-level: DNS monitoring and response-policy zones against DGA-like domains; TLS inspection at the egress for beacon-shaped traffic."
+      - "Memory and behavior-focused EDR: detect reflective loading, process injection, and anomalous in-memory modules, not just file hashes."
+      - "Application and script control to deny the loader stage (macro, LOLBin, and unsigned-binary execution controls)."
+      - "Threat-intel consumption of implant behavioral reports (Mandiant, CrowdStrike) converted into hunting hypotheses, not just IOC feeds."
+    examples:
+      - summary: "SUNBURST, the SolarWinds backdoor, used long dormant periods and carefully mimicked legitimate Orion traffic patterns — behavior-level traits that made it far harder to spot than its code signature."
+        reference: "https://www.solarwinds.com/sa-overview/certadvisory"
+      - summary: "CrowdStrike's 2026 Technology Threat Landscape reporting documents modular, cloud-pivoting intrusion sets (e.g. actors harvesting credentials and pivoting into cloud environments), illustrating the staged, behavior-driven implant model."
+        reference: "https://go.crowdstrike.com/rs/281-OBQ-266/images/CrowdStrike2026TechnologyThreatLandscapeReport.pdf?utm%5C_medium=dir&"
+    references:
+      - "https://www.solarwinds.com/sa-overview/certadvisory"
+      - "https://go.crowdstrike.com/rs/281-OBQ-266/images/CrowdStrike2026TechnologyThreatLandscapeReport.pdf?utm%5C_medium=dir&"
+      - "https://www.bleepingcomputer.com/news/security/google-spyware-vendors-behind-50-percent-of-zero-days-exploited-in-2023/"
+
+  - id: AEG-T112
+    name: "APT Operational-Security Mistakes That Get Them Caught"
+    category: apt_tradecraft
+    description: >-
+      Even elite APT groups make mistakes — reusing infrastructure,
+      registering domains with traceable details, leaving distinctive tool
+      fingerprints, or generating anomalous logs. Defenders actively hunt
+      for these failures: infrastructure reuse is what lets analysts cluster
+      campaigns and attribute them, as when Kaspersky attributed the
+      MoonBounce UEFI implant to APT41 partly through shared infrastructure
+      fingerprints. This technique is the defender's mirror of APT
+      tradecraft: the catalog of errors that surface hidden campaigns.
+    how_it_works: >-
+      Common APT opsec failures fall into families: infrastructure reuse
+      (same C2 IPs, certificates, or domain registration patterns across
+      campaigns); tool fingerprints (distinctive compiler artifacts,
+      PDB paths, or customized tool configurations); temporal patterns
+      (operators working consistent time zones, or beaconing on rigid
+      schedules); and log-generating activity (authentication from
+      impossible-travel locations, anomalous admin tooling on first-seen
+      hosts). The FireEye 2020 breach surfaced when anomalous activity
+      around its own tooling tripped investigation — the actor's discipline
+      cracked at the edges. Defenders weaponize these failures through
+      infrastructure pivoting, certificate transparency monitoring, and
+      cross-campaign correlation.
+    variants:
+      - "Infrastructure reuse: shared C2 IPs, TLS certificates, or WHOIS/registration patterns linking otherwise separate campaigns."
+      - "Tool and build fingerprints: distinctive compile artifacts, debug paths, or configuration quirks that identify the operator's toolchain."
+      - "Temporal and geographic tells: operator work-hours, holiday gaps, and impossible-travel authentication revealing human schedules."
+    indicators:
+      - "A newly observed C2 domain sharing a TLS certificate, name-server, or registration email with known-malicious infrastructure."
+      - "Malware samples containing internal build paths, language artifacts, or tool configurations matching a known intrusion set."
+      - "Authentication or interactive sessions during the operator's off-hours pattern, or logins inconsistent with the victim's geography."
+      - "Anomalous activity on security-vendor or high-value tooling (as in the FireEye 2020 case) that does not match any internal change."
+    detection:
+      rule: detect_apt_opsec_failure
+      patterns:
+        - '(?i)(certificate|tls.cert).*(reused|shared).*(known.malicious|suspicious)'
+        - '(?i)(pdb.path|debug.string|compile.artifact).*(users\\|desktop|apt|intrusion.set)'
+        - '(?i)impossible.travel|geo.velocity|login.*(new.country).*(privileged)'
+    severity: medium
+    mitigations:
+      - "Invest in infrastructure-pivoting capability: passive DNS, certificate transparency, and WHOIS history to cluster on reuse automatically."
+      - "Enforce impossible-travel and anomalous-admin-tooling alerts on all privileged authentication paths."
+      - "Share and consume infrastructure-level intelligence (not just file hashes) through ISACs and vendor feeds."
+      - "Run proactive threat hunts keyed to known intrusion-set fingerprints rather than waiting for alerts."
+    examples:
+      - summary: "Kaspersky's MoonBounce investigation attributed the UEFI implant to APT41 (Winnti) based on network infrastructure fingerprints and TTP overlap — an attribution built on the actor's infrastructure-reuse mistakes."
+        reference: "https://www.securityweek.com/prolific-chinese-apt-caught-using-moonbounce-uefi-firmware-implant/?amp"
+      - summary: "FireEye's December 2020 disclosure described detecting a highly sophisticated actor inside its own network — the investigation began from anomalous activity the actor could not fully hide, leading to discovery of the red-team tool theft."
+        reference: "https://www.nozominetworks.com/blog/cisa-alert-sophisticated-ongoing-cyberattacks-go-beyond-solarwinds"
+    references:
+      - "https://www.securityweek.com/prolific-chinese-apt-caught-using-moonbounce-uefi-firmware-implant/?amp"
+      - "https://www.nozominetworks.com/blog/cisa-alert-sophisticated-ongoing-cyberattacks-go-beyond-solarwinds"
+      - "https://securelist.com/tag/uefi/feed/"
+
+  - id: AEG-T113
+    name: "Island Hopping Through Trusted Vendors"
+    category: apt_tradecraft
+    description: >-
+      Island hopping — a term popularized by CrowdStrike — describes
+      compromising a victim's trusted third party (vendor, supplier, MSP)
+      and using that trusted relationship as the bridge into the real
+      target. The 2013 Target breach is the textbook case: attackers stole
+      credentials from HVAC vendor Fazio Mechanical Services, which had
+      remote network access for billing, and island-hopped from the vendor
+      into Target's point-of-sale environment, stealing 40 million card
+      records. The trust relationship is the vulnerability.
+    how_it_works: >-
+      The actor maps the target's supply chain for soft entry points —
+      small vendors with remote access but weak security. After
+      compromising the vendor (often via phishing), they abuse the
+      vendor's legitimate access path: VPN credentials, RMM agents, or
+      shared service accounts. Variants: credential-based hopping (stolen
+      vendor VPN logins, as at Target); tooling-based hopping (abusing the
+      MSP's remote-management platform to push into all clients);
+      data-flow hopping (riding shared file transfers or API integrations).
+      Detection focuses on third-party access paths behaving anomalously —
+      a vendor account touching systems it never normally touches, or
+      vendor tooling active outside maintenance windows.
+    variants:
+      - "Credential-based hopping: stolen vendor VPN or portal credentials used to enter the target network directly (Target/Fazio Mechanical)."
+      - "Tooling-based hopping: the vendor's remote-management or monitoring agent abused as the access and lateral-movement path."
+      - "MSP-scale hopping: one compromised service provider leveraged against many downstream clients simultaneously."
+    indicators:
+      - "A third-party/vendor account authenticating to internal systems outside its documented scope or during unusual hours."
+      - "Vendor remote-access tooling spawning processes or network connections inconsistent with its support function."
+      - "Lateral movement originating from a vendor jump host or VPN concentrator segment toward crown-jewel systems."
+      - "Vendor-side compromise notifications (or threat intel) naming a vendor you grant network access to."
+    detection:
+      rule: detect_island_hopping
+      patterns:
+        - '(?i)(vendor|third.party|msp|contractor).*(account|session).*(anomalous.scope|off.hours|new.host)'
+        - '(?i)(rmm|remote.support|vendor.vpn).*(lateral|credential.dump|new.process.tree)'
+        - '(?i)jump.host.*(pos|payment|dc|domain.controller)'
+    severity: critical
+    mitigations:
+      - "Zero-trust third-party access: dedicated vendor jump hosts, just-in-time privileged access, and session recording — never standing VPN credentials."
+      - "Strict network segmentation so a vendor's access segment cannot reach payment, OT, or domain-controller networks (the Target lesson)."
+      - "Vendor access baselining and anomaly alerting: what systems, what hours, what actions — alert on deviation."
+      - "Supply-chain security requirements in contracts: MFA, logging, breach notification, and periodic assessment of vendors with network access."
+    examples:
+      - summary: "Attackers phished HVAC contractor Fazio Mechanical Services, stole its Target network credentials, and used that trusted vendor access to reach Target's POS systems — 40M card records and 70M customer records stolen in the 2013 breach."
+        reference: "https://www.breachsense.com/blog/target-data-breach/"
+      - summary: "Investigators found the Target attackers entered via the HVAC vendor's credentials at least two months before card theft began, underscoring how long island-hop footholds can sit quietly in trusted access paths."
+        reference: "https://www.darkreading.com/cyberattacks-data-breaches/target-breach-phishing-attack-implicated"
+    references:
+      - "https://www.breachsense.com/blog/target-data-breach/"
+      - "https://www.darkreading.com/cyberattacks-data-breaches/target-breach-phishing-attack-implicated"
+      - "https://www.crowdstrike.com/en-gb/cybersecurity-101/cyberattacks/supply-chain-attack/?utm_activation=corporate+blog%2Crsa+conference"
+
+  - id: AEG-T114
+    name: "Spear-Phish-to-Implant Chains"
+    category: apt_tradecraft
+    description: >-
+      The classic APT intrusion chain: a highly targeted spear-phishing
+      message delivers or links to an implant, establishing the initial
+      foothold that later stages build on. CrowdStrike's 2026 threat
+      reporting documents Iran-nexus CHARMING KITTEN running spear-phishing
+      against MENA technology and government workers to deploy its modular
+      EchoAgent RAT. These campaigns succeed through reconnaissance-driven
+      personalization, not volume — a handful of convincing lures beats
+      ten thousand generic ones.
+    how_it_works: >-
+      Operators research targets via LinkedIn, conference programs, and
+      breached data, then craft lures referencing real projects, events, or
+      colleagues. Delivery variants: malicious attachments (weaponized
+      documents exploiting viewer flaws or macro execution); credential
+      phishing via cloned single-sign-on pages; link-based delivery to
+      fake software downloads or cloud-share pages. The click installs a
+      first-stage implant (see AEG-T111), which beacons out and begins
+      the dwell. Defenders detect these chains at three points: the lure
+      (email auth failures, lookalike domains), the delivery (sandbox
+      detonation, URL rewriting hits), and the implant's first beacon.
+    variants:
+      - "Weaponized attachments: documents or archives that exploit rendering flaws or abuse macros/scripting on open."
+      - "Credential-harvest lures: cloned SSO or webmail pages capturing passwords and session tokens for later use."
+      - "Fake-download lures: trojanized software or 'secure document' downloads, sometimes paired with help-desk pretexts."
+    indicators:
+      - "Emails from lookalike domains or with failing SPF/DKIM/DMARC that reference internal projects, events, or colleagues with unusual specificity."
+      - "First-seen URLs or newly registered domains clicked by a small, high-value set of recipients within a short window."
+      - "A document or archive opened by a target followed within minutes by new process creation and external beaconing."
+      - "Credential-phishing kit artifacts: cloned login pages, Telegram-exfiltrated credentials, or impossible-travel logons after a click."
+    detection:
+      rule: detect_spearphish_implant_chain
+      patterns:
+        - '(?i)(lookalike|typosquat|homoglyph).*(domain|sender)'
+        - '(?i)attachment.*(detonated|sandbox.*malicious|macro.*autoexec)'
+        - '(?i)(credential|phish.kit|fake.sso|cloned.login)'
+    severity: critical
+    mitigations:
+      - "Email authentication (SPF, DKIM, DMARC at enforcement) plus lookalike-domain monitoring and takedown."
+      - "Attachment sandboxing and URL rewriting/isolation for all inbound mail, especially to high-value targets."
+      - "Phishing-resistant MFA (FIDO2/WebAuthn) so harvested credentials alone cannot complete authentication."
+      - "Targeted awareness for high-risk roles (executives, finance, IT admins) with simulated spear-phishing tuned to current lures."
+    examples:
+      - summary: "CrowdStrike reported CHARMING KITTEN spear-phishing MENA technology and government workers and deploying the modular EchoAgent RAT alongside decoy files tied to a legitimate January 2026 technology conference."
+        reference: "https://go.crowdstrike.com/rs/281-OBQ-266/images/CrowdStrike2026TechnologyThreatLandscapeReport.pdf?utm%5C_medium=dir&"
+      - summary: "Mandiant's reporting on UNC3944/Scattered Spider documented phishing kits that send stolen credentials to actor-controlled Telegram channels and deploy remote management software — the same lure-to-implant pattern in a cybercrime context."
+        reference: "https://infocon.org/mirrors/vx%20underground%20-%202025%20June/Papers/Malware%20Defense/Malware%20Analysis/2023/2023-09-18%20-%20-Scattered%20Spider-%20group%20launches%20ransomware%20attacks%20while%20expanding%20targets%20in%20hospitality%2C%20retail.pdf"
+    references:
+      - "https://go.crowdstrike.com/rs/281-OBQ-266/images/CrowdStrike2026TechnologyThreatLandscapeReport.pdf?utm%5C_medium=dir&"
+      - "https://www.bleepingcomputer.com/news/security/google-spyware-vendors-behind-50-percent-of-zero-days-exploited-in-2023/"
+      - "https://intel.threadlinqs.com/threat/TL-2026-3753"
+
+  - id: AEG-T115
+    name: "UEFI/Firmware Persistence Concepts"
+    category: apt_tradecraft
+    description: >-
+      Firmware implants live below the operating system in UEFI/SPI flash,
+      executing before the OS or security tools load. Kaspersky's 2022
+      MoonBounce discovery — attributed to APT41 — showed an implant that
+      persists across disk formatting, disk replacement, and OS
+      reinstallation, staging memory-only payloads that leave no disk
+      trace. CISA has called UEFI a critical, under-researched attack
+      surface, warning that every UEFI attack involves persistence by
+      design. Defenders cannot see these implants with OS-level tools;
+      detection requires firmware inventory, Secure Boot enforcement, and
+      boot-integrity telemetry.
+    how_it_works: >-
+      Attackers with sufficient access (often via prior remote compromise)
+      modify a UEFI firmware component — MoonBounce altered an existing
+      DXE driver rather than adding one, for stealth — to hook the boot
+      flow. At each boot, the implant injects a kernel-mode stager that
+      deploys user-mode malware entirely in memory, which then fetches
+      further payloads from the internet. Variants: DXE driver
+      addition/modification (MoonBounce, MosaicRegressor); Secure Boot
+      bypass via revoked-but-still-trusted bootloaders (BlackLotus);
+      SPI-flash implants surviving all disk-level remediation. Observable
+      at detection level: unexpected Secure Boot state changes,
+      bootloader file-date anomalies, and memory-integrity/BitLocker
+      disablement preceding payload staging.
+    variants:
+      - "DXE tampering: modifying or adding UEFI drivers (MoonBounce, MosaicRegressor) to hook the boot sequence."
+      - "Secure Boot bypass: exploiting revoked-but-trusted bootloaders to load unsigned code despite Secure Boot (BlackLotus)."
+      - "SPI-flash residence: implants stored on motherboard flash, surviving disk replacement and OS reinstall."
+    indicators:
+      - "Secure Boot unexpectedly disabled or in setup mode on hosts where policy mandates enforcement."
+      - "Bootloader files with anomalous modification dates, or revoked bootloader hashes present in the boot chain."
+      - "Memory integrity (HVCI) or BitLocker disabled without a matching change ticket, especially near boot-time anomalies."
+      - "Firmware inventory drift: SPI flash image hashes that do not match the vendor gold image."
+    detection:
+      rule: detect_firmware_persistence
+      patterns:
+        - '(?i)secure.boot.*(disabled|setup.mode|policy.violation)'
+        - '(?i)(bootloader|bootmgfw|shim).*(unexpected.hash|revoked|anomalous.date)'
+        - '(?i)(hvci|memory.integrity|bitlocker).*(disabled|suspended).*(no.ticket)'
+    severity: critical
+    mitigations:
+      - "Enforce UEFI Secure Boot with properly managed PK/KEK/db/dbx stores and verify it fleet-wide — do not assume it is on."
+      - "Firmware inventory and attestation: baseline SPI flash images, monitor for drift, and use TPM-measured boot where available."
+      - "Apply vendor firmware updates promptly, including Secure Boot revocation (dbx) updates that block bypassable bootloaders."
+      - "Endpoint controls that detect below-OS tampering: firmware scanning features, boot-log collection, and HVCI enforcement."
+    examples:
+      - summary: "Kaspersky discovered MoonBounce (2021, disclosed Jan 2022) — a UEFI implant in SPI flash attributed to APT41 that persists across disk replacement and stages memory-only payloads, the third in-the-wild UEFI bootkit after LoJax and MosaicRegressor."
+        reference: "https://www.computerweekly.com/news/252512229/MoonBounce-firmware-bootkit-shows-advances-in-malicious-implants"
+      - summary: "CISA's August 2023 call to action warned that UEFI is a critical attack surface where every attack involves persistence, citing incident-response lessons from the BlackLotus bootkit and the industry's still-maturing secure-update practices."
+        reference: "https://www.securityweek.com/cisa-calls-urgent-attention-to-uefi-attack-surfaces/"
+    references:
+      - "https://www.computerweekly.com/news/252512229/MoonBounce-firmware-bootkit-shows-advances-in-malicious-implants"
+      - "https://www.securityweek.com/cisa-calls-urgent-attention-to-uefi-attack-surfaces/"
+      - "https://www.scmagazine.com/brief/cisa-immediate-action-on-uefi-cybersecurity-needed"
+
+  - id: AEG-T116
+    name: "Cloud-Tenant Takeover TTPs"
+    category: apt_tradecraft
+    description: >-
+      After breaching on-prem identity, APT actors pivot into the victim's
+      cloud tenant — Microsoft 365/Azure, Google Workspace — where they
+      forge authentication tokens, manipulate federated identity, and plant
+      API-based persistence that is invisible to endpoint tools. CISA's
+      companion alert AA21-008A to the SolarWinds advisory documented
+      exactly this: the actor bypassed federated identity solutions, used
+      forged tokens to move laterally into Microsoft cloud environments,
+      and established difficult-to-detect API persistence. Cloud takeover
+      converts a network intrusion into durable, remote, credential-free
+      access.
+    how_it_works: >-
+      The chain typically runs: compromise on-prem identity infrastructure
+      (AD FS servers, SAML signing certificates) → forge SAML/OAuth tokens
+      to impersonate any user, including global admins → establish
+      cloud-native persistence via malicious OAuth app grants, service
+      principals, or mail transport/forwarding rules. Variants:
+      token-forging via compromised federation trust; consent-grant abuse
+      (tricking or forcing admin consent to a malicious app); API-only
+      persistence that never touches an endpoint. CISA even released the
+      Sparrow tool to help defenders hunt these artifacts. Detection lives
+      in identity and cloud-audit logs: impossible token usage, anomalous
+      app consents, and Graph/API calls outside baseline.
+    variants:
+      - "Federation trust abuse: compromised SAML signing keys used to forge tokens and impersonate privileged cloud users."
+      - "Malicious OAuth consent grants: rogue applications granted mail, directory, or file permissions for API-based access."
+      - "Cloud-native persistence: service principals, automation accounts, and mail rules maintaining access without endpoints."
+    indicators:
+      - "SAML/OAuth tokens used from unexpected IPs or with anomalous claims (e.g. forged issuer, unusual lifetime) for privileged accounts."
+      - "New OAuth app consent grants — especially with Mail.Read, Directory.ReadWrite.All, or Files permissions — outside change control."
+      - "Mail forwarding/transport rules or eDiscovery-style searches created by accounts that never normally perform them."
+      - "Microsoft Graph or cloud management API calls at unusual volume or hours from unfamiliar applications."
+    detection:
+      rule: detect_cloud_tenant_takeover
+      patterns:
+        - '(?i)(oauth|consent.grant|service.principal).*(mail.read|directory.readwrite|files.readwrite.all)'
+        - '(?i)saml.*(forged|anomalous.issuer|unexpected.ip|impossible.travel)'
+        - '(?i)(transport.rule|inbox.rule|forwarding).*(external|auto.forward).*(new|modified)'
+    severity: critical
+    mitigations:
+      - "Harden federated identity: isolate AD FS, use phishing-resistant MFA for all admins, and monitor SAML signing certificate usage."
+      - "Govern OAuth consent: admin-consent workflow for all apps, periodic consent audits, and alerts on high-privilege grants."
+      - "Centralize and retain cloud audit logs (Entra/AWS CloudTrail/GWS audit) with detections for token anomalies and API-based persistence."
+      - "Post-incident: rotate federation certificates, revoke all OAuth grants, and re-verify every service principal — treat the tenant as compromised until proven otherwise."
+    examples:
+      - summary: "CISA Alert AA21-008A (Jan 2021), companion to the SolarWinds advisory, documented the APT actor compromising federated identity, forging authentication tokens to reach Microsoft 365/Azure, and planting API-based persistence; CISA released the Sparrow detection tool for defenders."
+        reference: "https://www.ahadata.com/system/files/media/file/2021/01/hisac-tlp-white-threat-bulletins-jan-8-2021.pdf"
+      - summary: "CrowdStrike's 2026 reporting shows actors routinely harvesting on-prem credentials and pivoting into victim cloud environments for reconnaissance and data access — the same tenant-takeover pattern at scale."
+        reference: "https://campustechnology.com/articles/2026/08/12/report-cloud-crime-on-the-rise-as-attackers-exploit-trust.aspx?admgarea=topic.security"
+    references:
+      - "https://www.ahadata.com/system/files/media/file/2021/01/hisac-tlp-white-threat-bulletins-jan-8-2021.pdf"
+      - "https://campustechnology.com/articles/2026/08/12/report-cloud-crime-on-the-rise-as-attackers-exploit-trust.aspx?admgarea=topic.security"
+      - "https://www.crowdstrike.com/en-gb/cybersecurity-101/cyberattacks/supply-chain-attack/?utm_activation=corporate+blog%2Crsa+conference"

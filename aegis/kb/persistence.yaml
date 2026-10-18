@@ -1,0 +1,635 @@
+pack: persistence
+version: "1.0"
+techniques:
+  - id: AEG-T049
+    name: "Agent Long-Term Memory Poisoning"
+    category: persistence
+    description: >-
+      An attacker plants malicious content in an AI agent's long-term memory
+      (experience stores, RAG-backed memory, saved preferences, or "learned"
+      procedures) so the agent reuses it in later, seemingly unrelated sessions.
+      Because the poisoned record is retrieved by the agent's own memory system
+      and treated as trusted past experience, the malicious behavior persists
+      across restarts and looks like the agent's own learned knowledge rather
+      than an external injection. This turns a one-shot prompt injection into a
+      durable backdoor in the agent's behavior.
+    how_it_works: >-
+      Agents that write tool outputs, documents, emails, or conversation
+      summaries into memory give an attacker a write path: any untrusted
+      content the agent processes can become a stored "memory". Later, when a
+      benign task is semantically similar, retrieval surfaces the poisoned
+      record and the agent imitates its embedded unsafe pattern. Named
+      variants: (1) experience-record injection (MemoryGraft) — malicious
+      procedure templates stored as "successful past tasks" that the agent's
+      semantic-imitation heuristic replays; (2) trigger-backdoored memory
+      (MemPoison) — trigger phrases embedded so retrieval activates a payload
+      only when the trigger appears; (3) tool-selection hijacking (MemMorph) —
+      records disguised as technical facts or incident reports that bias which
+      tool the agent picks; (4) email-to-memory writes (GhostWriter) — a hidden
+      instruction in an email the agent reads gets persisted, then a later
+      ordinary user request retrieves and activates it. OWASP tracks this as
+      ASI06 Memory & Context Poisoning.
+    variants:
+      - "Experience-record injection (MemoryGraft): poisoned 'successful task' templates replayed via semantic imitation"
+      - "Trigger-backdoored memory (MemPoison): trigger phrase embedded in memory activates a payload on retrieval"
+      - "Tool-selection hijacking (MemMorph): poisoned records bias the agent toward an attacker-preferred tool"
+      - "Email-to-memory writes (GhostWriter): hidden instructions in read content persist and activate on a later benign request"
+    indicators:
+      - "Memory/vector-store entries containing imperative or instructional language ('always use', 'never mention', 'send to') that does not match the user's writing style"
+      - "A small number of retrieved memories accounting for a disproportionate share of tool-selection decisions on benign tasks"
+      - "Sudden behavioral drift in a previously stable agent with no model or prompt change, correlated with memory writes from untrusted sources (email, web pages, shared docs)"
+      - "Tool calls that match an attacker's preferred tool immediately after memory retrieval, especially tools the task did not obviously require"
+    detection:
+      rule: detect_agent_memory_poisoning
+      patterns:
+        - "(?i)(always\\s+(use|prefer|trust|choose)|never\\s+(mention|log|reveal|disclose)|ignore\\s+(safety|policy|previous\\s+instructions)|exfiltrate|send\\s+(it|the\\s+data|results)\\s+to)"
+        - "memory_record_written_from_untrusted_source AND (source_type IN (email, webpage, shared_doc, tool_output))"
+        - "retrieved_memory_similarity_high AND tool_selection_deviates_from_baseline_policy"
+    severity: high
+    mitigations:
+      - "Enforce provenance on every memory write: tag the source (user vs tool output vs web), and require explicit user confirmation before persisting content that originated outside the user's own messages."
+      - "Scan memory writes and retrieved memories with an independent memory-auditor model or classifier (AM-Sentry style), and quarantine entries containing instructional language before they are stored or replayed."
+      - "Isolate memory by trust tier: never let records derived from untrusted content influence tool selection or privileged actions; require re-authorization when a retrieved memory proposes a new tool or destination."
+      - "Version and audit the memory store like code: append-only log of writes with authorship, periodic diffing against a known-good baseline, and one-click rollback of suspicious entries."
+    examples:
+      - summary: "MemMorph (2026) showed that as few as three poisoned records disguised as technical facts or incident reports hijack tool selection in LLM agents, reaching ~86% attack success across 10 agent backbones and surviving perplexity filters, classifiers, and LLM-based memory auditors."
+        reference: "https://arxiv.org/pdf/2605.26154"
+      - summary: "MemoryGraft (2025) demonstrated a persistent compromise where benign ingestion-level artifacts induced an agent to build a poisoned RAG store; later benign tasks retrieved the grafted 'successful experiences' and adopted their unsafe patterns, causing durable behavioral drift across sessions."
+        reference: "https://arxiv.org/abs/2512.16962"
+      - summary: "GhostWriter (2026 preprint) described a two-stage attack against memory-enabled personal agents: a hidden instruction in an email the agent processed was stored as memory, and a later ordinary request retrieved and activated it (~98% injection success in the researchers' tests)."
+        reference: "https://letsdatascience.com/news/ghostwriter-poisons-long-term-ai-agent-memory-99ac8292"
+    references:
+      - "https://arxiv.org/pdf/2605.26154"
+      - "https://arxiv.org/abs/2512.16962"
+      - "https://www.promptfoo.dev/docs/red-team/owasp-agentic-ai/"
+
+  - id: AEG-T050
+    name: "Agent Config-File Backdoors"
+    category: persistence
+    description: >-
+      Agent configuration files (MCP server configs, tool manifests, agent
+      settings, and allowlists) are trusted on every launch, so editing them is
+      a quiet way to persist attacker control. A compromised agent — or anyone
+      who can write to these files — can register a malicious tool server,
+      weaken the sandbox, add attacker commands to an allowlist, or swap a
+      benign tool definition for a hostile one after it was approved. The
+      backdoor reactivates every time the agent starts, with no further
+      attacker interaction.
+    how_it_works: >-
+      Agents load behavioral configuration from files such as mcp.json,
+      .claude/settings.json, permissions/allowlist files, and tool manifests.
+      Named variants: (1) MCP config rug-pull (CVE-2025-54136) — a benign
+      configuration is committed and approved, then replaced with a malicious
+      payload that executes silently on every subsequent launch because tool
+      definitions are not re-validated; (2) allowlist/permission weakening —
+      entries added to an agent's permissions file that pre-approve dangerous
+      operations (shell, network, file writes); (3) tool-manifest tampering —
+      a server binary path or command in the config is pointed at an
+      attacker-controlled executable while the displayed tool name stays
+      familiar. Because the agent treats its own config as trusted, no prompt
+      injection is needed at runtime.
+    variants:
+      - "MCP config rug-pull (CVE-2025-54136): benign config approved, then swapped for a malicious payload that persists across launches"
+      - "Allowlist/permission weakening: pre-approvals for dangerous operations added to the agent's permissions file"
+      - "Tool-manifest tampering: server command or binary path in config redirected to attacker-controlled executable"
+    indicators:
+      - "Agent or tool config files (mcp.json, settings.json, permissions files) modified outside of an install/update event, especially by a non-human process"
+      - "Tool definitions at runtime differ from what was shown at approval time (description, command, or server path changed)"
+      - "New entries in an agent allowlist that pre-approve shell execution, network egress, or broad file writes the user never requested"
+      - "Agent launches a server binary from an unexpected path while the UI still shows the original tool name"
+    detection:
+      rule: detect_agent_config_backdoor
+      patterns:
+        - '(?i)(tool|skill|plugin)[^\n]{0,40}(definition|description|schema)[^\n]{0,40}changed'
+        - "(?i)(<IMPORTANT>|ignore\\s+(previous|prior)\\s+instructions|read\\s+~?/\\.ssh|pass\\s+.*\\s+as\\s+['\"]?sidenote)"
+        - '(?i)(mcp\.json|settings\.json|permissions\.json|claude\.json)'
+    severity: high
+    mitigations:
+      - "Pin tool definitions at approval time: hash the full description, schema, command, and server path, and refuse to execute when the hash changes without a fresh, explicit user re-approval."
+      - "Treat agent config files as executable code: version-control them, require review for changes, alert on any write by a process other than the installer or the user's editor, and sign configs where the platform supports it."
+      - "Run agent tool servers with least privilege and sandboxing (no broad filesystem or network access by default), so a tampered config cannot silently escalate the agent's reach."
+      - "Periodically diff live config against the last approved snapshot and surface any drift to the user before the agent acts on it."
+    examples:
+      - summary: "CVE-2025-54136 (CVSS 8.8, disclosed by Check Point Research, July 2025): Cursor did not re-validate MCP tool definitions after initial approval, so an attacker could commit a benign config, wait for approval, then replace it with a malicious payload executed silently on every launch. Patched in Cursor 1.3."
+        reference: "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+    references:
+      - "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+      - "https://www.scworld.com/news/how-ai-coding-assistants-could-be-compromised-via-rules-file"
+
+  - id: AEG-T051
+    name: "Scheduled-Task Planting by a Compromised Agent (Cron and Job Backdoors)"
+    category: persistence
+    description: >-
+      A compromised agent with shell or API access can plant scheduled tasks —
+      cron entries, systemd timers, cloud schedulers, or CI scheduled
+      workflows — that re-run attacker commands on a timer. This converts a
+      transient agent session into durable, recurring execution that survives
+      session end, reboots, and even agent reinstallation. Because schedulers
+      are legitimate infrastructure, the backdoor blends into normal
+      operational noise.
+    how_it_works: >-
+      Once an agent can execute commands or call cloud/CI APIs, it (or the
+      attacker steering it) can register recurring work outside the agent's
+      own lifecycle. Named variants: (1) cron/crontab entries — a line added
+      to the user's or system's crontab that periodically fetches or executes
+      attacker content; (2) cloud scheduler jobs — CloudWatch/EventBridge,
+      Cloud Scheduler, or CI cron workflows created through APIs the agent can
+      reach; (3) agent-harness task queues — abusing the agent platform's own
+      "scheduled runs" or background-task features so the agent re-invokes
+      itself with attacker-supplied instructions. The scheduled payload often
+      starts as a benign-looking maintenance command and is swapped for a
+      hostile one later.
+    variants:
+      - "Cron/crontab entries: recurring attacker commands added to user or system crontabs"
+      - "Cloud scheduler jobs: EventBridge/Cloud Scheduler/CI cron workflows created via APIs the agent can reach"
+      - "Agent-harness task queues: abusing the platform's own scheduled-run/background-task features for self-reinvocation"
+    indicators:
+      - "New crontab entries or systemd timers created by the agent's UID, especially ones invoking network fetchers (curl/wget) piped into shells"
+      - "Scheduled cloud/CI jobs created during or shortly after an agent session, with commands or container images the user did not author"
+      - "A deleted scheduled task reappearing, or a benign scheduled command whose payload changes without a corresponding change ticket"
+      - "Outbound network connections at fixed intervals from hosts where the agent ran, matching a scheduler's cadence rather than user activity"
+    detection:
+      rule: detect_agent_scheduled_task_planting
+      patterns:
+        - "(?i)(curl|wget|fetch)\\b[^\\n]*\\|\\s*(bash|sh|zsh|powershell)"
+        - "crontab_write OR systemd_timer_create AND actor_process IN agent_toolchain"
+        - "scheduled_job_created AND creator_identity == agent_service_account AND job_payload NOT IN approved_baseline"
+    severity: high
+    mitigations:
+      - "Deny agents the ability to create or modify scheduled tasks by default; require an explicit, human-approved change request for any cron, timer, scheduler, or CI-cron creation."
+      - "Monitor and alert on all scheduler mutations (crontab writes, timer creation, cloud scheduler API calls) with the creating identity and full payload, and reconcile against an approved baseline."
+      - "Run agents under dedicated, low-privilege service accounts that lack write access to system crontabs, /etc/cron.d, and cloud scheduler APIs."
+      - "Audit cloud and CI scheduled jobs regularly for drift: payload hashes, creator identity, and creation time correlated against agent session logs."
+    examples:
+      - summary: "Anthropic's GTG-1002 report (2025) documented AI agents maintaining 'a persistent operational context in sessions spanning days, allowing campaigns to seamlessly resume after interruptions' — the operational pattern that scheduled-task planting industrializes: attacker work that outlives any single agent session."
+        reference: "https://assets.anthropic.com/m/ec212e6566a0d47/original/Disrupting-the-first-reported-AI-orchestrated-cyber-espionage-campaign.pdf"
+    references:
+      - "https://assets.anthropic.com/m/ec212e6566a0d47/original/Disrupting-the-first-reported-AI-orchestrated-cyber-espionage-campaign.pdf"
+      - "https://www.controlrisks.com/our-thinking/insights/the-agentic-shift-how-autonomous-ai-is-reshaping-the-global-threat-landscape"
+
+  - id: AEG-T052
+    name: "Skill and Plugin Trojans (Agent Extension Supply Chain)"
+    category: persistence
+    description: >-
+      Agents gain capabilities through installable skills, plugins, and
+      extensions — and each install is a supply-chain decision. A trojaned
+      skill or extension ships working functionality plus a hidden backdoor:
+      exfiltrating agent context, weakening guardrails, or phoning home. Once
+      installed, it persists across sessions and updates, and its permissions
+      let it ride along on everything the agent does. Ownership changes and
+      silent auto-updates make even previously-safe extensions suspect.
+    how_it_works: >-
+      Extension and skill marketplaces for agent tooling generally lack the
+      vetting of mature app stores. Named variants: (1) trojaned MCP/skill
+      servers — a useful-looking server whose tool descriptions or runtime
+      behavior exfiltrate data (Invariant Labs' 2025 tool-poisoning
+      demonstrations); (2) extension takeover — a popular extension is sold to
+      a new maintainer who pushes an update with malicious code, inheriting
+      the installed base and its granted permissions; (3) typosquatted skills —
+      a skill named nearly identically to a trusted one, installed by mistake
+      and auto-loaded on every agent start. The malicious behavior is
+      typically time-delayed or conditional so it survives initial testing.
+    variants:
+      - "Trojaned MCP/skill servers: useful-looking servers whose tool descriptions or runtime exfiltrate data"
+      - "Extension takeover: popular extension sold to a new maintainer who pushes a malicious update to the existing installed base"
+      - "Typosquatted skills: near-identical names to trusted skills, installed by mistake and auto-loaded every launch"
+    indicators:
+      - "Newly installed or updated agent extension/skill containing obfuscated code, or requesting broad host, network, or file permissions disproportionate to its function"
+      - "Extension ownership/publisher change in the marketplace followed by an update that adds new permissions or network calls"
+      - "Outbound connections from the agent host to rare or newly registered domains beginning shortly after an extension install or update"
+      - "Skill files appearing in auto-load directories from sources outside the organization's allowlisted skill registry"
+    detection:
+      rule: detect_skill_plugin_trojan
+      patterns:
+        - "extension_installed_from_non_marketplace_url OR extension_publisher_changed_within_30d"
+        - "(?i)eval\\s*\\(\\s*atob|fetch\\s*\\(\\s*['\"]https?://[^'\"]+\\.ru|new\\s+Function\\s*\\("
+        - "outbound_connection_to_rare_domain WITHIN 1h OF extension_install_or_update"
+    severity: high
+    mitigations:
+      - "Maintain an allowlisted skill/extension registry: agents may only install from vetted sources, and every install or update requires explicit user approval with a visible permission diff."
+      - "Pin extension versions and review updates like code changes — especially after publisher/ownership changes — before the agent loads them."
+      - "Run extensions with least privilege: sandbox their network and filesystem access, and monitor their outbound traffic independently of the agent's."
+      - "Inventory installed skills/extensions continuously and alert on anything not in the registry, with one-click removal."
+    examples:
+      - summary: "The Great Suspender (2021): after the popular Chrome extension (2M+ users) changed hands in 2020, the new maintainer pushed an update containing code capable of executing remote scripts and tracking users; Google forcibly removed it from the Chrome Web Store in February 2021."
+        reference: "https://www.thurrott.com/cloud/web-browsers/google-chrome/246983/google-patches-chrome-removes-suspect-extension"
+      - summary: "Invariant Labs (April 2025) demonstrated that a malicious MCP server co-present with legitimate servers could instruct an agent to read user message history and transmit it to an attacker-controlled number, with the poisoned tool description appearing benign in review UIs."
+        reference: "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+    references:
+      - "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+      - "https://www.thurrott.com/cloud/web-browsers/google-chrome/246983/google-patches-chrome-removes-suspect-extension"
+
+  - id: AEG-T053
+    name: "Startup-Script Modification"
+    category: persistence
+    description: >-
+      Startup scripts and autostart entries run automatically at boot or login,
+      often with the user's full privileges — making them a classic
+      persistence anchor. An agent with file-write access can append commands
+      to shell profiles (.bashrc, .zshrc), drop .desktop files into autostart
+      directories, add Registry Run keys, or install user-level systemd units.
+      The payload then executes on every login, long after the agent session
+      that planted it has ended.
+    how_it_works: >-
+      The technique abuses legitimate auto-execution mechanisms rather than
+      exploiting software. Named variants: (1) shell profile poisoning —
+      commands appended to .bashrc/.zshrc/.profile that run in every new
+      interactive shell; (2) OS autostart entries — Registry Run keys
+      (MITRE T1547.001), XDG .desktop autostart files (T1547.013), macOS Login
+      Items (T1547.015); (3) user service units — systemd --user timers or
+      services that start at login. MITRE catalogs this whole family as
+      T1547 Boot or Logon Autostart Execution (tactics: Persistence and
+      Privilege Escalation). For agents, the tell is that the write came from
+      the agent toolchain rather than from the user's own shell or installer.
+    variants:
+      - "Shell profile poisoning: commands appended to .bashrc/.zshrc/.profile executing in every new shell"
+      - "OS autostart entries: Registry Run keys, XDG .desktop files, macOS Login Items (MITRE T1547 family)"
+      - "User service units: systemd --user timers/services that start at login"
+    indicators:
+      - "Shell profile files (.bashrc, .zshrc, .profile) modified by the agent process or during an agent session rather than by the user's interactive shell"
+      - "New Registry Run/RunOnce values, XDG autostart .desktop files, or Login Items referencing scripts or binaries the user did not install"
+      - "Startup entries whose target commands include network fetchers, encoded blobs (base64), or paths under /tmp or the agent's workspace"
+      - "A startup script whose hash changed since the last known-good baseline without a corresponding software install"
+    detection:
+      rule: detect_startup_script_modification
+      patterns:
+        - '(?i)(\.bashrc|\.zshrc|\.profile|\.bash_profile|/\.config/autostart/)'
+        - '(?i)(curl|wget|powershell\s+-e|base64\s+(-d|--decode)|/tmp/|/dev/shm/)'
+        - '(?i)(Run|RunOnce)\\[^\n]*\.(exe|bat|ps1|vbs|lnk)'
+    severity: high
+    mitigations:
+      - "Baseline all autostart locations and alert on any change, with the writing process identified — treat agent-toolchain writes to these paths as hostile until reviewed."
+      - "Run agents under accounts without write access to user profile scripts and autostart directories where feasible, or make those paths append-monitored."
+      - "Require code review for any change to startup scripts, and keep them in version control so diffs are visible."
+      - "On detection, remove the entry, rotate credentials the agent could have reached, and re-image or restore the profile from a known-good copy."
+    references:
+      - "https://attack.mitre.org/techniques/T1547/"
+      - "https://attack.mitre.org/techniques/T1547/013"
+
+  - id: AEG-T054
+    name: "Poisoned System Prompts Persisted in a Workspace"
+    category: persistence
+    description: >-
+      AI coding agents read behavioral instructions from files that ship with
+      the code they work on — AGENTS.md, .cursorrules, .cursor/rules/,
+      .github/copilot-instructions.md, CLAUDE.md. Poisoning one of these
+      files turns the agent's own instruction set into a persistent backdoor:
+      every future agent run in that workspace follows the attacker's hidden
+      directives, injecting backdoors, leaking credentials, or suppressing its
+      own logging. The poison propagates through templates, forks, and pull
+      requests exactly like trusted project documentation.
+    how_it_works: >-
+      These rule files are prompts that the agent ingests automatically, and
+      they travel with the repository. Named variants: (1) hidden-Unicode
+      injection — bidirectional markers, zero-width joiners, or HTML comments
+      hide malicious directives that render as whitespace to human reviewers
+      but are fully legible to the model (Pillar Security's "Rules File
+      Backdoor", March 2025); (2) plain-visibility rule poisoning — overt
+      instructions ("always add this script tag", "never report added code")
+      that survive review because reviewers skim rule files; (3) inherited
+      poisoning — a poisoned rules file in a shared template, starter repo, or
+      merged PR silently compromises every project that adopts it. Both
+      GitHub Copilot and Cursor were shown following such hidden instructions
+      and silently appending attacker content to generated code.
+    variants:
+      - "Hidden-Unicode injection: bidirectional/zero-width characters hiding directives invisible to reviewers (Pillar 'Rules File Backdoor')"
+      - "Plain-visibility rule poisoning: overt malicious instructions in rule files that survive cursory review"
+      - "Inherited poisoning: poisoned rules in shared templates, starters, or merged PRs compromising every adopting project"
+    indicators:
+      - "Non-ASCII or zero-width/bidirectional Unicode characters in workspace rule/prompt files (.cursorrules, AGENTS.md, copilot-instructions.md)"
+      - "Rule files added or modified by contributors, bots, or agents outside the normal review path, especially in templates and starters"
+      - "Agent-generated code containing unexpected external URLs, script tags, or credential-handling code not requested by the user"
+      - "Agent responses that omit mention of injected content they demonstrably added (suppression directives in effect)"
+    detection:
+      rule: detect_poisoned_workspace_prompts
+      patterns:
+        - "non_ascii_byte_count > 0 IN (AGENTS.md, .cursorrules, .cursor/rules/*, .github/copilot-instructions.md, CLAUDE.md) — inspect each hit"
+        - "(?i)(do\\s+not\\s+mention|never\\s+report|suppress.*(log|commit|output)|company\\s+policy\\s+requires.*add)"
+        - "generated_code_contains_external_url AND url NOT IN (user_request OR dependency_lockfile)"
+    severity: high
+    mitigations:
+      - "Treat AI rule/prompt files as executable code: require the same review rigor as a Dockerfile or CI workflow, and scan for hidden Unicode (e.g. cat -v / non-ASCII byte checks) in CI."
+      - "Pin and sign trusted rule files; alert when a workspace's rule set changes, especially via PR, template, or agent write."
+      - "Review generated code diffs for unexpected external references or credential handling before merging, and run secret/dependency scanners on agent-produced code."
+      - "Scope rule files narrowly (per-directory rules, minimal directives) and prefer organization-managed rule sets over per-repo copies."
+    examples:
+      - summary: "Pillar Security's 'Rules File Backdoor' (disclosed Feb-Mar 2025): hidden Unicode instructions in .cursorrules-style files caused GitHub Copilot and Cursor to append an attacker-controlled external script to generated HTML and to suppress any mention of it; the poisoned files spread via project templates and shared rule files."
+        reference: "https://www.scworld.com/news/how-ai-coding-assistants-could-be-compromised-via-rules-file"
+    references:
+      - "https://www.scworld.com/news/how-ai-coding-assistants-could-be-compromised-via-rules-file"
+      - "https://quintai.dev/blog/cursor-security-risks"
+
+  - id: AEG-T055
+    name: "Webhook Subscriptions as Persistence"
+    category: persistence
+    description: >-
+      Webhooks and event subscriptions deliver a steady stream of events to a
+      URL of the subscriber's choosing — and once registered, they keep firing
+      without further authentication from the attacker. An attacker who can
+      register a webhook (on a repo, chat app, CI system, or cloud event bus)
+      gains a persistent tap into the victim's activity and, where webhooks
+      carry secrets or trigger automation, a persistent execution path. The
+      subscription survives password rotations and session expiry because it
+      is authorized as an app integration, not a user login.
+    how_it_works: >-
+      Persistence via integrations works because the authorization lives in
+      the platform, not in the attacker's session. Named variants: (1) repo
+      webhooks — a webhook added to a repository sends push/PR events
+      (including diffs and sometimes secrets) to an attacker server;
+      (2) chat-app outgoing webhooks / slash-command endpoints — messages or
+      commands routed to attacker infrastructure; (3) malicious OAuth app
+      consent — attacker-registered applications granted broad scopes
+      (e.g. full mailbox access) that persist independently of any user
+      credential, as in the Midnight Blizzard intrusion where actor-created
+      OAuth apps with full_access_as_app to Exchange Online persisted access
+      to executive mailboxes. Defenders must hunt integrations, not just
+      accounts.
+    variants:
+      - "Repository webhooks: push/PR events (and embedded secrets) streamed to an attacker-controlled URL"
+      - "Chat-app outgoing webhooks and command endpoints: messages routed to attacker infrastructure"
+      - "Malicious OAuth app consent: attacker-registered apps with broad scopes persisting independently of user credentials (Midnight Blizzard pattern)"
+    indicators:
+      - "New webhooks or event subscriptions pointing at newly registered, rare, or non-corporate domains"
+      - "OAuth app consent grants with broad scopes (mailbox, directory, code) to unverified publishers or apps created recently"
+      - "Webhooks or app registrations created by service accounts, test tenants, or identities outside normal change windows"
+      - "Continued event deliveries or API calls from an integration after the associated user credentials were rotated"
+    detection:
+      rule: detect_malicious_webhook_persistence
+      patterns:
+        - "webhook_created OR subscription_created AND destination_domain_age_days < 30"
+        - "(?i)consent_grant.*(full_access_as_app|Mail\\.ReadWrite|Directory\\.ReadWrite\\.All|Sites\\.FullControl\\.All)"
+        - "integration_created_by_service_account AND creator NOT IN approved_integration_owners"
+    severity: high
+    mitigations:
+      - "Require admin approval for webhook creation and OAuth consent to sensitive scopes; block consent to apps from unverified publishers by policy."
+      - "Inventory all webhooks, event subscriptions, and OAuth grants continuously; alert on new ones and review their scopes, owners, and destinations on a schedule."
+      - "On incident response, revoke malicious grants and delete attacker webhooks — rotating user passwords alone does not remove integration-based persistence."
+      - "Restrict who can create integrations to a small set of identities, and expire or re-certify test-tenant and legacy app registrations."
+    examples:
+      - summary: "Midnight Blizzard (disclosed by Microsoft, January 2024): after compromising a legacy test tenant, the actor created its own malicious OAuth applications and granted them full_access_as_app to Exchange Online, persisting access to senior-leadership mailboxes independently of any user credential; CISA issued Emergency Directive 24-02 ordering credential resets for exposed material."
+        reference: "https://nhimg.org/microsoft-midnight-blizzard-breach"
+    references:
+      - "https://nhimg.org/microsoft-midnight-blizzard-breach"
+      - "https://intel.mjolnirsecurity.com/oauth-consent-phishing"
+
+  - id: AEG-T056
+    name: "Poisoned Cached Tool Results"
+    category: persistence
+    description: >-
+      Agents cache tool outputs to save time and tokens — and a poisoned cache
+      entry is trusted on every reuse without re-running the tool. An attacker
+      who can write to the cache (directly, or by getting malicious content
+      cached under a legitimate key) plants instructions or false data that the
+      agent ingests as genuine tool output in future sessions. Because the
+      agent never re-validates cached content, the poison persists until the
+      entry expires or is evicted, and it is attributed to the tool, not to
+      the attacker.
+    how_it_works: >-
+      Cache trust is the vulnerability: retrieval replaces execution, so
+      anything in the cache bypasses fresh validation. Named variants:
+      (1) direct cache writes — attacker-controlled content stored under a
+      cache key the agent will later request (e.g. a "documentation" lookup);
+      (2) cache-key collision/squatting — crafting inputs that hash to or
+      match an existing key so the agent receives attacker content for a
+      benign query; (3) stale-cache exploitation — a once-legitimate entry
+      whose upstream source has since been compromised keeps serving the old
+      (now hostile) payload. The observable effect matches memory poisoning
+      (AEG-T049) but lives in the tool-result cache layer rather than the
+      agent's experience memory.
+    variants:
+      - "Direct cache writes: attacker content stored under a key the agent will later request"
+      - "Cache-key collision/squatting: crafted inputs matching an existing key so benign queries return attacker content"
+      - "Stale-cache exploitation: legitimate entries whose upstream source was later compromised keep serving hostile payloads"
+    indicators:
+      - "Cached tool results containing instructional or imperative language inconsistent with the tool's normal output format"
+      - "Agent behavior changing without any change to prompts, tools, or models, correlated with cache hits on specific keys"
+      - "Cache entries written by processes or identities outside the normal tool-execution path"
+      - "Fresh tool execution returning different (benign) content than the cached entry the agent consumed"
+    detection:
+      rule: detect_poisoned_tool_cache
+      patterns:
+        - "(?i)(ignore|system|instruction|do\\s+not\\s+reveal|send\\s+to)\\b IN cached_tool_output WHERE tool_output_format == structured_data"
+        - "cache_write AND writer_process NOT IN approved_tool_runners"
+        - "cache_hit_serves_content AND fresh_execution_differs_significantly"
+    severity: medium
+    mitigations:
+      - "Treat cached tool outputs as untrusted input: re-validate security-relevant fields, and never let cached content authorize privileged actions without fresh verification."
+      - "Sign or hash cache entries at write time with the executing tool's identity, and reject entries whose writer is not the legitimate tool runner."
+      - "Scope cache keys tightly (include caller identity and privilege level), use short TTLs for security-sensitive tools, and provide cache-bypass for high-risk operations."
+      - "Log cache writes with provenance and audit entries whose content diverges from the tool's expected schema."
+    examples:
+      - summary: "MemoryGraft (2025) demonstrated the general persistent-retrieval pattern: poisoned records persisted in an agent's retrieval store were reliably surfaced for later benign tasks and adopted by the agent — the same dynamics apply to poisoned tool-result caches, which bypass even memory-level defenses."
+        reference: "https://arxiv.org/abs/2512.16962"
+    references:
+      - "https://arxiv.org/abs/2512.16962"
+      - "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+
+  - id: AEG-T057
+    name: "Container-Image Backdoors"
+    category: persistence
+    description: >-
+      Container images are executable supply-chain artifacts: whoever controls
+      the image controls every container started from it. Backdoored images —
+      typosquats of official images, compromised community images, or images
+      with malicious layers appended — give the attacker code execution on
+      every deployment, and orchestration (pull policies, auto-restart) turns
+      that into self-healing persistence. Agents that build, pull, or deploy
+      containers from unvetted images inherit the backdoor automatically.
+    how_it_works: >-
+      Registries like Docker Hub host millions of community images with no
+      mandatory vetting. Named variants: (1) typosquatted images —
+      official-looking names one character off (e.g. "ubunttu"), pulled by
+      mistake or by agent default configs; (2) trojaned popular images —
+      legitimate images with miners, backdoors, or credential harvesters added
+      in upper layers; (3) build-time poisoning — a compromised base image or
+      registry token letting an attacker push a malicious tag over a trusted
+      one (the class of supply-chain risk illustrated by the October 2026
+      Docker Hub CVE-2026-105445 token-reassignment advisory, where transferred
+      tokens could have pushed to other users' repositories). Agents that
+      auto-pull "latest" are especially exposed.
+    variants:
+      - "Typosquatted images: official-looking names pulled by mistake or by agent defaults"
+      - "Trojaned popular images: miners, backdoors, or harvesters added in upper layers of trusted-looking images"
+      - "Build-time poisoning: compromised registry tokens or base images letting attackers overwrite trusted tags"
+    indicators:
+      - "Images pulled from unofficial publishers, or official-name images whose digest does not match the vendor's signed digest"
+      - "Image layer scans flagging miners, reverse shells, or unexpected setuid binaries (e.g. xmrig, suspicious cron entries inside the image)"
+      - "Containers making outbound connections to mining pools or unknown C2 shortly after start, with no such behavior in the application's design"
+      - "Image tags mutating (digest changes under a fixed tag) without a corresponding release from the vendor"
+    detection:
+      rule: detect_container_image_backdoor
+      patterns:
+        - "image_pull AND (publisher NOT IN trusted_publishers OR digest != vendor_signed_digest)"
+        - "(?i)(xmrig|minerd|cryptonight|/\\.ssh/|authorized_keys)\\s IN image_layer_scan_findings"
+        - "tag_digest_changed AND no_vendor_release_event AND image_used_by_agent_workload"
+    severity: critical
+    mitigations:
+      - "Pull only signed images from trusted publishers (cosign/Notary verification), pin by digest — never by mutable tag — and enforce the policy in admission controllers."
+      - "Scan every image before deployment (vulnerability + malware + secret scanning) and block images with miners, backdoors, or embedded credentials."
+      - "Scope registry tokens tightly, rotate them, and alert on pushes to repositories from unexpected identities — the Docker Hub CVE-2026-105445 response (deactivating transferred PATs) is the model."
+      - "Run containers with least privilege (non-root, dropped capabilities, read-only root filesystem) so a backdoored image gains minimal leverage."
+    examples:
+      - summary: "Researchers (Fortinet/Kromtech) found 17 tainted Docker Hub images containing Monero miners that had been downloaded ~5 million times; attackers automated discovery of misconfigured Docker/Kubernetes hosts and pushed the malicious images for victims to pull, netting ~545 Monero (~$90,000)."
+        reference: "https://writeupcafe.com/tainted-crypto-mining-containers-pulled-from-docker-hub"
+      - summary: "Docker's October 2026 advisory for CVE-2026-105445 disclosed that personal access tokens could be silently reassigned during account-to-organization conversions, letting a token authenticate as another user and push/pull/delete their images — a direct image-supply-chain takeover path. Docker found no evidence of exploitation after reviewing ~304,000 pushes."
+        reference: "https://www.docker.com/blog/docker-hub-security-advisory-cve-2026-105445/"
+    references:
+      - "https://writeupcafe.com/tainted-crypto-mining-containers-pulled-from-docker-hub"
+      - "https://www.docker.com/blog/docker-hub-security-advisory-cve-2026-105445/"
+
+  - id: AEG-T058
+    name: "Git-Hook Planting"
+    category: persistence
+    description: >-
+      Git hooks are scripts that run automatically on repository events —
+      post-checkout, pre-commit, post-merge — with the user's privileges.
+      Although .git/hooks is not synced by git itself, an agent (or attacker)
+      with local write access can install a malicious hook or redirect
+      core.hooksPath to an attacker-controlled directory. From then on, every
+      clone, checkout, or commit in that repository silently executes the
+      payload, and the trigger looks like normal developer workflow.
+    how_it_works: >-
+      Hooks execute as the user on routine git operations, which makes them
+      an ideal persistence anchor on developer machines and agent sandboxes
+      that operate on repos. Named variants: (1) direct hook installation —
+      an executable dropped into .git/hooks (post-checkout, pre-push) that
+      runs on the next git event; (2) core.hooksPath redirection — git config
+      pointed at an attacker directory so hooks survive .git reinitialization
+      and apply repo-wide; (3) template-dir poisoning — a malicious hooks
+      directory in the git template dir, so every future `git init`/`git
+      clone` on the machine installs the backdoor. A 2026 Cursor CVE chain
+      (CVE-2026-26268, "git hook escape") showed prompt injection reaching
+      this layer: poisoned agent environments where even allowlisted commands
+      delivered attacker payloads.
+    variants:
+      - "Direct hook installation: malicious executables in .git/hooks firing on the next git event"
+      - "core.hooksPath redirection: git config pointed at an attacker directory, surviving .git reinitialization"
+      - "Template-dir poisoning: malicious hooks in the git template dir backdooring every future init/clone"
+    indicators:
+      - "New or modified executable files under .git/hooks/ created by the agent process or outside a git upgrade"
+      - "git config core.hooksPath pointing outside the repository's .git/hooks or to a world-writable directory"
+      - "Hook scripts containing network calls, encoded payloads, or invocations of binaries outside the repo"
+      - "Unexpected processes spawning immediately after git checkout/commit/merge operations in agent workspaces"
+    detection:
+      rule: detect_git_hook_planting
+      patterns:
+        - "file_create_under_.git/hooks AND creator_process IN agent_toolchain"
+        - "git_config_set AND key == 'core.hooksPath' AND value NOT IN ('.git/hooks', approved_template_dirs)"
+        - "(?i)(curl|wget|nc\\s|bash\\s+-i|powershell\\s+-e|base64\\s+--?d) IN hook_script_content"
+    severity: high
+    mitigations:
+      - "Alert on any write to .git/hooks/ or change to core.hooksPath by non-git processes, especially the agent toolchain; treat such writes as hostile until reviewed."
+      - "Set core.hooksPath to a read-only, centrally managed directory for agent sandboxes, and make .git/hooks non-writable by the agent user where possible."
+      - "Scan hook scripts in CI and on checkout for network calls and encoded payloads; keep hooks in version control (outside .git) so changes are reviewable."
+      - "Run agent git operations as a low-privilege user so a planted hook cannot reach sensitive credentials or systems."
+    examples:
+      - summary: "A disclosed 2026 Cursor CVE chain (including CVE-2026-26268, described as a 'git hook escape') demonstrated prompt injection poisoning an agent's execution environment so that even allowlisted commands delivered arbitrary payloads — showing the git-hook layer as a live agent-attack surface."
+        reference: "https://dev.to/rashid_1371911653467f5ff2/prompt-injection-explained-the-security-risk-every-ai-coding-tool-user-should-know-4fik"
+    references:
+      - "https://dev.to/rashid_1371911653467f5ff2/prompt-injection-explained-the-security-risk-every-ai-coding-tool-user-should-know-4fik"
+      - "https://quintai.dev/blog/cursor-security-risks"
+
+  - id: AEG-T059
+    name: "Browser-Profile Persistence"
+    category: persistence
+    description: >-
+      Agents that browse the web operate inside a browser profile — extensions,
+      storage, service workers, and saved credentials included. Poisoning that
+      profile gives an attacker persistence inside the agent's browsing
+      context: a malicious extension can read and rewrite every page the
+      agent visits, steal session cookies, or inject instructions into page
+      content. Because the profile is reused across agent runs, the backdoor
+      survives agent restarts and looks like part of the browsing
+      infrastructure.
+    how_it_works: >-
+      The browser profile is a durable, privileged execution context the agent
+      rarely audits. Named variants: (1) malicious extension in the agent's
+      profile — installed once (often via takeover of a previously trusted
+      extension, as with The Great Suspender in 2021), then able to observe
+      and modify all agent browsing; (2) poisoned web storage — localStorage,
+      IndexedDB, or cookies seeded with attacker values that web apps or the
+      agent itself then trusts; (3) persistent service workers — registered
+      workers that intercept the agent's network requests indefinitely.
+      Extension takeovers are the highest-risk variant because users and
+      agents rarely re-evaluate permissions they already accepted.
+    variants:
+      - "Malicious extension in the agent profile: observing and modifying all agent browsing (takeover pattern)"
+      - "Poisoned web storage: seeded localStorage/IndexedDB/cookies that apps or the agent then trusts"
+      - "Persistent service workers: registered workers intercepting the agent's network requests indefinitely"
+    indicators:
+      - "Extensions present in the agent's automation profile that were never explicitly approved, or whose publisher/permissions changed since approval"
+      - "Unexpected outbound traffic during agent browsing sessions to domains unrelated to the task"
+      - "Page content the agent acts on differing from what a clean browser renders (injected instructions or altered forms)"
+      - "Service workers or storage entries registered from origins outside the agent's allowlisted sites"
+    detection:
+      rule: detect_browser_profile_persistence
+      patterns:
+        - "extension_added_to_agent_profile AND extension NOT IN approved_extension_allowlist"
+        - "extension_publisher_changed OR extension_permissions_expanded_since_approval"
+        - "service_worker_registered AND origin NOT IN agent_allowlisted_sites"
+    severity: high
+    mitigations:
+      - "Run agent browsing in ephemeral, freshly provisioned profiles: destroy the profile (extensions, storage, workers) after each task instead of reusing it."
+      - "Maintain an explicit extension allowlist for agent profiles; block all others and alert on any install, update, or permission change."
+      - "Monitor the agent profile's outbound traffic independently and diff rendered page content against a clean-browser baseline for high-stakes tasks."
+      - "Never store long-lived user credentials in an agent's browser profile; use short-lived, scoped tokens injected per task."
+    examples:
+      - summary: "The Great Suspender (2021): after a mid-2020 ownership change, the new maintainer of the 2M+-user Chrome extension pushed an update with code capable of executing remote scripts and tracking users for ad fraud; Google removed it from the Chrome Web Store and remotely disabled it in February 2021."
+        reference: "https://www.thurrott.com/cloud/web-browsers/google-chrome/246983/google-patches-chrome-removes-suspect-extension"
+    references:
+      - "https://www.thurrott.com/cloud/web-browsers/google-chrome/246983/google-patches-chrome-removes-suspect-extension"
+      - "https://www.findarticles.com/chrome-extension-warns-of-extension-takeovers/"
+
+  - id: AEG-T060
+    name: "Poisoned Agent Skills Directory (Auto-Loaded Instructions)"
+    category: persistence
+    description: >-
+      Modern coding agents auto-load "skills" — directories of markdown
+      instructions (SKILL.md) placed in user or project skills folders
+      (~/.claude/skills, project .claude/skills). Anything dropped there
+      becomes part of the agent's instruction set on every future run, with
+      no prompt needed. A poisoned skills directory is therefore a
+      persistent, self-activating backdoor: the agent reads the attacker's
+      instructions as its own capabilities every time it starts.
+    how_it_works: >-
+      Skills are trusted by location, not by signature: the agent loads
+      whatever the directory contains. Named variants: (1) dropped
+      malicious skill — a SKILL.md with hidden directives (exfiltrate,
+      suppress logging, prefer attacker tools) placed by a compromised
+      agent, a malicious repo, or a trojaned installer; (2) skill
+      description poisoning — the skill's advertised description looks
+      benign in any UI while the body carries instructions the model
+      follows (the same asymmetry Invariant Labs demonstrated for MCP
+      tool descriptions); (3) skill shadowing — a malicious skill reusing
+      the exact name of a trusted skill in an earlier-loaded directory so
+      the agent picks the attacker's version. Because skills persist on
+      disk, the compromise outlives the session that planted it.
+    variants:
+      - "Dropped malicious skill: SKILL.md with hidden directives placed by a compromised agent, repo, or installer"
+      - "Skill description poisoning: benign-looking advertised description with instruction-carrying body (MCP tool-poisoning asymmetry)"
+      - "Skill shadowing: malicious skill reusing a trusted skill's name in an earlier-loaded directory"
+    indicators:
+      - "New directories under user or project skills paths that did not come from the organization's skill registry or a reviewed PR"
+      - "SKILL.md files containing external URLs, imperative directives ('always', 'never disclose'), or references to tools outside the skill's stated purpose"
+      - "Duplicate skill names across skills directories, with the earlier-loaded copy differing from the trusted version"
+      - "Agent invoking a skill the user never asked for, or skill-triggered tool calls to unexpected destinations"
+    detection:
+      rule: detect_poisoned_skills_directory
+      patterns:
+        - "new_directory_under_*/skills/* AND source NOT IN (skill_registry OR reviewed_pr)"
+        - "(?i)(https?://[^\\s'\"]+|always\\s+(exfiltrate|prefer|use)|never\\s+(disclose|mention|log)) IN SKILL.md_body"
+        - "duplicate_skill_name_across_load_path AND content_hash_differs"
+    severity: high
+    mitigations:
+      - "Treat the skills directory as a trust boundary: only load skills from an allowlisted registry, and require review (with hidden-Unicode scanning) for any addition."
+      - "Pin skill content hashes and alert on changes; resolve name collisions deterministically in favor of the registry copy."
+      - "Display the active skill set and its sources to the user at session start, and log every skill load with its content hash."
+      - "Sandbox skill-invoked tools with least privilege so a poisoned skill cannot reach credentials or the network unsupervised."
+    examples:
+      - summary: "Pillar Security's 'Rules File Backdoor' (2025) established the pattern for this class: instruction files auto-loaded by coding agents (.cursorrules and equivalents) carrying hidden directives that the agent obeyed while reviewers saw only benign text — skills directories are the same trust model in a new location."
+        reference: "https://www.scworld.com/news/how-ai-coding-assistants-could-be-compromised-via-rules-file"
+      - summary: "Invariant Labs (April 2025) showed the description/body asymmetry concretely for MCP: tool descriptions invisible to users but fully visible to the model carried instructions to exfiltrate SSH keys and configs — the identical mechanism applies to poisoned skill descriptions."
+        reference: "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+    references:
+      - "https://www.scworld.com/news/how-ai-coding-assistants-could-be-compromised-via-rules-file"
+      - "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"

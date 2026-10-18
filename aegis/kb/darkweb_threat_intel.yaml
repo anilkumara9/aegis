@@ -1,0 +1,554 @@
+pack: darkweb_threat_intel
+version: "1.0"
+techniques:
+  - id: AEG-T097
+    name: "Stolen Credential Lifecycle: Stealer Logs to Combo Lists to Sale"
+    category: darkweb_threat_intel
+    description: >-
+      This entry describes, at concept level, how stolen credentials move
+      through criminal markets so defenders know what to watch for. Infostealer
+      malware on a victim device harvests credentials, cookies, and autofill
+      data into a structured bundle called a stealer log. Those logs are sold,
+      then aggregated with breach data into combo lists: large
+      username-password collections repackaged for credential-stuffing and
+      account-takeover attacks. Understanding the lifecycle tells defenders
+      which telemetry (combo-list hits, stealer-log formats in the wild)
+      predicts account-takeover attempts against them.
+    how_it_works: >-
+      The lifecycle runs in stages. (1) Collection: infostealers (RedLine,
+      LummaC2, Vidar, Raccoon families and successors) run on victim devices,
+      often non-persistently, harvesting browser credentials, session cookies,
+      tokens, autofill data, crypto wallets, and device fingerprints into a
+      per-device log. (2) Wholesale: logs are sold in bulk to other criminals,
+      including initial access brokers who extract enterprise credentials.
+      (3) Aggregation: credentials from many logs and breaches are deduplicated
+      and repackaged into combo lists optimized for automated login attempts.
+      (4) Monetization: combo lists feed credential-stuffing against
+      corporate logins, while high-value session cookies enable session
+      hijacking that bypasses MFA. Variants: (1) log-cloud services selling
+      searchable access to fresh stealer logs; (2) private combo lists tuned
+      for specific target sectors; (3) cookie-focused bundles sold for session
+      hijacking rather than password reuse.
+    variants:
+      - "Searchable stealer-log resale markets"
+      - "Sector-targeted private combo lists"
+      - "Session-cookie bundles for MFA-bypassing hijacks"
+    indicators:
+      - "Corporate credentials appearing in combo lists or stealer logs obtained via threat-intel feeds, indicating employee devices are compromised"
+      - "Credential-stuffing waves against company login portals using password patterns characteristic of combo-list automation"
+      - "Session-hijacking attempts reusing stolen cookies rather than passwords, visible as logins with valid sessions but anomalous devices or locations"
+      - "Infostealer-family artifacts (known C2 patterns, log formats) in endpoint or network telemetry preceding account-takeover attempts"
+    detection:
+      rule: detect_stolen_credential_lifecycle
+      patterns:
+        - "(?i)corporate\\s+credential\\s+in\\s+(combo\\s*list|stealer\\s*log)\\s+feed"
+        - "(?i)credential\\s+stuffing\\s+wave.*(high\\s+velocity|distributed\\s+sources)"
+        - "(?i)session\\s+cookie\\s+reuse\\s+from\\s+anomalous\\s+(device|location)"
+        - '(?i)combo\s*lists?'
+        - '(?i)stealer\s*logs?'
+    severity: high
+    mitigations:
+      - "Subscribe to threat-intel feeds that surface stealer logs and combo lists, and force password resets plus session invalidation the moment corporate credentials appear"
+      - "Deploy credential-stuffing defenses: bot detection, rate limiting, and breach-password screening at login"
+      - "Invalidate all active sessions on suspected compromise, since password resets alone do not kill stolen cookies"
+      - "Reduce stealer-log supply with endpoint controls against infostealer delivery vectors (malicious downloads, fake software)"
+    examples:
+      - summary: "SpyCloud's threat research documents the underground economy at scale: infostealer logs bundle credentials, session cookies, device fingerprints, and PII per infected device, and are sold on to actors including initial access brokers who feed ransomware operations; the firm reported tens of billions of recaptured identity records flowing through these markets."
+        reference: "https://spycloud.com/glossary/infostealer-malware/"
+      - summary: "Industry reporting on SpyCloud's data notes the shift from classic combo-list credential stuffing to infostealer-driven theft, with nearly half of exposed credentials in one report year coming from botnet-harvested logs, and brokers reselling malware logs with valid authentication data to ransomware groups."
+        reference: "https://www.itprotoday.com/vulnerabilities-and-threats/infostealer-malware-fuels-cybercriminal-underground"
+    references:
+      - "https://spycloud.com/glossary/infostealer-malware/"
+      - "https://docs.spycloud.com/public-sc/docs/understanding-data-sources"
+      - "https://www.itprotoday.com/vulnerabilities-and-threats/infostealer-malware-fuels-cybercriminal-underground"
+
+  - id: AEG-T098
+    name: "Initial Access Brokers and Affiliate Models"
+    category: darkweb_threat_intel
+    description: >-
+      Initial access brokers (IABs) are criminals who specialize in breaking
+      into networks and selling that access to others, rather than exploiting
+      it themselves. Ransomware-as-a-service (RaaS) operations then recruit
+      affiliates who buy this access, deploy the ransomware, and split the
+      payment. For defenders, this division of labor means the intrusion and
+      the ransomware deployment are often different actors, and disrupting
+      the access market disrupts many downstream attacks.
+    how_it_works: >-
+      IABs obtain access through phishing, infostealer logs, exploited edge
+      devices, or purchased credentials, then advertise it with a price
+      reflecting the victim's size and access level. Ransomware operators run
+      affiliate programs: the core team builds the encryptor, leak site, and
+      negotiation infrastructure, while affiliates bring their own access and
+      keep the majority of each ransom (commonly 70-80%). Some brokers work
+      non-exclusively across multiple ransomware brands. Variants:
+      (1) credential-based access sales from stealer logs; (2) vulnerability
+      exploitation services selling footholds in unpatched edge devices;
+      (3) RaaS affiliate programs with tiered trust levels; (4) access
+      resellers bundling multiple small footholds.
+    variants:
+      - "Credential-based access sales sourced from stealer logs"
+      - "Foothold sales from exploited edge devices"
+      - "RaaS affiliate programs with tiered affiliate trust"
+      - "Access resellers bundling multiple small footholds"
+    indicators:
+      - "Threat-intel reporting of corporate access being advertised, often with victim profiling details (revenue, sector, user counts)"
+      - "Intrusions that begin with commodity access techniques (phishing, edge exploitation) and later pivot to a distinct ransomware operator's tooling"
+      - "Ransomware incidents where dwell-time forensics show an earlier, different actor established the foothold"
+      - "Leak-site victim patterns correlating with prior stealer-log or broker activity against the same organization"
+    detection:
+      rule: detect_iab_affiliate_activity
+      patterns:
+        - "(?i)corporate\\s+access\\s+advertised.*(revenue|sector|users)"
+        - "(?i)distinct\\s+actor\\s+tooling\\s+after\\s+initial\\s+foothold"
+        - "(?i)ransomware\\s+affiliate\\s+program\\s+recruitment"
+    severity: high
+    mitigations:
+      - "Hunt for and remediate the foothold vectors brokers monetize: phishing-resistant MFA, rapid edge-device patching, and stealer-log monitoring"
+      - "Treat any commodity intrusion as potentially broker-sold access: investigate fully and rotate all credentials rather than just removing the visible malware"
+      - "Share broker indicators with industry peers and law enforcement to poison the access market's reliability"
+      - "Segment networks so a purchased foothold cannot reach crown-jewel systems or backup infrastructure"
+    examples:
+      - summary: "The CISA/FBI/HHS joint advisory on Medusa ransomware documents the group operating as RaaS since 2023 and recruiting initial access brokers, paying between $100 and $1 million per engagement depending on the access, with most brokers working for multiple ransomware brands simultaneously."
+        reference: "https://www.helpnetsecurity.com/2026/08/19/medusa-ransomware-cisa-warning/"
+    references:
+      - "https://www.helpnetsecurity.com/2026/08/19/medusa-ransomware-cisa-warning/"
+      - "https://www.beckershospitalreview.com/healthcare-information-technology/cybersecurity/hhs-fbi-warn-hospitals-as-medusa-ransomware-tops-500-victims/"
+      - "https://www.itprotoday.com/vulnerabilities-and-threats/infostealer-malware-fuels-cybercriminal-underground"
+
+  - id: AEG-T099
+    name: "Threat-Intel Indicators Defenders Monitor"
+    category: darkweb_threat_intel
+    description: >-
+      Defenders do not need to visit criminal markets to benefit from them:
+      commercial and open threat-intel feeds surface the artifacts of the
+      underground economy, combo lists, stealer-log formats, leak-site
+      victim announcements, and forum chatter about exploited
+      vulnerabilities. Monitoring these indicators gives early warning that
+      an organization is being targeted or already compromised, often weeks
+      before a breach notification would arrive.
+    how_it_works: >-
+      Intel providers recapture data from criminal infrastructure and package
+      it as feeds: exposed credential records keyed by domain, stealer-log
+      inventories per infected device (credentials, cookie counts, malware
+      family, target URLs), combo-list sightings, and ransomware leak-site
+      monitoring. Defenders correlate these against their own domains,
+      employee identities, and vendor ecosystems. Key interpretive points:
+      session-cookie counts indicate compromise breadth beyond passwords;
+      password resets without session invalidation leave hijacked sessions
+      alive; and third-party breach data reveals supply-chain exposure.
+      Variants: (1) credential-exposure feeds keyed by corporate domain;
+      (2) stealer-log device inventories with cookie counts; (3) leak-site
+      and extortion-portal monitoring; (4) forum and marketplace chatter
+      about targeted sectors or vulnerabilities.
+    variants:
+      - "Credential-exposure feeds keyed by corporate domain"
+      - "Stealer-log device inventories with session-cookie counts"
+      - "Ransomware leak-site and extortion-portal monitoring"
+      - "Forum chatter about targeted sectors or vulnerabilities"
+    indicators:
+      - "Company domain appearing in freshly recaptured stealer logs or combo lists, especially with high session-cookie counts"
+      - "Employee credentials from a third-party breach appearing in feeds, indicating supply-chain or reused-password exposure"
+      - "Organization named on a ransomware leak site or in extortion chatter, including countdown timers"
+      - "Sector-specific forum discussion of vulnerabilities present in the organization's stack"
+    detection:
+      rule: detect_underground_exposure
+      patterns:
+        - "(?i)domain\\s+in\\s+(stealer\\s*log|combo\\s*list)\\s+feed"
+        - "(?i)organization\\s+named\\s+on\\s+(leak\\s*site|extortion\\s*portal)"
+        - "(?i)high\\s+cookie\\s+count\\s+infection\\s+for\\s+corporate\\s+device"
+    severity: medium
+    mitigations:
+      - "Operationalize exposure feeds: automatic password resets plus full session invalidation when corporate credentials surface, prioritized by cookie count"
+      - "Monitor leak sites for the organization's name so extortion attempts are detected even before direct contact"
+      - "Extend monitoring to third parties and key suppliers whose compromise becomes your exposure"
+      - "Use feed data to drive phishing-resistant MFA rollout to the most-exposed populations first"
+    examples:
+      - summary: "SpyCloud's post-infection guidance shows why feed structure matters for triage: a stealer-log entry carries the full credential list, session-cookie counts, PII, malware family, and target URLs per device, and high cookie counts signal sessions that survive password resets and need explicit invalidation."
+        reference: "https://spycloud.com/products/endpoint-threat-protection/"
+    references:
+      - "https://docs.spycloud.com/public-sc/docs/understanding-data-sources"
+      - "https://spycloud.com/glossary/infostealer-malware/"
+      - "https://www.digitalstakeout.com/blog/introducing-cve-feed"
+
+  - id: AEG-T100
+    name: "Double and Triple Extortion Business Models"
+    category: darkweb_threat_intel
+    description: >-
+      Modern ransomware is an extortion business, not just an encryption
+      event. In double extortion, attackers exfiltrate sensitive data before
+      encrypting and threaten to publish it unless paid, so backups alone no
+      longer resolve the incident. Triple extortion adds further pressure:
+      DDoS attacks, direct threats to customers or partners, or follow-on
+      demands. Defenders must plan for the data-theft half of the attack,
+      which begins well before encryption is visible.
+    how_it_works: >-
+      The playbook runs in phases: quiet intrusion, discovery of valuable
+      data, bulk exfiltration to attacker infrastructure, then encryption and
+      a ransom demand with two prices (decryptor, and non-publication of
+      stolen data) enforced by a countdown on a leak site. If the victim
+      restores from backups and refuses to pay, the leak threat remains.
+      Triple-extortion variants pile on: threatening to notify regulators,
+      customers, or the media; launching DDoS during recovery; or demanding a
+      second payment after the first. Variants: (1) classic double extortion
+      (encrypt + leak threat); (2) pure data-theft extortion without
+      encryption; (3) triple extortion adding DDoS or third-party pressure;
+      (4) RaaS affiliate programs industrializing the model.
+    variants:
+      - "Classic double extortion: encryption plus leak threat"
+      - "Pure data-theft extortion without encryption"
+      - "Triple extortion: DDoS, customer, or regulator pressure"
+      - "RaaS affiliate programs industrializing extortion"
+    indicators:
+      - "Large-scale data staging and exfiltration preceding any encryption activity, the telltale prelude to a leak threat"
+      - "Ransom notes referencing stolen data volumes, sample file listings, or leak-site countdown pages"
+      - "Victim organization appearing on a ransomware leak site with a payment timer"
+      - "Follow-on pressure: DDoS during recovery, or direct outreach to the victim's customers and partners"
+    detection:
+      rule: detect_extortion_operation
+      patterns:
+        - "(?i)(exfiltration|staging)\\s+before\\s+encryption"
+        - "(?i)ransom\\s+note.*(leak\\s*site|publish|countdown)"
+        - "(?i)organization\\s+on\\s+leak\\s*site\\s+with\\s+timer"
+    severity: high
+    mitigations:
+      - "Assume breach of confidentiality in every ransomware incident: activate data-theft response (legal, comms, customer notification) alongside recovery"
+      - "Detect and stop the exfiltration phase with egress monitoring and DLP, since encryption is the late, visible step"
+      - "Maintain offline, immutable backups and rehearse restoration so the encryption half of the leverage fails"
+      - "Follow CISA/FBI guidance: do not pay; report incidents to law enforcement and share indicators"
+    examples:
+      - summary: "The CISA/FBI/HHS Medusa advisory documents a textbook double-extortion RaaS operation: affiliates exfiltrate before encrypting, threaten publication on a leak site, and have in some cases demanded second payments after initial collection, a triple-extortion turn."
+        reference: "https://www.helpnetsecurity.com/2026/08/19/medusa-ransomware-cisa-warning/"
+      - summary: "CISA and the FBI's #StopRansomware guide defines double extortion as exfiltration plus threatened release of stolen data, and notes some actors skip encryption entirely and extort purely on the data-theft threat."
+        reference: "https://www.mma.org/wp-content/uploads/2023/09/JRTF_StopRansomware_guide_May2023.pdf"
+    references:
+      - "https://www.mma.org/wp-content/uploads/2023/09/JRTF_StopRansomware_guide_May2023.pdf"
+      - "https://www.helpnetsecurity.com/2026/08/19/medusa-ransomware-cisa-warning/"
+      - "https://www.beckershospitalreview.com/healthcare-information-technology/cybersecurity/hhs-fbi-warn-hospitals-as-medusa-ransomware-tops-500-victims/"
+
+  - id: AEG-T101
+    name: "Crypter and Obfuscation Services: Defender's View"
+    category: darkweb_threat_intel
+    description: >-
+      Crypters are commercial services that wrap malware so antivirus and
+      endpoint tools do not recognize it, sold with claims like 'fully
+      undetectable' (FUD). From the defender's side, crypted malware looks
+      different: low or zero static detections, a small decryptor stub
+      attached to an encrypted payload, frequent repacking that changes file
+      hashes, and sometimes sandbox-evasion behaviors. Recognizing the crypter
+      shape tells defenders to shift from hash-based to behavior-based
+      detection.
+    how_it_works: >-
+      A crypter has two parts: a builder that encrypts and obfuscates the
+      customer's malware with chosen settings, and a stub, a small
+      unencrypted loader that decrypts and executes the payload at runtime.
+      Vendors re-crypt samples and test them against scanners until detections
+      drop, selling the result per build or by subscription. Techniques
+      stacked inside include binary obfuscation, metamorphic rewriting,
+      VM/debugger checks, and delayed execution to outlast sandboxes. The
+      defender-visible consequence: the same malware family arrives with
+      constantly changing hashes and near-zero static detections, while
+      runtime behavior (process injection, persistence, C2) stays consistent.
+      Variants: (1) classic stub-based crypters; (2) FUD subscription services
+      with daily stub updates; (3) crypters bundling sandbox and debugger
+      evasion; (4) builder kits sold to lower-tier criminals.
+    variants:
+      - "Classic stub-based crypters (builder plus decryptor stub)"
+      - "FUD subscription services with daily stub refreshes"
+      - "Crypters bundling VM, debugger, and sandbox evasion"
+      - "Builder kits resold to lower-tier criminals"
+    indicators:
+      - "Executables with near-zero static detections but malicious runtime behavior (injection, persistence, C2)"
+      - "Small loader stubs with high-entropy encrypted sections that decrypt in memory at execution"
+      - "Rapid hash churn of the same malware family with unchanged runtime behavior"
+      - "Sandbox-evasion signals: long sleeps, VM/debugger checks, or execution only after user interaction"
+    detection:
+      rule: detect_crypted_malware
+      patterns:
+        - "(?i)low\\s+static\\s+detections.*malicious\\s+runtime\\s+behavior"
+        - "(?i)high\\s+entropy\\s+section.*in\\s+memory\\s+decrypt"
+        - "(?i)hash\\s+churn.*same\\s+behavior.*malware\\s+family"
+    severity: medium
+    mitigations:
+      - "Shift detection weight from hashes and static signatures to behavioral analysis: memory scanning, API-call monitoring, and sandbox detonation with extended observation"
+      - "Block or heavily scrutinize the delivery vectors crypters protect (malicious documents, droppers, fake installers)"
+      - "Use threat intel on active crypter services to anticipate which families are currently FUD and tune behavioral rules accordingly"
+      - "Harden endpoints against the stub's runtime techniques: memory-protection, AMSI/ETW tamper monitoring"
+    examples:
+      - summary: "Proofpoint's research on the Cruciferra crypter-as-a-service documented a modular commercial offering stacking process ghosting, memory-hook patching, and layered payload protection, observed delivering multiple RAT and infostealer families as an enabling layer of the cybercrime ecosystem."
+        reference: "https://securityaffairs.com/196151/malware/new-crypter-as-a-service-cruciferra-fuels-stealthy-malware-attacks-worldwide.html"
+    references:
+      - "https://www.cyber.gov.au/advisory/digital-camouflage-crypters-make-malware-undetectable"
+      - "https://intel471.com/blog/a-briefing-on-malware-crypting-services"
+      - "https://securityaffairs.com/196151/malware/new-crypter-as-a-service-cruciferra-fuels-stealthy-malware-attacks-worldwide.html"
+
+  - id: AEG-T102
+    name: "Bulletproof Hosting: Network Indicators Defenders Watch"
+    category: darkweb_threat_intel
+    description: >-
+      Bulletproof hosting providers rent infrastructure to criminals while
+      ignoring abuse complaints, giving malware, phishing, and C2 operations
+      a resilient home. Defenders cannot take down these hosts through normal
+      abuse channels, so the defensive play is recognition: identifying the
+      network indicators of bulletproof-hosted infrastructure (recycled
+      address space, fast-flux DNS, complaint-immune ASNs) and blocking or
+      heavily scrutinizing traffic to it.
+    how_it_works: >-
+      Operators acquire IP ranges through resellers and front companies,
+      frequently rebranding after sanctions or takedowns, and lease servers
+      to phishing crews, malware distributors, and ransomware leak sites.
+      Because they ignore takedown requests, criminal services hosted there
+      persist far longer than on legitimate hosts. Defenders track them via
+      infrastructure analysis: address space that migrates between shell
+      companies, ASNs with disproportionate malicious activity, domains with
+      short TTLs and rapid IP rotation, and payment flows to known
+      abuse-friendly providers. Law-enforcement actions periodically name and
+      dismantle the largest operators, which defenders use to update block
+      lists. Variants: (1) classic complaint-immune dedicated hosts;
+      (2) reseller layers obscuring the true operator; (3) fast-flux and
+      bulletproof-adjacent CDN abuse; (4) post-sanction rebranding of the
+      same address space.
+    variants:
+      - "Complaint-immune dedicated hosting for malware and C2"
+      - "Reseller layers obscuring the true operator"
+      - "Fast-flux DNS over bulletproof address space"
+      - "Post-sanction rebranding of the same infrastructure"
+    indicators:
+      - "Outbound connections to IPs in ASNs with a documented history of bulletproof hosting and high malicious density"
+      - "C2 or phishing domains resolving through fast-flux DNS with very short TTLs across recycled address blocks"
+      - "Infrastructure whose WHOIS, company name, or ASN changes after sanctions while the underlying address space stays constant"
+      - "Threat-intel feed tags marking a host or range as bulletproof-affiliated"
+    detection:
+      rule: detect_bulletproof_hosting
+      patterns:
+        - "(?i)connection\\s+to\\s+(bulletproof|abuse.?immune)\\s+asn"
+        - "(?i)fast.?flux\\s+dns.*short\\s+ttl.*recycled\\s+range"
+        - "(?i)sanctioned\\s+hoster\\s+rebrand.*same\\s+address\\s+space"
+    severity: medium
+    mitigations:
+      - "Block or sinkhole traffic to known bulletproof-hosted ranges at the perimeter and DNS layer, using curated threat-intel feeds"
+      - "Treat any internal connection to bulletproof infrastructure as a compromise indicator and investigate the endpoint"
+      - "Track infrastructure rebranding: when a sanctioned hoster reappears under a new name, carry the blocks forward"
+      - "Share bulletproof-hosting indicators with peers and law enforcement to support takedown efforts"
+    examples:
+      - summary: "Investigative reporting traced the 'Ika & Sal' bulletproof hosting empire, which dominated Russian-language cybercrime infrastructure for years and supported major spam and malware operations, ending in U.S. conspiracy and racketeering convictions with multi-year prison sentences."
+        reference: "https://krebsonsecurity.com/2024/01/meet-ika-sal-the-bulletproof-hosting-duo-from-hell/"
+    references:
+      - "https://krebsonsecurity.com/2024/01/meet-ika-sal-the-bulletproof-hosting-duo-from-hell/"
+      - "https://www.justice.gov/opa/pr/russian-man-sentenced-providing-bulletproof-hosting-cybercriminals"
+
+  - id: AEG-T103
+    name: "Crypto Money-Laundering Concepts for Defenders"
+    category: darkweb_threat_intel
+    description: >-
+      Ransomware and extortion payments overwhelmingly flow through
+      cryptocurrency, and criminals launder the proceeds through mixers,
+      chain-hopping across blockchains, and professional laundering networks.
+      Defenders do not need to trace funds themselves, but chain-analysis
+      concepts matter: which wallets are sanctioned, how mixers obscure
+      trails, and how laundering-network growth signals the scale of the
+      underlying crime. This entry covers concepts only, never investigative
+      tradecraft.
+    how_it_works: >-
+      Standard laundering stages apply on-chain. Placement: ransom payments
+      arrive at attacker wallets. Layering: funds move through mixers,
+      cross-chain bridges, and rapid hops between addresses to break
+      traceability. Integration: funds exit through over-the-counter brokers,
+      nested exchanges, or complicit payment processors into fiat. Blockchain
+      analytics firms cluster addresses into entities and track flows into
+      known laundering services, publishing aggregate statistics that show the
+      ecosystem's scale and its shift away from compliant exchanges toward
+      professional laundering networks. Variants: (1) mixer-based
+      obfuscation; (2) chain-hopping across bridges; (3) professional
+      money-laundering networks as a service; (4) nested and complicit
+      exchange cash-outs.
+    variants:
+      - "Mixer-based transaction obfuscation"
+      - "Chain-hopping across bridges and blockchains"
+      - "Professional laundering networks sold as a service"
+      - "Nested or complicit exchange cash-outs"
+    indicators:
+      - "Ransom demands specifying cryptocurrency with wallets later flagged by chain-analysis as linked to laundering networks"
+      - "Threat-intel reports of sanctioned addresses or mixers appearing in an incident's payment chain"
+      - "Industry-wide statistics showing laundering volume growth in networks tied to the ransomware families targeting your sector"
+      - "Payment-processor or exchange counterparties appearing on sanctions lists (e.g. OFAC SDN crypto addresses)"
+    detection:
+      rule: detect_laundering_exposure
+      patterns:
+        - "(?i)ransom\\s+wallet.*(sanctioned|mixer|laundering\\s*network)"
+        - "(?i)counterparty.*on\\s+(sanctions|sdn)\\s+list"
+        - "(?i)payment\\s+chain.*known\\s+laundering\\s+service"
+    severity: low
+    mitigations:
+      - "Use chain-analysis screening on any cryptocurrency addresses encountered in incidents before any interaction, and never pay ransoms"
+      - "Report ransom wallet addresses to law enforcement and chain-analysis providers to aid clustering and sanctions"
+      - "Track laundering-ecosystem trends as a strategic indicator of ransomware pressure on your sector"
+      - "Ensure finance and legal teams know the sanctions risk of transacting with flagged addresses"
+    examples:
+      - summary: "Chainalysis' 2026 Crypto Crime Report measured the illicit on-chain money-laundering ecosystem at over $82 billion in 2025, up from about $10 billion in 2020, with Chinese-language laundering networks alone processing an estimated $16.1 billion, showing the industrial scale of criminal cash-out infrastructure."
+        reference: "https://www.cybersecurityintelligence.com/blog/illicit-crypto-money-laundering-reaches-82-billion-9065.html"
+    references:
+      - "https://www.cybersecurityintelligence.com/blog/illicit-crypto-money-laundering-reaches-82-billion-9065.html"
+      - "https://coinlaw.io/cryptocurrency-anti-money-laundering-statistics/"
+
+  - id: AEG-T104
+    name: "Forum-Driven Vulnerability Disclosure Dynamics"
+    category: darkweb_threat_intel
+    description: >-
+      Vulnerabilities are frequently discussed, traded, and weaponized on
+      criminal forums before or alongside official disclosure, and sometimes
+      without any CVE at all. Exploit chatter, proof-of-concept trading, and
+      targeting discussions on forums are leading indicators that a
+      vulnerability is moving from theoretical to actively exploited.
+      Defenders who monitor these signals can prioritize patching ahead of
+      mass exploitation instead of waiting for vendor advisories or KEV
+      listings.
+    how_it_works: >-
+      The dynamics run on several tracks. Researchers and criminals post
+      proof-of-concept code publicly; forum members discuss which products
+      and versions are affected and share targeting lists; exploit brokers
+      advertise capabilities; and ransomware groups integrate fresh exploits
+      within hours or days of disclosure, sometimes before a patch exists.
+      Threat-intel feeds distill this into exploited-CVE signals: evidence
+      from forums, exploit databases, and researcher publications that a
+      specific CVE is being actively discussed or used. Studies of KEV
+      additions show a meaningful share had confirmed exploitation before
+      listing, with lead times from days to weeks. Variants: (1) public PoC
+      release accelerating weaponization; (2) forum exploit trading before
+      public disclosure; (3) ransomware groups operationalizing n-day
+      exploits within 24 hours; (4) zero-day chatter without CVE assignment.
+    variants:
+      - "Public proof-of-concept releases accelerating weaponization"
+      - "Forum exploit trading before public disclosure"
+      - "Ransomware groups operationalizing n-day exploits within hours"
+      - "Zero-day discussion without CVE assignment"
+    indicators:
+      - "Threat-intel feed flags that a CVE in your stack shows forum discussion, PoC availability, or trading activity"
+      - "Proof-of-concept code appearing publicly for vulnerabilities affecting internet-facing systems"
+      - "Ransomware or botnet campaigns observed exploiting a vulnerability within days of disclosure"
+      - "Forum chatter naming your sector or technology stack alongside a fresh vulnerability"
+    detection:
+      rule: detect_forum_driven_exploitation
+      patterns:
+        - "(?i)cve.*(forum\\s+discussion|poc\\s+available|being\\s+traded)"
+        - "(?i)exploit.*in\\s+the\\s+wild\\s+before\\s+kev\\s+listing"
+        - "(?i)ransomware.*exploit.*within\\s+(24\\s*hours|days)\\s+of\\s+disclosure"
+    severity: medium
+    mitigations:
+      - "Prioritize patching by real-world exploitation signals (forum chatter, PoC availability, active use), not CVSS alone"
+      - "Subscribe to exploited-CVE intelligence feeds that monitor forums, exploit databases, and researcher publications"
+      - "Shrink the patch window for internet-facing systems, since weaponization now routinely lands within 24 hours of disclosure"
+      - "Deploy virtual patching (WAF, IPS rules) as a stopgap when vendor patches lag behind forum-driven exploitation"
+    examples:
+      - summary: "Analysis of CISA KEV additions found 8 of 122 vulnerabilities had confirmed exploitation before listing, with a median lead time of 5.5 days, proving that forum, PoC, and threat-chatter signals precede official cataloging and are actionable for prioritization."
+        reference: "https://nucleussec.com/blog/exploited-before-cisa-kev-what-8-confirmed-cases-reveal/"
+    references:
+      - "https://www.digitalstakeout.com/blog/introducing-cve-feed"
+      - "https://nucleussec.com/blog/exploited-before-cisa-kev-what-8-confirmed-cases-reveal/"
+
+  - id: AEG-T105
+    name: "Doxxing-as-Extortion"
+    category: darkweb_threat_intel
+    description: >-
+      Attackers weaponize personal exposure as leverage: threatening to
+      publish stolen personal data, internal communications, or compromising
+      material about executives, employees, or customers unless paid. Unlike
+      bulk data-leak threats, doxxing-as-extortion targets individuals with
+      reputational harm, and the pressure is applied directly to the people
+      with the most to lose, bypassing corporate decision processes.
+    how_it_works: >-
+      After stealing data, the attacker identifies high-leverage individuals
+      and contacts them directly, or threatens the organization with
+      personalized publication: naming executives whose emails will be
+      released, customers whose records will be posted, or employees whose
+      personal details will be exposed. Leak sites sometimes add dedicated
+      'shame' pages per victim. The threat works even when the underlying
+      data's market value is low, because reputational cost is personal and
+      immediate. Some groups skip encryption entirely and run pure
+      doxxing-driven extortion. Variants: (1) executive-targeted publication
+      threats; (2) customer-data publication threats pressuring the company
+      through its clients; (3) direct outreach to employees with personal
+      exposure threats; (4) staged partial leaks demonstrating capability.
+    variants:
+      - "Executive-targeted publication threats"
+      - "Customer-data publication threats via client pressure"
+      - "Direct personal threats to employees"
+      - "Staged partial leaks demonstrating capability"
+    indicators:
+      - "Threat actors contacting executives, employees, or customers directly with publication threats"
+      - "Staged partial data releases on leak sites or forums attributed to the extortion operation"
+      - "Victim organization appearing on leak sites with personalized 'shame' framing rather than bulk data dumps"
+      - "Extortion demands that price non-publication separately from decryption"
+    detection:
+      rule: detect_doxxing_extortion
+      patterns:
+        - "(?i)direct\\s+threat\\s+to\\s+(executive|employee|customer).*publish"
+        - "(?i)staged\\s+partial\\s+leak.*extortion"
+        - "(?i)non.?publication\\s+priced\\s+separately\\s+from\\s+decryption"
+    severity: high
+    mitigations:
+      - "Prepare executive and employee protection playbooks: direct-threat reporting channels, personal security guidance, and legal support"
+      - "Monitor leak sites and forums for the organization's name and key individuals so threats are detected before direct contact"
+      - "Reduce leverage by minimizing retention of sensitive personal data and segmenting it from general corporate systems"
+      - "Coordinate with law enforcement early; doxxing threats are criminal extortion regardless of whether data is published"
+    examples:
+      - summary: "In 2026 Google's threat intelligence, the FBI, and Mandiant jointly warned about the Silent Ransom Group, which steals data (including via in-person impersonation of IT staff) and threatens victims that non-payment means notifying their employees, partners, and customers before publishing the data, a direct doxxing-pressure model."
+        reference: "https://www.newsbytesapp.com/news/science/google-fbi-warn-of-ransomware-group-stealing-data-on-site/story"
+    references:
+      - "https://www.newsbytesapp.com/news/science/google-fbi-warn-of-ransomware-group-stealing-data-on-site/story"
+      - "https://www.mma.org/wp-content/uploads/2023/09/JRTF_StopRansomware_guide_May2023.pdf"
+
+  - id: AEG-T106
+    name: "Defender Dark-Web Monitoring Posture"
+    category: darkweb_threat_intel
+    description: >-
+      This entry describes the legitimate defensive posture for dark-web
+      intelligence: what security teams watch, through which lawful channels,
+      and what they do with it. No access guidance is included or needed.
+      Teams monitor criminal-market artifacts via commercial threat-intel
+      feeds, information-sharing communities, and law-enforcement liaison,
+      converting underground signals (exposed credentials, leak-site
+      listings, exploit chatter) into defensive actions: resets, patching,
+      blocks, and investigations.
+    how_it_works: >-
+      A mature monitoring posture has four layers. (1) Credential exposure:
+      feeds keyed by corporate domain surface stealer logs, combo lists, and
+      breach data for automated reset and session-invalidation workflows.
+      (2) Extortion monitoring: leak-site and ransomware-portal watchlists
+      alert when the organization or its suppliers appear. (3) Vulnerability
+      intelligence: exploited-CVE feeds tracking forum and PoC activity drive
+      patch prioritization. (4) Brand and executive monitoring: impersonation
+      domains, executive doxxing chatter, and fraud infrastructure using the
+      brand. All of this is consumed through licensed feeds and sharing
+      communities (ISACs), never through direct participation in criminal
+      venues. Variants: (1) automated credential-reset pipelines from
+      exposure feeds; (2) supplier and third-party exposure monitoring;
+      (3) sector-wide sharing through ISACs; (4) executive digital-protection
+      programs.
+    variants:
+      - "Automated credential-reset pipelines fed by exposure feeds"
+      - "Supplier and third-party underground-exposure monitoring"
+      - "Sector-wide sharing through ISACs"
+      - "Executive digital-protection programs"
+    indicators:
+      - "Feed hits on corporate domains, executive identities, or supplier domains requiring triage"
+      - "Repeated exposure of the same credential sets indicating an unremediated compromise source"
+      - "Supplier appearing on leak sites, signaling supply-chain risk before direct impact"
+      - "Brand impersonation infrastructure (lookalike domains, fake profiles) used in fraud"
+    detection:
+      rule: detect_monitoring_gap
+      patterns:
+        - "(?i)exposure\\s+feed\\s+hit\\s+without\\s+triage\\s+sla"
+        - "(?i)repeated\\s+exposure\\s+of\\s+same\\s+credentials"
+        - "(?i)supplier\\s+on\\s+leak\\s*site\\s+without\\s+assessment"
+    severity: low
+    mitigations:
+      - "Stand up the four monitoring layers (credentials, extortion, vulnerabilities, brand) with defined triage SLAs for each feed hit"
+      - "Automate the response to credential exposure: reset plus session invalidation, prioritized by session-cookie breadth"
+      - "Join sector ISACs and share sanitized indicators so the community benefits from each member's sightings"
+      - "Review and exercise the monitoring posture regularly; unmonitored suppliers and executives are the usual blind spots"
+    examples:
+      - summary: "Threat-intel providers describe the operational value of monitoring criminal-market data sources: defenders learn of employee credential exposure within days of it appearing underground, far ahead of breach-notification timelines, enabling resets before the credentials are weaponized."
+        reference: "https://spycloud.com/resources/malware-intelligence/"
+    references:
+      - "https://docs.spycloud.com/public-sc/docs/understanding-data-sources"
+      - "https://www.digitalstakeout.com/blog/introducing-cve-feed"

@@ -1,0 +1,1 @@
+{"ts": 1792309321.0763888, "session": "87a726bd2c12", "event": "tool_call", "tool": "nuke", "args": {}, "verdict": "deny", "findings": [], "output_excerpt": "unknown tool"}

@@ -1,0 +1,493 @@
+pack: algorithms
+version: "1.0"
+techniques:
+  - id: AEG-T193
+    name: "Password Hashing: Why Weak Schemes Fall and KDFs Resist"
+    category: algorithms
+    description: >-
+      General-purpose hashes (MD5, SHA-1, SHA-256) are designed to be fast —
+      exactly the wrong property for password storage, since attackers then
+      guess billions of passwords per second on GPUs. Without unique salts,
+      identical passwords produce identical hashes and fall to precomputed
+      rainbow tables. Modern key-derivation functions (Argon2id, bcrypt,
+      PBKDF2) are deliberately slow and salted, and Argon2id is additionally
+      memory-hard, collapsing the attacker's parallelism advantage.
+    how_it_works: >-
+      Conceptually, password verification hashes the candidate with the stored
+      parameters and compares. Attack economics depend on cost per guess:
+      SHA-256 costs nanoseconds and parallelizes perfectly on GPUs; bcrypt's
+      cost factor and Argon2id's memory requirement force real time and RAM
+      per guess, making large-scale cracking infeasible. Salts (unique random
+      values per password) defeat precomputation entirely — every password
+      must be attacked individually. OWASP's current bar: Argon2id (19 MiB,
+      2 iterations), bcrypt work factor 10+, or PBKDF2-HMAC-SHA-256 at
+      600,000+ iterations.
+    variants:
+      - "Fast unsalted hashes (MD5/SHA-1/SHA-256) — GPU-crackable, rainbow-table vulnerable"
+      - "Slow salted KDFs (bcrypt, PBKDF2) — tunable work factor resists brute force"
+      - "Memory-hard KDFs (Argon2id, scrypt) — additionally resist GPU/ASIC parallelism"
+    indicators:
+      - "Credential tables storing unsalted MD5/SHA-1 hashes (audit finding; breach reports)"
+      - "Hash dumps from the organization cracked and published within days of a breach disclosure"
+      - "Legacy applications hashing passwords with a single round of SHA-256"
+      - "Identical hash values for different users (missing or reused salts)"
+    detection:
+      rule: detect_weak_password_hashing
+      patterns:
+        - "credential store audit: password column values matching unsalted MD5 (32 hex chars) or SHA-1 (40 hex chars) formats"
+        - "codebase search: password hashing calls using single-round SHA-256/MD5 with no salt parameter"
+        - '(?i)rainbow\s+tables?'
+        - '(?i)\bbcrypt\b'
+    severity: high
+    mitigations:
+      - "Hash new and migrated passwords only with Argon2id, bcrypt, or PBKDF2 with unique per-password salts"
+      - "Upgrade legacy hashes opportunistically (re-hash on next successful login) and force resets for high-risk accounts"
+      - "Enforce MFA so a cracked password alone does not yield access"
+      - "Monitor breach-notification feeds for organizational credential dumps and rotate on exposure"
+    examples:
+      - summary: "OWASP documents that fast hashes like SHA-256 allow attackers to perform huge numbers of guesses quickly, and mandates slow salted KDFs instead."
+        reference: "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html"
+      - summary: "In the ShadowRay campaign, actors stole /etc/shadow hashes — exactly the material that weak schemes turn into plaintext."
+        reference: "http://attack.mitre.org/campaigns/C0045/"
+    references:
+      - "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html"
+      - "https://mojoauth.com/compare-hashing-algorithms/argon2-vs-pbkdf2/"
+
+  - id: AEG-T194
+    name: "Salting and Peppering Concepts"
+    category: algorithms
+    description: >-
+      A salt is a unique, random value mixed into each password before hashing,
+      guaranteeing that identical passwords produce different hashes and
+      defeating all precomputation (rainbow tables). A pepper is an additional
+      secret value, common to the application and stored separately (ideally in
+      an HSM/KMS), that adds defense in depth if the hash database alone is
+      stolen. Salts need not be secret; peppers must be.
+    how_it_works: >-
+      At verification time the system retrieves the stored salt, combines it
+      with the candidate password (and pepper, if used), runs the KDF, and
+      compares. Defensive implications: salts must come from a cryptographic
+      RNG and be at least 128 bits; salt reuse across users re-enables batch
+      attacks; pepper rotation requires re-hashing, so design for it. A pepper
+      alone without a salt is insufficient — it is one shared secret, and its
+      compromise re-exposes every password to precomputation.
+    variants:
+      - "Unique per-password salts (defeats rainbow tables and batch cracking)"
+      - "Server-side peppers from HSM/KMS (defense in depth for stolen databases)"
+      - "Pepper-only designs (insufficient alone — shared secret, no per-password uniqueness)"
+    indicators:
+      - "Duplicate password hashes across distinct users (missing or constant salt)"
+      - "Salt column null, empty, or identical across rows in the credential store"
+      - "Pepper hardcoded in application source or config files instead of a secret store"
+      - "Short or predictable salts (timestamps, usernames) visible in stored hash formats"
+    detection:
+      rule: detect_salt_misuse
+      patterns:
+        - "credential store audit: duplicate hash values across distinct user rows"
+        - "codebase/secret scan: pepper value present in source code or version-controlled config"
+    severity: medium
+    mitigations:
+      - "Generate a unique CSPRNG salt of at least 128 bits for every password; store it alongside the hash"
+      - "Add a pepper from an HSM/KMS as defense in depth — never as a substitute for salting"
+      - "Use standard PHC-format libraries (which bundle salt and parameters) instead of hand-rolled schemes"
+      - "Scan code and configs for hardcoded peppers and weak-salt patterns in CI"
+    examples:
+      - summary: "OWASP's Password Storage Cheat Sheet requires a unique salt per password specifically to block rainbow-table precomputation, and describes pepper as defense-in-depth only."
+        reference: "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html"
+      - summary: "Comparative analysis of Argon2 vs PBKDF2 shows how modern KDF encodings bundle salt and parameters to make upgrades safe."
+        reference: "https://mojoauth.com/compare-hashing-algorithms/argon2-vs-pbkdf2/"
+    references:
+      - "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html"
+      - "https://mojoauth.com/compare-hashing-algorithms/argon2-vs-pbkdf2/"
+
+  - id: AEG-T195
+    name: "Padding Oracles and Protocol Downgrade Attacks (concepts)"
+    category: algorithms
+    description: >-
+      A padding oracle exists when a system reveals, through error messages or
+      timing, whether decrypted ciphertext had valid padding — letting an
+      attacker decrypt data byte by byte without the key. Protocol downgrade
+      attacks force peers onto weaker protocol versions or ciphersuites (the
+      POODLE attack forced SSL 3.0 fallback, then exploited its padding
+      oracle). For defenders, both mean: error behavior is a side channel, and
+      legacy-protocol support is an attack surface.
+    how_it_works: >-
+      Conceptually, the attacker submits modified ciphertexts and observes
+      accept/reject differences, each answer leaking plaintext information;
+      repeated queries recover secrets like session cookies. Downgrade works by
+      interfering with version negotiation so both ends settle on the weakest
+      common option. Defensive implications: use authenticated encryption
+      (AES-GCM, ChaCha20-Poly1305) where padding oracles cannot exist; emit
+      uniform error responses; disable SSL 3.0/TLS 1.0/1.1 and weak suites;
+      deploy TLS_FALLBACK_SCSV-style anti-downgrade signaling.
+    variants:
+      - "CBC padding oracles (error/timing differences leak plaintext)"
+      - "Protocol-version downgrade (forcing SSL 3.0 / old TLS)"
+      - "Ciphersuite downgrade (forcing weak or export-grade ciphers)"
+    indicators:
+      - "Bursts of TLS handshake failures or padding-error responses from a single client"
+      - "Clients negotiating deprecated protocol versions or ciphersuites despite offering strong ones"
+      - "Repeated crafted-ciphertext submissions against an API that decrypts client input"
+      - "Downgrade-dance patterns: initial strong handshake attempts followed by weak-version retries"
+    detection:
+      rule: detect_crypto_downgrade_oracle
+      patterns:
+        - "TLS logs: session negotiating SSL 3.0/TLS 1.0 after the client initially offered TLS 1.2+"
+        - "application logs: high rate of decryption/padding failures from one source against a decrypting endpoint"
+    severity: high
+    mitigations:
+      - "Use authenticated encryption (AES-GCM, ChaCha20-Poly1305); never unauthenticated CBC for new designs"
+      - "Disable legacy protocols (SSL 2/3, TLS 1.0/1.1) and weak ciphersuites; enforce TLS 1.2+ with strong suites"
+      - "Return uniform, non-distinguishing error responses for all decryption failures"
+      - "Enable anti-downgrade signaling (TLS_FALLBACK_SCSV or equivalent) and monitor for downgrade attempts"
+    examples:
+      - summary: "POODLE (CVE-2014-3566), discovered by Google's security team, combined forced SSL 3.0 downgrade with a CBC padding oracle to decrypt session cookies byte by byte."
+        reference: "https://en.wikipedia.org/wiki/POODLE_attack"
+      - summary: "Post-POODLE industry response — disabling SSL 3.0 and deploying TLS_FALLBACK_SCSV — is the textbook defender playbook for downgrade-class flaws."
+        reference: "https://www.invicti.com/blog/web-security/poodle-attack-end-ssl-3"
+    references:
+      - "https://en.wikipedia.org/wiki/POODLE_attack"
+      - "https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet"
+
+  - id: AEG-T196
+    name: "Encoding vs Encryption Confusion"
+    category: algorithms
+    description: >-
+      Base64, hex, URL-encoding, and ROT13 are encodings — reversible
+      transformations with no key and no secrecy — yet they are routinely
+      mistaken for encryption. Attackers trivially decode them. 'Encrypted'
+      configuration values, tokens, or credentials that are merely base64 are
+      plaintext to anyone who reads them, and data encoded this way in C2
+      traffic or malware is decoded by defenders just as easily.
+    how_it_works: >-
+      The confusion arises because encoded output looks random. Defensive
+      implications cut both ways: audit for secrets 'protected' by encoding
+      and replace with real encryption via KMS/HSM; conversely, when hunting,
+      decode base64/hex blobs in logs, scripts, and malware configs — attackers
+      use encoding (ATT&CK T1132/T1027) to smuggle data past naive inspection,
+      and decoding it is a standard analyst step. Secret scanners should
+      decode-then-match, not just match raw text.
+    variants:
+      - "Base64/hex 'encryption' of secrets in configs and code"
+      - "Attacker data-encoding for C2 and exfiltration (decoded by analysts)"
+      - "Double-encoding to evade naive signature matching"
+    indicators:
+      - "High-entropy base64 strings in source code, configs, or logs that decode to credentials or tokens"
+      - "Configuration values labeled 'encrypted' that decode to ASCII without any key"
+      - "Long encoded blobs in PowerShell command lines or scheduled-task actions"
+      - "Encoded data in DNS labels or HTTP parameters inconsistent with the application's normal format"
+    detection:
+      rule: detect_fake_encryption
+      patterns:
+        - '(?i)(api[_-]?key|secret|token)\s*[:=]\s*[A-Za-z0-9\-_+/=]{12,}'
+        - '(?i)-EncodedCommand\s+[A-Za-z0-9+/=]{200,}'
+    severity: medium
+    mitigations:
+      - "Encrypt secrets with real algorithms via KMS/HSM; never ship 'encrypted' values that are only encoded"
+      - "Run secret scanning (with decode-then-match) across repos, configs, and CI pipelines"
+      - "Treat any keyless reversible transformation as plaintext in threat models"
+      - "Train analysts to routinely decode suspicious blobs during triage"
+    examples:
+      - summary: "MITRE documents Patchwork/APT groups base64-encoding C2 traffic — encoding as obfuscation, transparent to any defender who decodes it."
+        reference: "https://attack.mitre.org/versions/v4/groups/G0040/"
+      - summary: "OWASP's Cryptographic Storage guidance stresses that passwords must be hashed not encrypted, and encoded-not-encrypted secrets are a recurring audit finding."
+        reference: "https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet"
+    references:
+      - "https://attack.mitre.org/versions/v4/groups/G0040/"
+      - "https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet"
+
+  - id: AEG-T197
+    name: "Obfuscation Concepts and Deobfuscation for Defenders"
+    category: algorithms
+    description: >-
+      Obfuscation transforms code and data to resist human and signature
+      analysis — encoded strings, packed binaries, mangled control flow —
+      without changing behavior. Attackers use it to slip past static
+      detection; defenders defeat it by decoding, detonating in sandboxes, and
+      inspecting memory at runtime. Obfuscation raises analyst cost but rarely
+      defeats behavioral detection, which is why it is a speed bump, not a
+      wall.
+    how_it_works: >-
+      Common layers: string encoding/stacking (splits and re-encodes
+      literals); packers and crypters (decompress/decrypt at runtime);
+      control-flow mangling; reflective loading that never writes a file.
+      Defender deobfuscation: static decoding of encoded blobs, sandbox
+      detonation to observe unpacked behavior, memory dumps of injected code,
+      and AMSI/script-block logging that captures the deobfuscated script
+      content at execution time. Layered obfuscation is itself a signal —
+      legitimate software rarely stacks three encoding layers.
+    variants:
+      - "String encoding and stacking (XOR, base64 layers in scripts)"
+      - "Packers/crypters (runtime decompression of binaries)"
+      - "Reflective in-memory loading (no on-disk artifact)"
+    indicators:
+      - "Long encoded PowerShell (-enc) command lines or heavily obfuscated scripts in logs"
+      - "High-entropy string blocks and packed sections in binaries flagged by EDR"
+      - "AMSI/script-block logging capturing decoded payloads at runtime"
+      - "Multiple nested encoding layers in a single file or macro"
+    detection:
+      rule: detect_obfuscated_payload
+      patterns:
+        - "(?i)powershell(\\.exe)?[^\\n]*-(e|en|enc|encodedcommand)\\s+[A-Za-z0-9+/=]{200,}"
+        - "script-block log entries with entropy or length exceeding the organizational baseline by an order of magnitude"
+    severity: high
+    mitigations:
+      - "Enable AMSI, PowerShell script-block logging, and constrained language mode"
+      - "Deploy EDR with memory scanning to catch reflective loading and unpacked payloads at runtime"
+      - "Detonate suspicious files in a sandbox and alert on deobfuscated behaviors, not just static signatures"
+      - "Application allowlisting so obfuscated interpreters and LOLBins cannot launch unapproved code"
+    examples:
+      - summary: "Smoke Loader malware deobfuscates its code with simple XOR routines and obfuscates strings to hinder analysis, per MITRE's software profile."
+        reference: "https://attack.mitre.org/versions/v6/software/S0226/"
+      - summary: "Pisloader splits strings and injects garbage strings specifically to frustrate static analysis — a documented obfuscation pattern."
+        reference: "https://attack.mitre.org/versions/v3/software/S0124/"
+    references:
+      - "https://attack.mitre.org/versions/v6/software/S0226/"
+      - "https://attack.mitre.org/versions/v3/software/S0124/"
+  - id: AEG-T198
+    name: "Steganography Concepts and Steganalysis"
+    category: algorithms
+    description: >-
+      Steganography hides data inside innocuous carriers — images, audio,
+      documents — so the very existence of the message is concealed. Attackers
+      hide payloads, C2 addresses, and exfiltrated data in media files that
+      sail past content filters; some campaigns deliver malware as ordinary
+      PNGs downloaded from image hosts. Defenders counter with steganalysis:
+      statistical tests that reveal the hidden content's footprint.
+    how_it_works: >-
+      Conceptually, the hider embeds bits in redundant carrier data (least
+      significant bits of pixels, appended chunks, metadata fields) and the
+      extractor reverses the process with a shared method or key. Attack
+      variants: payload-bearing images fetched by droppers; C2 instructions
+      embedded in images on public hosts; exfiltration hidden in outbound
+      media. Defensive steganalysis: statistical anomaly tests (chi-square on
+      LSB planes), structural checks (data after image end-markers, anomalous
+      chunk sizes), and re-encoding uploads to destroy hidden channels.
+    variants:
+      - "LSB embedding in image pixels (payload in least-significant bits)"
+      - "Appended-data and metadata hiding (payload after end markers)"
+      - "C2-over-media (commands embedded in images on public hosts)"
+    indicators:
+      - "Image files with data appended after end markers (e.g. past PNG IEND) or anomalous chunk sizes"
+      - "Statistical anomalies in image LSB planes flagged by steganalysis tooling"
+      - "Endpoints downloading images from image-hosting domains followed by process injection"
+      - "Outbound media uploads whose sizes far exceed their visual content"
+    detection:
+      rule: detect_stego_carrier
+      patterns:
+        - "file inspection: image with trailing data after the format end marker or chunk-size anomalies"
+        - "endpoint: image download from a hosting domain followed within minutes by unsigned DLL load or process injection"
+    severity: medium
+    mitigations:
+      - "Re-encode and strip metadata on all user-uploaded media to destroy embedded channels"
+      - "Block unapproved file-sharing/image hosts and inspect downloads at the proxy"
+      - "Deploy steganalysis checks on high-risk ingress/egress points (email attachments, uploads)"
+      - "Layer DLP and behavioral detection — stego defeats content inspection, not behavior monitoring"
+    examples:
+      - summary: "The TerminalFix campaign used PNG files whose compressed pixel data concealed full Windows executables, identified by Microsoft Security Research."
+        reference: "https://www.cybermaterial.com/p/terminalfix-campaign-uses-png-steganography"
+      - summary: "Cofense-analyzed campaigns hid Base64-encoded DLLs inside PNG/JPEG files on abused image hosts to deliver Remcos RAT via fileless execution."
+        reference: "https://socprime.com/active-threats/steganography-secrets-malware-hidden-in-plain-sight/"
+    references:
+      - "https://en.wikipedia.org/wiki/Stegomalware"
+      - "https://socprime.com/active-threats/steganography-secrets-malware-hidden-in-plain-sight/"
+
+  - id: AEG-T199
+    name: "Fuzzing Concepts for Vulnerability Discovery (defenders fuzz first)"
+    category: algorithms
+    description: >-
+      Fuzzing feeds programs a torrent of malformed, unexpected, or random
+      inputs to trigger crashes, hangs, and memory corruption. Coverage-guided
+      fuzzers (AFL++ class) mutate inputs toward unexplored code paths,
+      finding deep bugs humans miss. The defender's imperative is to fuzz
+      before attackers do: every crash found in-house is a vulnerability that
+      never becomes an incident. Google's OSS-Fuzz and GitHub's fuzzing
+      taskflows have industrialized this.
+    how_it_works: >-
+      Conceptually: instrument the target, seed with valid inputs, mutate
+      (bit flips, splicing, dictionaries), and monitor for crashes under
+      sanitizers (AddressSanitizer, UBSan). Coverage feedback steers mutation
+      toward new code. Variants: dumb/mutation fuzzing; coverage-guided
+      (AFL++); structure-aware (format grammars); differential fuzzing
+      (comparing implementations). Defender workflow: fuzz parsers and
+      protocol handlers first (highest attacker value), triage crashes fast,
+      and gate merges on fuzz-clean CI.
+    variants:
+      - "Mutation fuzzing (random/bit-level input mutation)"
+      - "Coverage-guided fuzzing (AFL++ class; feedback-steered toward new code)"
+      - "Structure-aware and differential fuzzing (grammars; cross-implementation comparison)"
+    indicators:
+      - "Crash corpora and sanitizer reports accumulating in CI fuzzing jobs"
+      - "Network-facing parsers or protocol handlers with zero fuzz coverage"
+      - "New parser code merged without a fuzz harness"
+      - "Recurring crash signatures in the same component across releases"
+    detection:
+      rule: detect_unfuzzed_attack_surface
+      patterns:
+        - "CI inventory: network-facing parser or deserializer module with no associated fuzz target"
+        - "newly merged code touching input parsing with no fuzz-corpus coverage delta"
+    severity: medium
+    mitigations:
+      - "Fuzz all parsers, protocol handlers, and deserializers first — the highest attacker-value code"
+      - "Integrate continuous fuzzing into CI with sanitizers; block merges on new crashers"
+      - "Write harnesses for uncovered code paths; track coverage as a security metric"
+      - "Triage crashes within days — a known crasher is a known vulnerability"
+    examples:
+      - summary: "GitHub Security Lab's autonomous Fuzzing Taskflow (AFL++-based) found real out-of-bounds reads in widely used libraries, showing modern fuzzing still catches bugs in heavily tested code."
+        reference: "https://github.blog/security/application-security/ai-powered-fuzzing-with-the-github-security-lab-taskflow-agent/"
+      - summary: "The AFL++ project documents the coverage-guided workflow — seed corpus, mutation, crash triage — that underpins most modern defensive fuzzing."
+        reference: "https://raw.githubusercontent.com/CISPA-SysSec/fuzzing-restarts-aflplusplus/main/README.md"
+    references:
+      - "https://github.blog/security/application-security/ai-powered-fuzzing-with-the-github-security-lab-taskflow-agent/"
+      - "https://raw.githubusercontent.com/CISPA-SysSec/fuzzing-restarts-aflplusplus/main/README.md"
+
+  - id: AEG-T200
+    name: "Symbolic and Concolic Execution Concepts"
+    category: algorithms
+    description: >-
+      Symbolic execution analyzes programs by treating inputs as symbols and
+      exploring execution paths with constraint solvers, systematically
+      reaching code that random testing never touches. Concolic execution mixes
+      concrete runs with symbolic tracking to tame path explosion. Attackers
+      and researchers use it to find deep vulnerabilities and generate
+      exploits; defenders use it to verify patches, prove reachability of
+      dangerous code, and complement fuzzing. DARPA's 2016 Cyber Grand
+      Challenge proved machines can find and patch bugs autonomously with
+      these methods.
+    how_it_works: >-
+      Conceptually, each branch forks a symbolic state with path constraints;
+      a solver (e.g. SMT) finds inputs satisfying each path, including ones
+      leading to crashes or dangerous sinks. Defensive implications: run
+      symbolic analysis on security patches to confirm the vulnerable path is
+      truly closed; combine with fuzzing (fuzzer reaches broad code,
+      symbolic execution digs into narrow branches); beware path explosion on
+      large codebases — scope to security-critical functions. It is an
+      analysis technique, not an attack tool per se, and belongs in the
+      defender's verification toolkit.
+    variants:
+      - "Pure symbolic execution (all inputs symbolic; exhaustive but explosive)"
+      - "Concolic execution (concrete runs guiding symbolic exploration)"
+      - "Hybrid fuzzing-symbolic pipelines (fuzzer breadth plus solver depth)"
+    indicators:
+      - "Security patches merged without verification that the vulnerable path is unreachable"
+      - "Deep parser branches with no test or analysis coverage in security-critical code"
+      - "Vulnerability reports describing solver-generated crashing inputs (research context)"
+    detection:
+      rule: detect_unverified_security_patch
+      patterns:
+        - "security fix merged with no evidence (test, fuzz corpus, or analysis) that the vulnerable path is closed"
+        - "recurring vulnerabilities in the same function across releases (patch failed to cover the path)"
+    severity: medium
+    mitigations:
+      - "Apply symbolic/concolic analysis to verify security patches actually close the vulnerable paths"
+      - "Pair fuzzing (breadth) with symbolic execution (depth) on parsers and protocol code"
+      - "Scope analysis to security-critical functions to manage path explosion"
+      - "Use reachability analysis to prioritize which findings are genuinely exploitable"
+    examples:
+      - summary: "DARPA's 2016 Cyber Grand Challenge: the winning Mayhem system blended symbolic execution with fuzzing to autonomously find and patch vulnerabilities."
+        reference: "https://www.nextgov.com/artificial-intelligence/2016/08/artificial-intelligence-just-changed-future-information-security/130604/"
+      - summary: "GitHub Security Lab's fuzzing taskflow pairs coverage-guided fuzzing with structured analysis, the same hybrid philosophy, to find bugs in C/C++ libraries."
+        reference: "https://github.blog/security/application-security/ai-powered-fuzzing-with-the-github-security-lab-taskflow-agent/"
+    references:
+      - "https://www.nextgov.com/artificial-intelligence/2016/08/artificial-intelligence-just-changed-future-information-security/130604/"
+      - "https://github.blog/security/application-security/ai-powered-fuzzing-with-the-github-security-lab-taskflow-agent/"
+
+  - id: AEG-T201
+    name: "Differential Cryptanalysis Concepts (cipher selection)"
+    category: algorithms
+    description: >-
+      Differential cryptanalysis studies how differences in plaintext inputs
+      propagate through a cipher's rounds, revealing statistical biases that
+      can distinguish or break weak designs. It is the foundational
+      analytical attack that modern ciphers are designed to resist — AES was
+      explicitly engineered with wide-trail diffusion to defeat it, while DES's
+      small S-boxes made it vulnerable. For defenders, the lesson is about
+      cipher selection and deprecation: only use algorithms that survived
+      decades of this analysis.
+    how_it_works: >-
+      Conceptually, the analyst finds high-probability input/output difference
+      pairs through the cipher and uses them to recover key bits faster than
+      brute force. Defensive implications: choose AES-256-GCM or
+      ChaCha20-Poly1305, which were designed with differential resistance as a
+      core criterion; deprecate DES, 3DES, RC4, and other pre-modern ciphers
+      whose margins against differential (and related) attacks are thin or
+      broken; inventory where weak ciphers are still negotiated (TLS, VPNs,
+      legacy devices) and eliminate them.
+    variants:
+      - "Classical differential cryptanalysis (chosen-plaintext difference propagation)"
+      - "Related-key and impossible-differential extensions (stronger attacker models)"
+      - "Linear cryptanalysis (the statistical sibling defenders also design against)"
+    indicators:
+      - "TLS handshakes negotiating DES, 3DES, or RC4 ciphersuites"
+      - "Codebase or device configs referencing DES/RC4 encryption"
+      - "VPN or legacy-device inventories still offering pre-AES cipher options"
+      - "Cryptographic agility gaps: no inventory of which ciphers are actually in use"
+    detection:
+      rule: detect_weak_cipher_use
+      patterns:
+        - "TLS logs: negotiated ciphersuite in (DES, 3DES, RC4, export-grade) set"
+        - "config/code scan: references to DES, RC4, or single-DES encryption calls"
+    severity: medium
+    mitigations:
+      - "Standardize on AES-256-GCM or ChaCha20-Poly1305; deprecate DES/3DES/RC4 everywhere"
+      - "Maintain a cryptographic inventory (CBOM) and alert on weak-cipher negotiation"
+      - "Enforce strong ciphersuite policy at TLS terminators, VPN gateways, and mail servers"
+      - "Build crypto agility so the next algorithm transition does not require re-architecture"
+    examples:
+      - summary: "NIST's post-quantum timeline shows the same selection discipline applied forward: only algorithms surviving years of public cryptanalysis become standards."
+        reference: "https://csrc.nist.gov/projects/post-quantum-cryptography/workshops-and-timeline"
+      - summary: "OWASP's Cryptographic Storage guidance directs practitioners to modern, vetted algorithms and away from legacy ciphers."
+        reference: "https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet"
+    references:
+      - "https://csrc.nist.gov/projects/post-quantum-cryptography/workshops-and-timeline"
+      - "https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet"
+
+  - id: AEG-T202
+    name: "Post-Quantum Transition Concepts for Defenders"
+    category: algorithms
+    description: >-
+      Large-scale quantum computers would break RSA, ECDSA, and Diffie-Hellman
+      via Shor's algorithm, and 'harvest now, decrypt later' means
+      long-lived encrypted data is already at risk. NIST finalized the first
+      post-quantum standards in August 2024 — FIPS 203 (ML-KEM, key
+      encapsulation), FIPS 204 (ML-DSA, signatures), FIPS 205 (SLH-DSA,
+      hash-based signatures) — and set deprecation timelines (classical
+      public-key deprecated after 2030, disallowed after 2035). Defenders must
+      inventory cryptography now and migrate deliberately.
+    how_it_works: >-
+      Conceptually, the threat is asymmetric: symmetric crypto (AES-256) is
+      largely unaffected, while all widely used public-key crypto falls.
+      Defender playbook: build a cryptographic bill of materials (CBOM)
+      showing where RSA/ECC is used; prioritize key-establishment migration
+      for long-lived data; deploy hybrid (classical + PQC) schemes during
+      transition; demand PQC roadmaps from vendors; design crypto agility so
+      algorithms can be swapped without re-architecture. NSA's CNSA 2.0 sets
+      even steeper dates for national-security systems.
+    variants:
+      - "Harvest-now-decrypt-later (passive collection against future quantum decryption)"
+      - "Hybrid deployments (classical plus post-quantum during transition)"
+      - "Crypto-agility programs (algorithm swap without re-architecture)"
+    indicators:
+      - "Long-retention encrypted archives protected only by RSA/ECC key exchange"
+      - "CBOM entries showing RSA-2048/ECC in key-establishment for data with >10-year sensitivity"
+      - "Vendor products with no published post-quantum roadmap"
+      - "TLS inventories with no ML-KEM-capable endpoints on critical paths"
+    detection:
+      rule: detect_quantum_vulnerable_crypto
+      patterns:
+        - "CBOM: RSA/ECC key establishment protecting data classified for retention beyond 2030"
+        - "certificate inventory: no post-quantum or hybrid certificates on externally facing critical services"
+    severity: high
+    mitigations:
+      - "Build a complete cryptographic inventory (CBOM) — you cannot migrate what you cannot see"
+      - "Prioritize key-establishment migration (ML-KEM) for long-lived and high-value data first"
+      - "Deploy hybrid classical+PQC schemes during the transition window"
+      - "Require PQC roadmaps in procurement and build crypto agility into new systems"
+    examples:
+      - summary: "NIST published FIPS 203, 204, and 205 on August 13, 2024, after an eight-year global evaluation of 82 candidate algorithms."
+        reference: "https://csrc.nist.gov/projects/post-quantum-cryptography/workshops-and-timeline"
+      - summary: "Industry analyses of NIST IR 8547 and CNSA 2.0 timelines show deprecation of RSA/ECDSA after 2030 driving enterprise migration planning now."
+        reference: "https://www.keyfactor.com/blog/post-quantum-readiness-for-software-vendors-the-timeline-is-now-written-down/"
+    references:
+      - "https://csrc.nist.gov/projects/post-quantum-cryptography/workshops-and-timeline"
+      - "https://www.keyfactor.com/blog/post-quantum-readiness-for-software-vendors-the-timeline-is-now-written-down/"

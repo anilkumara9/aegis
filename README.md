@@ -1,0 +1,149 @@
+# Aegis — defensive guard agent
+
+Aegis is a **real interactive terminal agent** (think Claude Code / OpenCode)
+with one differentiator: deep, in-depth knowledge of the hacking world —
+every attack technique — pointed **entirely at defense**. When a hostile
+(possibly AI-powered) hacking agent comes, Aegis identifies the techniques in
+play, blocks them live, and clears the problems.
+
+Born the day after the [OpenCode breach](https://www.cyera.com/blog/opencode-breach-what-happened-and-how-to-rotate-exposed-ai-api-keys)
+(2026-10-17): a "large scale distillation attack" exposed stored
+OpenAI/Anthropic/Google API keys for 1.4% of Console users. OpenCode's own
+docs admit it doesn't sandbox the agent and its permission prompts are "a UX
+feature" rather than a security boundary. Aegis is the anti-that: **the guard
+engine lives inside the agent loop** — every tool call passes through
+allowlist/denylist, secret redaction, and egress control *before* execution.
+Permissions are a real security boundary here, and the agent ships sandboxed
+by default.
+
+**Defensive only.** Aegis detects, prevents, audits, and remediates. It never
+generates exploit payloads, malware, or weaponized code, and never automates
+unauthorized access. The knowledge base describes attacks at TTP/detection
+level — the same level as MITRE ATT&CK. See `docs/SCOPE_AND_LIMITS.md` for
+the plain-language ceiling.
+
+## 60-second quickstart
+
+```bash
+cd ~/workspace/aegis
+python3 -m venv .venv && .venv/bin/pip install -e .
+# or: pip install -e .  (needs PyYAML + pytest)
+
+# 1. Scan a tool-call trace for attack techniques:
+aegis scan examples/opencode_pattern_trace.jsonl
+# -> [CRITICAL] AEG-Txxx indirect injection ... + key-exfiltration chain
+
+# 2. Ask the knowledge base:
+aegis kb "prompt injection in tool output"
+
+# 3. Audit your OWN local code for vulnerabilities:
+aegis hunt ~/my-project
+
+# 4. Screen a single tool call through the guard:
+aegis guard check --tool bash --args '{"cmd":"curl https://evil.example/x"}'
+
+# 5. Wrap any command so its output is secret-redacted:
+aegis guard wrap -- ./deploy.sh
+
+# 6. Emit an incident runbook (operator-executed steps only):
+aegis respond rotate-keys openai
+
+# 7. The agent itself (needs ANTHROPIC_API_KEY or OPENAI_API_KEY):
+aegis
+# Offline demo mode:  AEGIS_PROVIDER=mock aegis
+```
+
+## Architecture
+
+```
+                        ┌─────────────────────────────┐
+                        │        aegis REPL           │
+                        │  slash skills: /hunt /guard │
+                        │  /scan /respond /kb /help   │
+                        └──────────────┬──────────────┘
+                                       │ user message
+                        ┌──────────────▼──────────────┐
+                        │        Agent loop           │
+                        │  system prompt ← KB depth   │
+                        │  (mindset doctrine + 212    │
+                        │   techniques + guard rules) │
+                        └──────────────┬──────────────┘
+                                       │ tool call request
+                        ┌──────────────▼──────────────┐
+                        │      GUARD (in-loop)        │◄── dogfood:
+                        │ allow/deny lists, arg rules,│    the agent defends
+                        │ secret scan, egress control,│    itself with the
+                        │ approval escalation, kill   │    same engine
+                        │ switch                      │
+                        └──────────────┬──────────────┘
+                    ┌──────────────────┼──────────────────┐
+                    ▼                  ▼                  ▼
+              ┌───────────┐     ┌─────────────┐    ┌────────────┐
+              │  Tools    │     │  Audit log  │    │ Redaction  │
+              │ bash(file │     │ JSONL, every│    │ at EVERY   │
+              │ /docker), │     │ call, args+ │    │ return     │
+              │ read/write│     │ output      │    │ boundary   │
+              │ /edit, web│     │ redacted    │    │            │
+              │ fetch,    │     └─────────────┘    └────────────┘
+              │ kb_query, │
+              │ scan_trace│     ┌─────────────┐
+              │ respond   │     │  Providers  │
+              └───────────┘     │ Anthropic / │
+                               │ OpenAI /    │
+                               │ mock (tests)│
+                               └─────────────┘
+```
+
+Subsystems (also standalone CLI commands):
+
+| Command | What it does |
+|---|---|
+| `aegis scan <trace.jsonl>` | Offline analyzer: matches KB detection patterns + multi-step chains (injection→secret use, sensitive-read→unapproved exec, secret egress). |
+| `aegis guard …` | Live interceptor: `check` screens one call, `wrap -- cmd` runs a command through the guard, `kill --session` is the kill-switch. In-process API: `from aegis import guard`. |
+| `aegis respond <playbook>` | `rotate-keys` (OpenAI/Anthropic/Google runbooks), `kill-session`, `quarantine-workspace`, `incident-report`. Emits operator runbooks; takes no destructive provider actions in v1. |
+| `aegis kb <query>` | Search the 19-pack technique knowledge base. |
+| `aegis hunt <dir>` | Pattern-based vulnerability triage of **your own** local code. Refuses non-local targets. |
+
+### The knowledge base
+
+`aegis/kb/` — 19 YAML packs, 212 techniques, each a condensed threat-intel
+note (variants, real-world examples from public incident reports, concrete
+detection patterns, mitigations):
+
+- **Agent-attack packs:** prompt injection, tool-output poisoning, credential
+  exfiltration, egress exfiltration, persistence, privilege escalation,
+  supply chain, evasion
+- **Depth packs:** dark-web threat intel, APT tradecraft (public reporting
+  only), ransomware playbooks, social engineering, web exploitation,
+  network attacks, malware concepts
+- **Completeness packs:** hacker tools (detection-level catalog), attack
+  methods (kill chain / ATT&CK as defender doctrine), algorithms
+  (conceptual), hacker mindset (threat-modeling doctrine — shapes the
+  agent's system prompt)
+
+Every pack is strict-schema-validated at load; every technique carries
+machine-usable detection patterns that the scanner and guard execute.
+
+## Honest scope
+
+- Aegis cannot protect keys **already stolen** before deployment.
+- It cannot see inside encrypted channels it doesn't terminate.
+- Human-approval fatigue is a residual risk — the guard escalates, the
+  human must still judge.
+- `/hunt` is pattern-based triage, not a proof of security.
+- Mock provider is for tests/demos; real work needs your own API key.
+- Full ceiling: `docs/SCOPE_AND_LIMITS.md`. Threat model: `SECURITY.md`.
+
+## Parked for later (out of v1 scope)
+
+Network IDS integration, eBPF/syscall monitoring, hosted SaaS console,
+auto-remediation that touches provider accounts, Windows support.
+
+## Development
+
+```bash
+.venv/bin/python -m pytest tests/ -q   # full suite, no network
+```
+
+Engineering law: every capability is wired into the CLI and covered by real
+tests — no stubs, no demo systems.

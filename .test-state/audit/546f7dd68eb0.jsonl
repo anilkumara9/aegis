@@ -1,0 +1,2 @@
+{"ts": 1792309253.0232463, "session": "546f7dd68eb0", "event": "tool_call", "tool": "read", "args": {"path": "a.txt"}, "verdict": "allow", "findings": [], "output_excerpt": "     1  hello"}
+{"ts": 1792309253.0249438, "session": "546f7dd68eb0", "event": "tool_call", "tool": "write", "args": {"path": "b.txt", "content": "hello copy"}, "verdict": "allow", "findings": [], "output_excerpt": "wrote 10 bytes to b.txt"}

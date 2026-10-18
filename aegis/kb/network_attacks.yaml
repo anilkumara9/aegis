@@ -1,0 +1,498 @@
+pack: network_attacks
+version: "1.0"
+techniques:
+  - id: AEG-T151
+    name: "Lateral Movement"
+    category: network_attacks
+    description: >-
+      Lateral movement is how an attacker expands from one compromised host to
+      others inside a network, hunting for higher-value systems and data.
+      Defenders watch the remote-access protocols that make it possible: SMB
+      for share and service access, WinRM and WMI for remote administration,
+      SSH for Unix hosts, and RDP for interactive sessions. Unusual use of
+      these protocols - especially at odd hours or between hosts that never
+      normally talk - is one of the strongest signals of an active intrusion.
+    how_it_works: >-
+      After landing on a foothold host, the attacker reuses harvested
+      credentials or sessions to authenticate to neighboring systems through
+      legitimate remote services. Variants defenders track: SMB-based movement
+      (PsExec-style service creation, share enumeration), WinRM/WMI remote
+      execution, SSH with stolen keys, RDP interactive logons, and
+      living-off-the-land admin tools repurposed for the hop. Detection
+      hinges on protocol baselines: who normally talks to whom, with what
+      account, and when.
+    variants:
+      - "SMB-based: service creation, scheduled tasks, and share access from a workstation"
+      - "WinRM/WMI: remote command execution over management protocols"
+      - "SSH: key or credential reuse between Unix hosts"
+      - "RDP: interactive logons from unusual sources or at unusual hours"
+      - "Admin-tool repurposing: legitimate remote-management software used for the hop"
+    indicators:
+      - "SMB logons (Event ID 4624 Logon Type 3) from a workstation account to many hosts in a short window"
+      - "Service creation or scheduled-task creation on a remote host followed immediately by execution"
+      - "First-time host-to-host SSH or WinRM connections between systems with no administrative relationship"
+      - "RDP sessions originating from servers or from accounts that never use interactive logon"
+    detection:
+      rule: detect_lateral_movement
+      patterns:
+        - "(?i)eventid\\s*[:=]\\s*4624.*logontype\\s*[:=]\\s*3"
+        - "(?i)(psexec|wmic|winrs|invoke-command)"
+        - "(?i)smb.*(admin\\$|c\\$|ipc\\$)"
+        - "(?i)rdp.*(mstsc|termsrv)"
+        - '(?i)lateral\s+movement'
+    severity: high
+    mitigations:
+      - "Segment the network and enforce tiered administration: workstation admins never touch servers, server admins never touch domain controllers"
+      - "Disable or restrict SMBv1, lateral protocols, and local admin account reuse; deploy LAPS for unique local passwords"
+      - "Require MFA and privileged-access workstations for all remote administration"
+      - "Baseline normal host-to-host protocol flows and alert on deviations, especially service creation from non-admin hosts"
+    examples:
+      - summary: "The 2017 NotPetya wiper spread laterally across corporate networks worldwide using a combination of the EternalBlue SMB exploit and a Mimikatz-style credential harvester, moving host-to-host without user interaction and crippling companies like Maersk and Merck within hours."
+        reference: "https://www.csidb.net/csidb/incidents/c5abc074-08d8-459c-a1da-346db710fcf0/"
+    references:
+      - "https://www.csidb.net/csidb/incidents/c5abc074-08d8-459c-a1da-346db710fcf0/"
+      - "https://www.breachsense.com/blog/equifax-data-breach/"
+
+  - id: AEG-T152
+    name: "Command-and-Control (C2) Beaconing"
+    category: network_attacks
+    description: >-
+      Beaconing is the rhythmic check-in an implanted host makes to its
+      operator's server: small, regular, easily overlooked. Defenders detect
+      it not by the payload, which is usually encrypted, but by the shape of
+      the traffic - periodicity, fixed intervals with jitter, long-lived
+      sessions to rare domains, and odd HTTP/DNS structure. A single beaconing
+      host means the intrusion is still alive and taking orders.
+    how_it_works: >-
+      Malware on the host opens an outbound channel on a schedule (every N
+      seconds/minutes, plus random jitter to defeat naive interval detectors),
+      sends a heartbeat, and pulls down tasks or stages. Variants: HTTPS
+      beacons to cloud-like domains, DNS beacons (queries encoding data in
+      subdomain labels), domain-fronted beacons hiding behind reputable CDNs,
+      and fallback channels that activate when the primary is blocked.
+      Detection is behavioral: inter-arrival-time analysis, byte-count
+      regularity, and destination rarity.
+    variants:
+      - "HTTPS beacons: periodic POSTs to rare or algorithmically generated domains"
+      - "DNS beacons: data encoded in query labels to attacker-controlled nameservers"
+      - "Domain-fronted beacons: traffic hiding behind reputable CDN front domains"
+      - "Fallback channels: secondary protocols activated when the primary is blocked"
+    indicators:
+      - "Highly periodic outbound connections from a host to a domain it rarely contacts, with jitter around a fixed interval"
+      - "HTTPS POSTs to URIs made of random-length alphabetical directory names"
+      - "Long-lived TLS sessions with tiny, regular byte counts in both directions"
+      - "DNS queries for high-entropy subdomains at steady cadence from a single host"
+    detection:
+      rule: detect_c2_beaconing
+      patterns:
+        - "(?i)interval\\s*[:=]\\s*\\d+.*jitter"
+        - "(?i)post\\s+/[a-z]{8,32}/"
+        - "(?i)beacon.*(periodic|heartbeat|checkin)"
+        - "(?i)tls.*(ja3|ja4).*rare"
+        - '(?i)\bbeacon(ing)?\b'
+    severity: high
+    mitigations:
+      - "Egress filtering with DNS and TLS inspection at the boundary; block newly-registered and uncategorized domains by policy"
+      - "Deploy NDR/behavioral analytics that score periodicity and destination rarity rather than relying on signatures"
+      - "Isolate beaconing hosts immediately and hunt for sibling implants with the same cadence and destination profile"
+      - "Block known-bad infrastructure at DNS and proxy layers and sinkhole internal queries for it"
+    examples:
+      - summary: "CISA's AA20-280A advisory on Emotet documented its command-and-control pattern: HTTP POST requests to URIs consisting of nonsensical random-length alphabetical directories on Emotet-related domains or IPs, a classic beacon shape defenders could fingerprint even though the payload was encrypted."
+        reference: "https://content.govdelivery.com/accounts/USDHSCISA/bulletins/2a47c83"
+    references:
+      - "https://content.govdelivery.com/accounts/USDHSCISA/bulletins/2a47c83"
+      - "https://www.techtarget.com/healthtechsecurity/news/366595044/DHS-CISA-Warns-of-Resurgence-of-Emotet-Trojan-Malware-Cyberattacks?vgnextfmt=print"
+
+  - id: AEG-T153
+    name: "DNS Tunneling"
+    category: network_attacks
+    description: >-
+      DNS tunneling smuggles data inside DNS queries and responses, abusing a
+      protocol that firewalls almost always allow. Attackers encode commands
+      or stolen data in subdomain labels and read the answers back the same
+      way, building a covert channel that looks like ordinary name
+      resolution. Defenders spot it through query volume, label entropy, and
+      record-type anomalies rather than through payload inspection.
+    how_it_works: >-
+      A compromised host issues DNS queries for attacker-controlled domains
+      with data packed into long, high-entropy subdomain labels; the
+      authoritative nameserver answers with encoded instructions in TXT or
+      other records. Variants: data exfiltration tunnels (outbound only),
+      full bidirectional C2 tunnels, and low-and-slow tunnels that stay under
+      volume thresholds. Because DNS is rarely blocked, the channel survives
+      most egress policies until behavioral detection catches the shape of
+      the queries.
+    variants:
+      - "Exfiltration tunnels: stolen data encoded in outbound query labels"
+      - "Bidirectional C2 tunnels: commands returned in DNS answers"
+      - "Low-and-slow tunnels: throttled queries designed to evade volume thresholds"
+      - "DNS-over-HTTPS abuse: tunneling inside encrypted DNS to blind passive monitors"
+    indicators:
+      - "A single host generating large volumes of DNS queries for one domain with long, high-entropy subdomains"
+      - "Unusual record types (TXT, NULL) dominating a host's DNS traffic"
+      - "DNS query lengths far above the organizational baseline, especially to newly observed domains"
+      - "Internal hosts resolving external domains that no legitimate application is known to use"
+    detection:
+      rule: detect_dns_tunneling
+      patterns:
+        - "(?i)txt.*query.*length\\s*>\\s*100"
+        - "(?i)subdomain.*entropy\\s*>\\s*4\\.5"
+        - "(?i)qps\\s*>\\s*100.*single.*domain"
+        - "(?i)(iodine|dnscat|dns2tcp)"
+    severity: high
+    mitigations:
+      - "Force all DNS through monitored resolvers; block direct UDP/53 and DoH to unapproved resolvers at the firewall"
+      - "Deploy DNS-layer security with machine-learning models tuned for tunneling and exfiltration shapes"
+      - "Alert on query-length, entropy, and volume anomalies per host and per domain"
+      - "Segment and monitor high-value subnets most aggressively, since tunneled exfiltration targets them first"
+    examples:
+      - summary: "Cisco Umbrella's threat research team disclosed a purpose-built machine-learning module for real-time DNS tunneling and exfiltration detection, developed after observing data-exfiltration-shaped DNS behavior across enterprise traffic and demonstrating live detections at Black Hat Asia."
+        reference: "https://umbrella.cisco.com/blog/improvements-dns-tunneling-dns-exfiltration-detection"
+    references:
+      - "https://umbrella.cisco.com/blog/improvements-dns-tunneling-dns-exfiltration-detection"
+      - "https://blogs.cisco.com/security/black-hat-asia-2025-cisco-unveils-new-dns-tunneling-analysis-techniques"
+
+  - id: AEG-T154
+    name: "Port Scanning and Network Reconnaissance"
+    category: network_attacks
+    description: >-
+      Port scanning probes hosts for open ports and listening services, and
+      network reconnaissance maps which addresses are alive and what runs on
+      them. It is the noisy precursor to almost every network intrusion: the
+      attacker is learning the terrain before choosing a weapon. Defenders
+      treat scan-shaped traffic as an early warning and respond before the
+      follow-on attack arrives.
+    how_it_works: >-
+      The scanner sends connection attempts or crafted packets across many
+      ports or hosts and infers state from the replies (open, closed,
+      filtered). Variants defenders recognize: TCP connect scans (full
+      handshakes, loud in logs), SYN/half-open scans (no completed handshake,
+      quieter), FIN/NULL/XMAS scans (abnormal flag combinations against
+      filtered ports), UDP scans (slow, service-dependent), and ping sweeps
+      that enumerate live hosts first. Detection keys on rate, breadth, and
+      flag anomalies from a single source.
+    variants:
+      - "TCP connect scans: full handshakes, highly visible in logs"
+      - "SYN scans: half-open connections that avoid completing the handshake"
+      - "FIN/NULL/XMAS scans: abnormal TCP flag combinations probing filtered ports"
+      - "UDP scans and ping sweeps: service and host enumeration"
+    indicators:
+      - "One external source contacting many ports on one host, or one port on many hosts, in a short window"
+      - "Bursts of TCP RST or ICMP unreachable replies correlated with a single source"
+      - "Packets with abnormal flag combinations (FIN-only, NULL, XMAS) arriving at the perimeter"
+      - "Sequential connection attempts across a subnet from an address with no business relationship"
+    detection:
+      rule: detect_port_scanning
+      patterns:
+        - "(?i)tcp.*(fin|psh|urg).*(scan|probe)"
+        - "(?i)detection_filter.*track\\s+by_src.*count\\s+\\d+.*seconds"
+        - "(?i)(nmap|masscan|zmap)"
+        - "(?i)rst.*rate.*spike"
+        - '(?i)port\s+scans?\b'
+    severity: medium
+    mitigations:
+      - "Default-deny firewall posture: expose only required services, and hide the rest behind VPN or zero-trust access"
+      - "Deploy IDS/IPS with scan-detection preprocessors and threshold rules (e.g. connection-count per source per minute)"
+      - "Rate-limit and tarpit aggressive scanners at the perimeter; feed scanner IPs into blocklists"
+      - "Run deception: honeypots and darknet sensors that turn scans into high-fidelity alerts"
+    examples:
+      - summary: "In October 2026 CISA and the FBI (advisory AA26-281A) reported Chinese-linked actors combining large-scale automated scanning, botnet traffic, and hands-on-keyboard activity against US networks, with reconnaissance scanning as the opening stage before credential theft and data collection."
+        reference: "https://www.attackiq.com/2026/10/15/response-to-cisa-advisory-aa26-281a/"
+    references:
+      - "https://www.infosecinstitute.com/resources/penetration-testing/snort-network-recon-techniques/"
+      - "https://thecybersecguru.com/projects/build-nids-snort-ultimate-guide/"
+
+  - id: AEG-T155
+    name: "ARP Spoofing and Man-in-the-Middle"
+    category: network_attacks
+    description: >-
+      ARP spoofing exploits the trust-based Address Resolution Protocol on
+      local networks: forged ARP replies convince hosts that the attacker's
+      MAC address owns the gateway's (or a victim's) IP. Traffic then flows
+      through the attacker, enabling eavesdropping, credential capture, and
+      session hijacking. It requires local network presence, which makes it a
+      favorite for insider threats, rogue devices, and compromised hosts
+      pivoting on flat networks.
+    how_it_works: >-
+      The attacker broadcasts unsolicited ARP replies mapping their MAC to
+      the gateway IP (to the victim) and to the victim IP (to the gateway),
+      inserting themselves into the path. Variants: full interception with
+      forwarding (victim notices nothing), selective interception of specific
+      hosts, ARP-based denial of service (poisoning without forwarding),
+      and DHCP/DNS-layer adjuncts that extend the MITM beyond one segment.
+      Detection looks for the protocol anomalies: gratuitous replies, MAC/IP
+      flapping, and duplicate-address claims.
+    variants:
+      - "Full interception: traffic forwarded after inspection, victim unaffected"
+      - "Selective targeting: only chosen hosts poisoned to stay quiet"
+      - "ARP denial of service: poisoning without forwarding, breaking connectivity"
+      - "DHCP/DNS adjuncts: rogue responses extending the MITM beyond ARP"
+    indicators:
+      - "Wireshark expert info flagging arp.duplicate-address-detected for gateway IPs"
+      - "Rapid MAC address changes for the same IP in switch CAM tables or arpwatch logs"
+      - "Unsolicited ARP replies (opcode 2) arriving without a preceding request"
+      - "Users reporting certificate warnings, captive-portal-like behavior, or intermittent connectivity on a LAN"
+    detection:
+      rule: detect_arp_spoofing
+      patterns:
+        - "arp\\.duplicate-address-detected"
+        - "(?i)gratuitous.*arp.*reply"
+        - "(?i)opcode\\s*2.*unsolicited"
+        - "(?i)mac.*flap.*same.*ip"
+    severity: high
+    mitigations:
+      - "Enable Dynamic ARP Inspection (DAI) with DHCP snooping on managed switches"
+      - "Use static ARP entries for critical infrastructure (gateways, servers) where feasible"
+      - "Deploy 802.1X so rogue devices cannot join the broadcast domain in the first place"
+      - "Monitor with arpwatch or NDR sensors and alert on MAC/IP binding changes"
+    examples:
+      - summary: "Defensive research on ARP-spoofing detection documents the canonical Wireshark signatures defenders rely on (arp.duplicate-address-detected, unsolicited opcode-2 replies) and the standard response playbook: DAI on switches, static ARP for gateways, and 802.1X to keep rogue devices off the segment."
+        reference: "https://www.infosecmatter.com/detecting-network-attacks-with-wireshark/"
+    references:
+      - "https://www.infosecmatter.com/detecting-network-attacks-with-wireshark/"
+      - "https://ipaddresslocation.net/articles/arp-spoofing-and-mitm-detection-prevention-and-response"
+
+  - id: AEG-T156
+    name: "Pass-the-Hash and Pass-the-Ticket"
+    category: network_attacks
+    description: >-
+      Pass-the-hash reuses a stolen NTLM password hash to authenticate as the
+      victim without ever learning the password; pass-the-ticket does the
+      same with stolen Kerberos tickets. Both turn one compromised host into
+      a skeleton key for the whole domain, because Windows accepts the
+      credential material itself as proof of identity. They are lateral-
+      movement staples and the reason credential hygiene decides breach
+      blast radius.
+    how_it_works: >-
+      The attacker first extracts credential material from memory or disk on
+      a compromised host (LSASS, SAM, cached tickets), then presents it to
+      other systems during authentication. Variants: NTLM pass-the-hash over
+      SMB/WinRM, over-pass-the-hash (NTLM hash converted into a Kerberos
+      ticket), pass-the-ticket with stolen TGTs or service tickets, and
+      golden/silver ticket forgery for persistent domain-wide access.
+      Detection focuses on logon-type and authentication-package anomalies:
+      network logons that do not correspond to any interactive session.
+    variants:
+      - "NTLM pass-the-hash: stolen hash authenticates over SMB, WinRM, or RDP"
+      - "Over-pass-the-hash: NTLM hash converted into Kerberos tickets"
+      - "Pass-the-ticket: stolen TGT or service ticket replayed"
+      - "Golden/silver ticket: forged Kerberos tickets for persistent access"
+    indicators:
+      - "NTLM Logon Type 3 authentications with no corresponding interactive or domain logon"
+      - "The same account authenticating to many hosts in minutes from a single source"
+      - "Kerberos ticket requests with anomalous encryption types or lifetimes"
+      - "LSASS access by non-system processes (credential dumping as the precursor)"
+    detection:
+      rule: detect_credential_reuse
+      patterns:
+        - "(?i)logontype\\s*[:=]\\s*3.*ntlm"
+        - "(?i)4624.*(mimikatz|sekurlsa)"
+        - "(?i)kerberos.*ticket.*lifetime.*anomaly"
+        - "(?i)lsass.*access.*(granted|10)"
+    severity: high
+    mitigations:
+      - "Enforce privileged-access tiering: domain admins never log on to workstations or member servers"
+      - "Enable Credential Guard and LSASS protection (PPL) to block memory extraction of credential material"
+      - "Deploy LAPS for unique local administrator passwords; deny network logon for local accounts"
+      - "Migrate from NTLM to Kerberos, audit NTLM usage, and reset the krbtgt account twice after any suspected compromise"
+    examples:
+      - summary: "MITRE ATT&CK documents pass-the-hash as a long-abused lateral-movement technique, with procedure examples from groups like Night Dragon and tooling such as Mimikatz's pth module; its detection guidance centers on auditing NTLM Logon Type 3 events that are not tied to domain logons."
+        reference: "https://attack.mitre.org/versions/v6/techniques/T1075/"
+    references:
+      - "https://attack.mitre.org/versions/v6/techniques/T1075/"
+      - "https://www.semperis.com/blog/how-to-defend-against-pass-the-hash-attack/"
+
+  - id: AEG-T157
+    name: "VLAN Hopping"
+    category: network_attacks
+    description: >-
+      VLAN hopping defeats network segmentation at Layer 2, letting a host on
+      one VLAN reach traffic or systems on another. It abuses switch
+      misconfigurations rather than software bugs: ports left auto-
+      negotiating trunks, or native VLANs shared with user traffic. A
+      successful hop quietly bypasses the segmentation that compliance and
+      security architectures depend on.
+    how_it_works: >-
+      Two classic methods. Switch spoofing: the attacker's device speaks DTP
+      to a port left in dynamic trunking mode and negotiates a trunk, gaining
+      all VLANs. Double tagging: the attacker, sitting on the native VLAN,
+      sends frames with two 802.1Q tags; the first switch strips the outer
+      (native) tag and forwards the inner-tagged frame to the target VLAN.
+      Defenders watch for DTP frames on access ports and for double-tagged
+      frames at trunk boundaries.
+    variants:
+      - "Switch spoofing: DTP negotiation turns an access port into a trunk"
+      - "Double tagging: nested 802.1Q tags exploit the native VLAN"
+      - "Voice-VLAN hopping: PC ports abused to reach the voice VLAN"
+    indicators:
+      - "DTP frames received on ports configured as access ports"
+      - "Packets with multiple 802.1Q tags observed at trunk boundaries (vlan.too_many_tags)"
+      - "Unexpected trunk negotiations logged by switches"
+      - "Hosts communicating across VLANs with no router or firewall path between them"
+    detection:
+      rule: detect_vlan_hopping
+      patterns:
+        - "(?i)\\bdtp\\b"
+        - "vlan\\.too_many_tags"
+        - "(?i)trunk.*negotiat.*access.*port"
+        - "(?i)native.*vlan.*mismatch"
+    severity: medium
+    mitigations:
+      - "Set all user-facing ports to static access mode with DTP disabled (switchport nonegotiate)"
+      - "Use a dedicated, unused, tagged native VLAN on trunks; prune allowed VLANs to the minimum"
+      - "Shut down unused ports and place them in an isolated dead VLAN"
+      - "Monitor switch logs for DTP and trunk-negotiation events; alert on any trunk appearing on an access port"
+    examples:
+      - summary: "Public incident reports of VLAN hopping are rare because it is usually an internal lateral step rather than the headline breach; the canonical defensive references document the Wireshark detection signatures (DTP frames, vlan.too_many_tags) and the switch-hardening mitigations that close both the DTP and double-tagging paths."
+        reference: "https://www.infosecmatter.com/detecting-network-attacks-with-wireshark/"
+    references:
+      - "https://www.ciscopress.com/articles/article.asp?p=3100056&seqNum=5"
+      - "https://www.infosecmatter.com/detecting-network-attacks-with-wireshark/"
+
+  - id: AEG-T158
+    name: "Rogue Access Points and Evil Twins"
+    category: network_attacks
+    description: >-
+      A rogue access point is an unauthorized wireless AP on or near the
+      corporate network; an evil twin is a rogue AP that clones a legitimate
+      SSID to lure devices into connecting. Once a victim associates, the
+      attacker can intercept traffic, harvest credentials, or bridge the
+      victim into the corporate LAN. They are a physical-presence attack that
+      defeats perimeter controls from inside the building.
+    how_it_works: >-
+      The attacker deploys a small AP (or a laptop/phone hotspot) broadcasting
+      the corporate SSID, sometimes with stronger signal to win automatic
+      reconnection. Variants: evil twin with identical SSID and open or
+      cloned security settings, rogue AP physically plugged into the wired
+      LAN (bridging wireless attackers into the corporate network), and
+      misconfigured employee hotspots that accidentally bridge. Enterprise
+      wireless controllers detect rogues by scanning the RF environment and
+      by testing whether the rogue is wired into the corporate network (RLDP).
+    variants:
+      - "Evil twin: cloned SSID lures devices into associating"
+      - "Wired rogue: unauthorized AP plugged into the corporate LAN"
+      - "Employee hotspot: accidental bridging via personal hotspots"
+      - "Ad-hoc networks: peer-to-peer wireless bypassing infrastructure"
+    indicators:
+      - "WIPS alerts for APs broadcasting corporate SSIDs from unexpected BSSIDs or locations"
+      - "RLDP confirming a rogue AP is reachable from the wired corporate network"
+      - "Clients associating to the corporate SSID via unknown APs"
+      - "Duplicate SSIDs with mismatched security settings (open vs WPA2-Enterprise)"
+    detection:
+      rule: detect_rogue_ap
+      patterns:
+        - "(?i)rogue.*ap.*detect"
+        - "(?i)evil.?twin"
+        - "(?i)ssid.*mismatch.*security"
+        - "(?i)rldp.*wired.*rogue"
+    severity: medium
+    mitigations:
+      - "Deploy wireless intrusion prevention (WIPS) with rogue detection, classification, and containment"
+      - "Use 802.1X / WPA2-Enterprise with mutual authentication so clients reject evil twins"
+      - "Enable RLDP or equivalent to identify rogues physically connected to the wired network and remove them"
+      - "Combine with port security and NAC so a plugged-in rogue cannot reach the LAN"
+    examples:
+      - summary: "Cisco's wireless intrusion prevention documentation describes the operational reality defenders face: controllers continuously discover rogue APs by MAC address, classify them, and contain them by sending deauthentication frames to their clients, with RLDP verifying which rogues are actually wired into the enterprise network."
+        reference: "https://www.cisco.com/c/en/us/td/docs/wireless/mse/7-6/MSE_wIPS/MSE_wIPS_7_6/MSE_wIPS_7_5_appendix_01001.html"
+    references:
+      - "https://www.cisco.com/c/en/us/td/docs/wireless/mse/7-6/MSE_wIPS/MSE_wIPS_7_6/MSE_wIPS_7_5_appendix_01001.html"
+      - "https://spaces.cisco.com/rogue-device/"
+
+  - id: AEG-T159
+    name: "DDoS Attack Families"
+    category: network_attacks
+    description: >-
+      Distributed denial-of-service attacks overwhelm a target with traffic
+      from many compromised systems, making services slow or unavailable.
+      Defenders classify them by layer: volumetric floods that saturate links,
+      protocol attacks that exhaust state tables, and application-layer
+      attacks that exhaust server resources with expensive requests. Modern
+      campaigns blend all three and increasingly use botnets of IoT devices
+      and compromised servers.
+    how_it_works: >-
+      Botnets of compromised hosts are directed at the victim in coordinated
+      waves. Variants: volumetric (UDP floods, ICMP floods, DNS/NTP/CLDAP
+      amplification that reflect traffic off misconfigured servers),
+      protocol/SYN floods (half-open connections exhausting connection
+      tables), and application-layer HTTP floods (massive request rates or
+      slowloris-style slow reads targeting expensive endpoints). Detection
+      combines traffic baselining, amplification signatures, and request-rate
+      anomalies per source and per URL.
+    variants:
+      - "Volumetric floods: UDP/ICMP floods saturating links"
+      - "Amplification: DNS, NTP, CLDAP, memcached reflectors multiplying traffic"
+      - "Protocol attacks: SYN floods exhausting state tables"
+      - "Application-layer: HTTP floods and slow-rate attacks exhausting server resources"
+    indicators:
+      - "Traffic spikes orders of magnitude above baseline from many distributed sources"
+      - "High volumes of UDP to a single target with spoofed sources, or amplified responses from reflectors"
+      - "SYN flood signatures: SYN packets without matching ACKs filling state tables"
+      - "HTTP request rates per IP or per URL far above human-plausible levels"
+    detection:
+      rule: detect_ddos
+      patterns:
+        - "(?i)(udp|icmp).*flood"
+        - "(?i)syn.*flood.*(half.open|incomplete)"
+        - "(?i)(dns|ntp|cldap|memcached).*amplification"
+        - "(?i)http.*(request|flood).*rate.*anomaly"
+    severity: high
+    mitigations:
+      - "Absorb at the edge with a DDoS-mitigation provider or scrubbing service before traffic reaches origin"
+      - "Deploy rate limiting, SYN cookies, and anycast to spread and shed attack traffic"
+      - "Harden and monitor reflectors (close open DNS/NTP resolvers) so your infrastructure cannot be weaponized"
+      - "Maintain an incident runbook with upstream provider contacts and pre-agreed null-routing procedures"
+    examples:
+      - summary: "Cloudflare publicly documented blocking a 7.3 Tbps DDoS attack, one of the largest ever recorded, illustrating the modern hyper-volumetric campaign shape: massive multi-vector floods absorbed at the edge before reaching customer origins."
+        reference: "https://www.cloudflare.com/learning/ddos/what-is-a-ddos-attack/?cf_page=defending-the-internet-how-cloudflare-blocked-a-monumental-7-3-tbps-ddos%2F"
+    references:
+      - "https://www.cloudflare.com/learning/ddos/what-is-a-ddos-attack/?cf_page=defending-the-internet-how-cloudflare-blocked-a-monumental-7-3-tbps-ddos%2F"
+      - "https://developers.cloudflare.com/learning-paths/prevent-ddos-attacks/concepts/ddos-attacks/"
+
+  - id: AEG-T160
+    name: "VPN and Edge-Device Exploitation"
+    category: network_attacks
+    description: >-
+      VPN concentrators, firewalls, and other edge devices sit directly on the
+      internet with privileged network positions, making them prime initial-
+      access targets. Attackers exploit unpatched edge vulnerabilities to gain
+      a foothold, then ride the trusted VPN tunnel straight into the internal
+      network. Because these are appliances rather than servers, they are
+      often patched late, monitored poorly, and rich in credentials.
+    how_it_works: >-
+      The attacker scans for internet-facing edge devices, exploits a known
+      (often KEV-listed) vulnerability, and establishes persistence or steals
+      session tokens and credentials from the appliance. Variants: pre-auth
+      RCE on VPN appliances, credential theft from edge device memory or
+      configs, MFA bypass via stolen session cookies, and firmware-level
+      persistence that survives upgrades. Detection looks for anomalous
+      authentication to edge devices, unexpected configuration changes, and
+      firmware versions with known exploited CVEs.
+    variants:
+      - "Pre-authentication RCE on VPN/firewall appliances"
+      - "Session-token and credential theft from edge devices"
+      - "MFA bypass via stolen or replayed VPN sessions"
+      - "Firmware-level persistence surviving upgrades"
+    indicators:
+      - "Successful VPN logons from unusual geographies or at unusual hours, especially for service accounts"
+      - "Configuration changes, new users, or scheduled tasks appearing on edge appliances"
+      - "Edge devices running firmware versions listed in CISA's Known Exploited Vulnerabilities catalog"
+      - "Outbound connections from VPN appliances to unknown infrastructure"
+    detection:
+      rule: detect_edge_exploitation
+      patterns:
+        - "(?i)vpn.*(login|auth).*(anomaly|impossible.travel)"
+        - "(?i)(fortigate|paloalto|ivanti|citrix).*(cve|kev)"
+        - "(?i)edge.*config.*change.*unauthorized"
+        - "(?i)firmware.*(outdated|vulnerable)"
+    severity: critical
+    mitigations:
+      - "Patch edge devices on an emergency cadence driven by the CISA KEV catalog, not the normal server cycle"
+      - "Enforce MFA on all VPN access and bind sessions to device posture where possible"
+      - "Forward edge-device logs (auth, config change) to the SIEM and alert on anomalies like any server"
+      - "Reduce exposure: remove management interfaces from the internet and put remote access behind zero-trust brokers"
+    examples:
+      - summary: "In October 2026 CISA and the FBI (AA26-281A) warned that Chinese-linked actors were blending automated scans, botnet traffic, and hands-on-keyboard work against US networks, routinely entering through VPN appliances and maintaining access long enough to collect email and credentials."
+        reference: "https://www.attackiq.com/2026/10/15/response-to-cisa-advisory-aa26-281a/"
+    references:
+      - "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
+      - "https://www.attackiq.com/2026/10/15/response-to-cisa-advisory-aa26-281a/"

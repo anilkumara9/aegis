@@ -1,0 +1,553 @@
+pack: ransomware_playbook
+version: "1.0"
+techniques:
+  - id: AEG-T117
+    name: "Ransomware-as-a-Service (RaaS) Affiliate Business Model"
+    category: ransomware_playbook
+    description: >-
+      Modern ransomware operates as a franchise: core developers build and
+      maintain the encryptor, leak site, and negotiation infrastructure,
+      while recruited affiliates carry out intrusions and deploy the
+      payload, splitting each ransom (historically ~70-80% to the
+      affiliate). This industrialization — documented in the joint CISA/FBI
+      LockBit advisory — lets low-skill actors launch sophisticated attacks
+      and floods defenders with many unconnected affiliates using the same
+      brand. Coveware notes the model is now fracturing under infighting
+      and law-enforcement pressure, but it defined the last half-decade of
+      ransomware.
+    how_it_works: >-
+      Operators advertise affiliate programs, vet recruits, and provide the
+      ransomware builder, victim chat portal, data-leak site, and
+      decryptor tooling; affiliates supply initial access (often bought
+      from access brokers), perform the intrusion, exfiltrate data, and
+      detonate the encryptor. Variants: classic RaaS (LockBit, ALPHV/BlackCat
+      at their peaks); affiliate-heavy "big game hunting" against large
+      enterprises; and the emerging post-RaaS fragmentation into lone
+      operators and unbranded extortion, which Coveware's 2025 reporting
+      describes as the current state. For defenders, the model matters
+      because affiliate TTPs vary wildly under one brand name — IOCs age
+      fast, while the behavior chain (access broker → exfil → encrypt)
+      stays stable.
+    variants:
+      - "Classic RaaS franchise: operator provides malware, leak site, and negotiators; affiliates execute intrusions (LockBit model)."
+      - "Access-broker-fed affiliates: affiliates purchase ready-made footholds from initial-access brokers rather than gaining access themselves."
+      - "Post-RaaS fragmentation: lone operators and unbranded extortion as affiliate trust in big brands collapses (Coveware 2025 trend)."
+    indicators:
+      - "Threat-intel naming a RaaS brand's affiliates active in your sector or region — prioritize behavior detections over that brand's IOCs."
+      - "Intrusions showing a mixed toolset: commodity access tools plus a sudden, late-stage branded encryptor deployment."
+      - "Victim communications referencing affiliate-specific negotiation portals or leak-site URLs tied to a known RaaS brand."
+      - "Access-broker listings or chatter referencing your organization's name, domain, or VPN endpoints."
+    detection:
+      rule: detect_raas_affiliate_activity
+      patterns:
+        - '(?i)(lockbit|blackcat|alphv|clop|akira|play|bianlian).*(leak|negotiat|ransom|decrypt)'
+        - '(?i)(initial.access.broker|access.for.sale).*(vpn|rdp|citrix|forti)'
+        - '(?i)affiliate.*(recruit|program|partner|revenue.share)'
+        - '(?i)affiliate.{0,30}ransomware|ransomware.{0,30}affiliate'
+    severity: medium
+    mitigations:
+      - "Defend against the stable behavior chain (broker access → lateral movement → exfiltration → encryption) rather than chasing per-brand IOCs."
+      - "Reduce affiliate addressable market: close the top initial-access vectors (exposed RDP/VPN, unpatched edge devices) that brokers sell."
+      - "Consume RaaS-brand threat reporting (CISA joint advisories) and convert affiliate TTPs into detections mapped to MITRE ATT&CK."
+      - "Segment networks and enforce least privilege so one affiliate's foothold cannot become domain-wide encryption."
+    examples:
+      - summary: "The joint CISA/FBI/MS-ISAC advisory 'Understanding Ransomware Threat Actors: LockBit' documents the RaaS model in detail — ~30 freeware tools, 40+ ATT&CK-mapped TTPs, and a large web of unconnected affiliates producing wildly varying attacks under one brand."
+        reference: "https://www.threatdown.com/blog/lockbit-ransomware-advisory-from-cisa-provides-interesting-insights/"
+      - summary: "Coveware's Q2 2022 analysis describes how RaaS shared services (access seeding, stolen-data storage, centralized negotiation) became liabilities after the Conti leaks, pushing sophisticated affiliates to go independent and making attribution harder."
+        reference: "http://coveware.com/blog/2022/7/27/fewer-ransomware-victims-pay-as-medium-ransom-falls-in-q2-2022?format=amp&ref=hackernoon.com"
+    references:
+      - "https://www.threatdown.com/blog/lockbit-ransomware-advisory-from-cisa-provides-interesting-insights/"
+      - "http://coveware.com/blog/2022/7/27/fewer-ransomware-victims-pay-as-medium-ransom-falls-in-q2-2022?format=amp&ref=hackernoon.com"
+      - "https://www.securitymagazine.com/articles/print/99504-cisa-releases-information-on-lockbit"
+
+  - id: AEG-T118
+    name: "Ransomware Initial Access"
+    category: ransomware_playbook
+    description: >-
+      Ransomware affiliates rarely start with the encryptor — they start by
+      buying or stealing a foothold. CISA's #StopRansomware guidance lists
+      the dominant vectors: internet-facing vulnerabilities, compromised
+      credentials, phishing, and precursor malware. The LockBit joint
+      advisory catalogs the CVEs affiliates exploit and the ~30 freeware
+      tools they stage with. Initial access is the cheapest phase to defeat
+      and therefore the highest-leverage defensive investment.
+    how_it_works: >-
+      Affiliates obtain access through four main channels: exploiting
+      unpatched edge devices (VPN concentrators, firewalls, file-transfer
+      appliances — Clop's Cleo campaign is a recent example); brute-forcing
+      or credential-stuffing exposed RDP/VPN; phishing for credentials or
+      malware execution; or purchasing access from initial-access brokers
+      who specialize in foothold resale. Precursor malware (botnet loaders,
+      info-stealers) often provides the first beachhead, later sold onward
+      to a ransomware affiliate. Detection centers on edge telemetry:
+      exploitation-shaped traffic, impossible logons, and broker chatter.
+    variants:
+      - "Edge-device exploitation: unpatched VPN, firewall, or managed file-transfer appliances exploited for direct foothold."
+      - "Exposed remote services: RDP/VPN brute force, credential stuffing, or purchased valid credentials."
+      - "Brokered or precursor access: footholds bought from initial-access brokers or inherited from botnet/info-stealer infections."
+    indicators:
+      - "Exploitation-pattern traffic against internet-facing appliances followed by new processes, web shells, or admin accounts."
+      - "RDP/VPN logons from unusual geographies, at anomalous hours, or with high failed-then-successful attempt sequences."
+      - "Phishing-delivered loaders or info-stealers on a host that later exhibits ransomware staging behavior."
+      - "Threat-intel reporting of access-broker listings matching your external footprint."
+    detection:
+      rule: detect_ransomware_initial_access
+      patterns:
+        - '(?i)(rdp|vpn|rdweb).*(brute.force|password.spray|impossible.travel|tor.exit)'
+        - '(?i)(webshell|shell\.(aspx|php|jsp)).*(edge|vpn|appliance|iis)'
+        - '(?i)(qakbot|emotet|icedid|loader|stealer).*(c2|beacon).*(detected|observed)'
+    severity: high
+    mitigations:
+      - "Patch internet-facing systems on an exploitability-driven cadence (CISA KEV first); remove RDP from the internet entirely."
+      - "Phishing-resistant MFA on every remote-access path — VPN, RDP gateway, webmail, and admin consoles — no exceptions."
+      - "Continuous external attack-surface monitoring for exposed services and known-vulnerable appliances."
+      - "Email filtering, attachment sandboxing, and rapid re-imaging of any host showing precursor-malware indicators."
+    examples:
+      - summary: "The CISA/FBI LockBit advisory lists the CVEs affiliates commonly exploit for initial access plus ~30 dual-use tools staged afterward, and notes affiliates hit financial services, healthcare, education, energy, and government sectors."
+        reference: "https://www.threatdown.com/blog/lockbit-ransomware-advisory-from-cisa-provides-interesting-insights/"
+      - summary: "Maze's campaigns spread through phishing emails with malicious attachments, exploited RDP services and VPN appliances, and purchased access from initial access brokers — the full initial-access menu in one operation."
+        reference: "https://www.bleepingcomputer.com/news/security/maze-ransomware-is-shutting-down-its-cybercrime-operation/?&web_view=true"
+    references:
+      - "https://www.threatdown.com/blog/lockbit-ransomware-advisory-from-cisa-provides-interesting-insights/"
+      - "https://www.gao.gov/products/gao-22-104767?order=field_status_code&sort=asc"
+      - "https://www.threatlocker.com/blog/cisa-releases-updated-stopransomware-guide?utm_source=tldr&%3Butm_medium=word-copy-ad&%3Butm_campaign=2024-06-webianr-how-to-prevent-ransomware&%3Butm_term=save-your-spot-now"
+
+  - id: AEG-T119
+    name: "Ransomware Lateral Movement"
+    category: ransomware_playbook
+    description: >-
+      Between foothold and detonation, affiliates move laterally to reach
+      domain controllers, backup servers, and high-value data stores —
+      because encrypting one workstation pays little, while encrypting the
+      domain pays millions. The LockBit advisory documents affiliates using
+      commodity remote-access and admin tools for this phase, which is why
+      lateral movement often looks like legitimate administration until the
+      encryptor drops. Detecting this phase is the last reliable chance to
+      stop an incident before encryption.
+    how_it_works: >-
+      Affiliates harvest credentials (LSASS dumping, keylogging,
+      ticket theft), then spread via SMB, WMI, WinRM, RDP, and remote
+      service creation — frequently with the same dual-use tools admins
+      use, per the LockBit advisory's ~30-tool list. Variants: manual,
+      hands-on-keyboard lateral movement by skilled affiliates; scripted or
+      worm-like spreading by less skilled ones; and domain-trust abuse to
+      cross into connected environments. The tell is *administrative
+      actions at inhuman speed or scale*, or admin tooling on hosts that
+      never normally administer anything.
+    variants:
+      - "Credential-driven spreading: harvested credentials reused across SMB/RDP/WinRM to hop host to host."
+      - "Tool-assisted movement: commodity remote-access and admin utilities (per the LockBit advisory's tool list) used for remote execution."
+      - "Domain escalation: targeting domain controllers and trust relationships to gain enterprise-wide reach before detonation."
+    indicators:
+      - "A single account authenticating to dozens of hosts in minutes, or admin tooling executing on hosts outside the admin's normal scope."
+      - "Credential-access artifacts (LSASS access, registry SAM reads) followed by remote service creation or scheduled tasks on other hosts."
+      - "RDP/SMB sessions from a newly compromised workstation to servers it has never historically contacted."
+      - "Discovery behavior (network share enumeration, AD reconnaissance) preceding any encryption activity."
+    detection:
+      rule: detect_ransomware_lateral_movement
+      patterns:
+        - '(?i)(psexec|wmic.*process.*call.*create|smbexec|wmiexec|atexec).*(remote|\\\\[a-z])'
+        - '(?i)(lsass|sam.*hive|ntds\.dit).*(access|dump|copy)'
+        - '(?i)account.*(50|100).*(distinct.hosts|logons).*(hour|minutes)'
+    severity: high
+    mitigations:
+      - "Network segmentation and tiered administration: workstation credentials must never reach domain controllers; block lateral protocols between tiers."
+      - "Credential hygiene: LSA protection, Credential Guard, unique local admin passwords (LAPS), and no domain-admin logons to workstations."
+      - "EDR behavioral rules for credential dumping and remote-service creation, tuned to distinguish admin baselines from affiliate tradecraft."
+      - "Honeytokens and canary credentials that fire high-fidelity alerts when an affiliate sweeps them up."
+    examples:
+      - summary: "The joint LockBit advisory catalogs the freeware and open-source tools affiliates use for lateral movement and maps 40+ TTPs to MITRE ATT&CK, showing how commodity tooling carries most of the intrusion."
+        reference: "https://www.securitymagazine.com/articles/print/99504-cisa-releases-information-on-lockbit"
+      - summary: "GAO's review of federal ransomware assistance describes ransomware as a staged attack — initial access, lateral spread, then encryption — and documents CISA/FBI/Secret Service joint defense resources built around disrupting each stage."
+        reference: "https://www.gao.gov/products/gao-22-104767?order=field_status_code&sort=asc"
+    references:
+      - "https://www.securitymagazine.com/articles/print/99504-cisa-releases-information-on-lockbit"
+      - "https://www.gao.gov/products/gao-22-104767?order=field_status_code&sort=asc"
+      - "https://www.threatdown.com/blog/lockbit-ransomware-advisory-from-cisa-provides-interesting-insights/"
+
+  - id: AEG-T120
+    name: "Exfiltration Before Encryption (Double Extortion)"
+    category: ransomware_playbook
+    description: >-
+      Since late 2019, ransomware groups have stolen data *before*
+      encrypting it, then threatened to publish it — neutralizing the
+      victim's backup strategy entirely. Maze pioneered the model in
+      November 2019 against Allied Universal and launched the 'Maze News'
+      leak site; REvil, Clop, and DoppelPaymer copied it within months,
+      and it is now standard practice. CISA's current guidance explicitly
+      warns that actors 'increasingly exfiltrate data and then threaten to
+      sell or leak it.' Exfiltration is therefore the phase where backups
+      stop being a complete answer.
+    how_it_works: >-
+      After gaining domain-level access, affiliates locate sensitive data
+      (file shares, databases, email, backups of PII/IP) and exfiltrate it
+      using legitimate-looking channels: cloud storage uploads, FTP/SFTP,
+      or chunked HTTPS transfers — often via the same dual-use tools used
+      for administration. Variants: bulk theft of file shares and
+      databases; targeted theft of the most sensitive data (M&A documents,
+      source code, regulated PII); and 'name-and-shame' staging where only
+      samples are published first to prove possession. Detection is a data-
+      loss-prevention and egress-analytics problem: unusual volumes,
+      destinations, and off-hours transfers from servers that never
+      normally upload externally.
+    variants:
+      - "Bulk exfiltration: large-scale theft of file shares, databases, and mailboxes ahead of encryption."
+      - "Targeted theft: selective stealing of the most leverage-rich data — IP, M&A material, regulated PII."
+      - "Proof-of-possession staging: samples published on the leak site first, full release threatened later."
+    indicators:
+      - "Large or sustained outbound transfers from file/database servers to external IPs, cloud storage, or file-sharing services outside baseline."
+      - "Archive/collection activity (large ZIP/RAR creation, staging folders) on servers shortly before any encryption."
+      - "DNS or proxy logs showing first-seen external destinations receiving data-shaped traffic at off-hours."
+      - "Threat-intel or leak-site monitoring showing your organization's name or data samples posted."
+    detection:
+      rule: detect_pre_encryption_exfiltration
+      patterns:
+        - '(?i)(upload|transfer).*(gb|large.volume).*(external|cloud|mega|anonfiles|rclone)'
+        - '(?i)(7z|rar|zip).*(staging|collect|exfil).*(created|modified)'
+        - '(?i)(leak.site|name.and.shame|data.published).*(victim|sample)'
+        - '(?i)double\s+extortion'
+    severity: critical
+    mitigations:
+      - "Egress filtering and DLP: alert on and restrict bulk outbound transfers from servers; block unapproved cloud-storage and file-sharing destinations."
+      - "Data classification and access minimization so affiliates cannot reach the most leverage-rich data from a single foothold."
+      - "Leak-site and dark-web monitoring for your organization's name to catch proof-of-possession posts early."
+      - "Incident response plans that assume data theft in every ransomware case — engage legal, regulatory, and customer-notification workflows on exfil indicators, not on encryption."
+    examples:
+      - summary: "Maze contacted BleepingComputer in November 2019 to announce it had stolen Allied Universal's unencrypted data before encrypting it, then launched the 'Maze News' leak site — inventing double extortion, which REvil, Clop, and DoppelPaymer rapidly adopted."
+        reference: "https://www.bleepingcomputer.com/news/security/maze-ransomware-is-shutting-down-its-cybercrime-operation/?&web_view=true"
+      - summary: "Check Point Research documented the Allied Universal case in detail: after the victim refused a 300-Bitcoin demand, Maze published contracts, medical records, and certificates, then raised the demand 50% — the coercion mechanics of double extortion."
+        reference: "https://research.checkpoint.com/2020/ransomware-evolved-double-extortion"
+    references:
+      - "https://research.checkpoint.com/2020/ransomware-evolved-double-extortion"
+      - "https://www.bleepingcomputer.com/news/security/maze-ransomware-is-shutting-down-its-cybercrime-operation/?&web_view=true"
+      - "https://www.cybersecurity-help.cz/blog/2274.html"
+
+  - id: AEG-T121
+    name: "Encryption Behaviors Defenders Detect"
+    category: ransomware_playbook
+    description: >-
+      The encryption phase is noisy by necessity: mass file renaming with
+      new extensions, ransom notes dropped in every directory, shadow-copy
+      deletion to block local recovery, and the disabling of recovery
+      tooling. These behaviors are the most automatable detection surface
+      in the whole ransomware kill chain — high-fidelity, low-latency, and
+      consistent across families. Canary files (decoy files no legitimate
+      process should touch) turn this phase into a tripwire.
+    how_it_works: >-
+      The encryptor enumerates drives and shares, encrypts files (often
+      with AES/RSA hybrid schemes), appends a family-specific extension,
+      and drops ransom notes. Defenders watch for the invariant
+      behaviors: rapid mass file modification/renaming; deletion of Volume
+      Shadow Copies and backup catalogs; termination of database, backup,
+      and security processes; and wallpaper or note drops. Variants:
+      full vs. intermittent/partial encryption (faster, stealthier);
+      extension-appending vs. in-place encryption; and 'encryptionless'
+      extortion where only the threat of a leak is used. Canary files —
+      sacrificial documents monitored for modification — detect even novel
+      families because the behavior, not the binary, trips the wire.
+    variants:
+      - "Mass encryption with extension renaming: the classic noisy encryptor appending family extensions across drives and shares."
+      - "Intermittent/partial encryption: encrypting file chunks for speed, reducing the time defenders have to react."
+      - "Encryptionless extortion: skipping encryption entirely and relying on stolen-data leverage alone."
+    indicators:
+      - "Burst of file renames with an unfamiliar extension across many directories within minutes."
+      - "Shadow-copy deletion commands or backup-catalog tampering immediately preceding mass file modification."
+      - "Ransom-note files (HTML/TXT) appearing in bulk across shares, or desktop wallpaper changes on many hosts."
+      - "Canary-file modification alerts — the highest-fidelity ransomware signal available."
+    detection:
+      rule: detect_encryption_behavior
+      patterns:
+        - '(?i)(vssadmin|wmic.*shadowcopy|bcdedit).*(delete|shadows|recoveryenabled.no)'
+        - '(?i)ransom.note|(readme|decrypt|recover).*\.(txt|html)\s+(created|dropped)'
+        - '(?i)mass.rename|extension.change.*(burst|unusual.volume)'
+    severity: high
+    mitigations:
+      - "Deploy canary files/honeypot shares on file servers and endpoints — the fastest reliable ransomware tripwire."
+      - "Protect shadow copies and backups: restrict who can delete them, alert on any deletion attempt, keep offline/immutable copies."
+      - "EDR rules on mass-encryption behaviors (file-rename bursts, shadow-copy deletion, note drops) with automated host isolation."
+      - "Application control on backup and recovery tooling so encryptors cannot tamper with the recovery path."
+    examples:
+      - summary: "Maze's encryptor used AES+RSA hybrid encryption, renamed victim files, and dropped ransom notes with payment instructions — the standard encryption-phase behaviors defenders now detect generically."
+        reference: "https://www.antivirusaz.com/security-center/virus-information/maze-ransomware.html"
+      - summary: "CISA's updated #StopRansomware Guide (covered by ThreatLocker) structures defense around attack vectors including precursor malware and ransomware staging, emphasizing backup protection and recovery-behavior monitoring."
+        reference: "https://www.threatlocker.com/blog/cisa-releases-updated-stopransomware-guide?utm_source=tldr&%3Butm_medium=word-copy-ad&%3Butm_campaign=2024-06-webianr-how-to-prevent-ransomware&%3Butm_term=save-your-spot-now"
+    references:
+      - "https://www.antivirusaz.com/security-center/virus-information/maze-ransomware.html"
+      - "https://www.threatlocker.com/blog/cisa-releases-updated-stopransomware-guide?utm_source=tldr&%3Butm_medium=word-copy-ad&%3Butm_campaign=2024-06-webianr-how-to-prevent-ransomware&%3Butm_term=save-your-spot-now"
+      - "https://www.gao.gov/products/gao-22-104767?order=field_status_code&sort=asc"
+
+  - id: AEG-T122
+    name: "Data-Leak-Site Extortion"
+    category: ransomware_playbook
+    description: >-
+      The leak site — Maze's 'Maze News' being the prototype — is the
+      coercion engine of double extortion: a public (Tor or clearweb) page
+      listing non-paying victims, publishing data samples, and issuing
+      'press releases' to journalists to maximize reputational pressure.
+      Nearly every major operation now runs one, and some have formed
+      cartels to cross-post victims. For defenders, leak sites are both a
+      threat (reputational and regulatory damage) and an intelligence
+      source (early warning that an intrusion involved data theft).
+    how_it_works: >-
+      After exfiltration, operators stage victim entries with countdown
+      timers, publish sample archives to prove possession, and escalate to
+      full dumps if the deadline passes — Maze removed victims who paid and
+      kept the rest. Variants: Tor-hosted leak blogs; clearweb mirror
+      sites for wider visibility; cartel cross-posting (Maze formed a
+      cartel with Ragnar Locker and LockBit to share victims and tactics);
+      and direct outreach to journalists and stock analysts to amplify
+      pressure. Defenders monitor leak sites for their own name, watch for
+      sample posts as confirmation of data theft, and use countdown timers
+      as incident-response clocks.
+    variants:
+      - "Tor leak blogs: the standard name-and-shame site with victim lists, samples, and countdown timers."
+      - "Cartel cross-posting: allied groups amplifying each other's victims across multiple leak sites."
+      - "Press-amplified extortion: direct outreach to journalists and analysts to maximize reputational damage."
+    indicators:
+      - "Your organization's name, domain, or data samples appearing on a known leak site."
+      - "Countdown timers or 'press releases' naming your organization on ransomware leak infrastructure."
+      - "Journalist or third-party inquiries referencing your data on a leak site before your IR team has confirmed theft."
+      - "Threat-intel feeds flagging your sector peers on leak sites — a leading indicator of affiliate targeting."
+    detection:
+      rule: detect_leak_site_extortion
+      patterns:
+        - '(?i)(leak.site|onion.*ransom|name.and.shame).*(victim.listed|countdown|sample.published)'
+        - '(?i)(your.org|company.name).*(leak|published|dump).*(tor|onion)'
+        - '(?i)(press.release|data.auction).*(ransomware|victim.data)'
+    severity: high
+    mitigations:
+      - "Continuous leak-site and dark-web monitoring for your brand, domains, and executive names — early confirmation of data theft."
+      - "Assume-breach communications plan: pre-drafted customer, regulator, and press notifications for a leak-site listing."
+      - "Reduce leak leverage with data minimization, classification, and encryption of data at rest so stolen data is less usable."
+      - "Legal preparation: engage breach counsel early; understand regulatory notification triggers in every jurisdiction you operate in."
+    examples:
+      - summary: "Maze's 'Maze News' site published per-victim pages with attack dates, stolen document samples, data sizes, and infected server inventories, plus press releases for journalists — the template every subsequent leak site copied."
+        reference: "https://www.redpacketsecurity.com/maze-ransomware-is-going-out-of-the-business/"
+      - summary: "Maze escalated the model by forming a ransomware cartel with Ragnar Locker and LockBit to share stolen data and tactics, multiplying the reputational pressure on victims."
+        reference: "https://www.bleepingcomputer.com/news/security/maze-ransomware-is-shutting-down-its-cybercrime-operation/?&web_view=true"
+    references:
+      - "https://www.redpacketsecurity.com/maze-ransomware-is-going-out-of-the-business/"
+      - "https://www.bleepingcomputer.com/news/security/maze-ransomware-is-shutting-down-its-cybercrime-operation/?&web_view=true"
+      - "https://research.checkpoint.com/2020/ransomware-evolved-double-extortion"
+
+  - id: AEG-T123
+    name: "Triple Extortion"
+    category: ransomware_playbook
+    description: >-
+      Triple extortion adds a third pressure point on top of encryption and
+      data-leak threats: extorting the victim's customers, partners, or the
+      public directly. Attackers contact the victim's clients threatening to
+      release their personal data, launch DDoS attacks against the victim's
+      services until payment, or harass executives and stakeholders. This
+      expands the blast radius beyond the breached organization and is
+      designed to make the cost of not paying unbearable from multiple
+      directions at once.
+    how_it_works: >-
+      After double extortion is in place, operators identify the victim's
+      customers or partners from the stolen data and contact them directly
+      — 'pay us or your data goes public' — turning the victim's own
+      clientele into leverage. Variants: customer/partner direct extortion;
+      DDoS-augmented pressure (ransom plus service disruption); and
+      stakeholder harassment (calls and messages to executives, board
+      members, or investors). Detection is largely external: reports from
+      customers receiving extortion messages, DDoS telemetry correlated
+      with ransom deadlines, and leak-site threats naming downstream
+      parties.
+    variants:
+      - "Customer/partner direct extortion: stolen client data used to pressure the victim's own customers to demand the victim pays."
+      - "DDoS-augmented extortion: ransom demands paired with disruptive denial-of-service attacks."
+      - "Stakeholder harassment: targeted pressure on executives, board members, and investors via calls and messages."
+    indicators:
+      - "Customers or partners reporting extortion messages referencing data stolen from your organization."
+      - "DDoS attacks timed to ransom deadlines or negotiation milestones."
+      - "Leak-site posts threatening to release customer or partner data specifically, not just the victim's own."
+      - "Harassment-pattern communications to executives coinciding with an active extortion timeline."
+    detection:
+      rule: detect_triple_extortion
+      patterns:
+        - '(?i)(customer|partner|client).*(extort|threaten|data.release).*(third.party)'
+        - '(?i)(ddos|denial.of.service).*(ransom|deadline|pay)'
+        - '(?i)(executive|board|stakeholder).*(harass|threaten).*(ransom.timeline)'
+    severity: high
+    mitigations:
+      - "Customer-notification readiness: pre-planned communications so customers hear about third-party extortion attempts from you first."
+      - "DDoS mitigation capacity (scrubbing services, CDN) in place before an incident, tested against ransom-timeline scenarios."
+      - "Executive protection procedures during active extortion: briefing, communication lockdown, and law-enforcement liaison."
+      - "Data minimization for customer PII — the less customer data stolen, the less third-party leverage exists."
+    examples:
+      - summary: "Industry analysis of extortion evolution documents triple extortion as the combination of encryption, data-theft threats, and direct pressure on business partners/customers — expanding the victim set beyond the initially breached organization."
+        reference: "https://www.sentia.ca/blog/artmid/1133/articleid/213/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions"
+      - summary: "Maze's innovation arc — from double extortion to cartel-based pressure sharing with Ragnar Locker and LockBit — shows how groups systematically add leverage layers, the dynamic that produced triple extortion."
+        reference: "https://www.bleepingcomputer.com/news/security/maze-ransomware-is-shutting-down-its-cybercrime-operation/?&web_view=true"
+    references:
+      - "https://www.sentia.ca/blog/artmid/1133/articleid/213/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions/it-solutions"
+      - "https://www.bleepingcomputer.com/news/security/maze-ransomware-is-shutting-down-its-cybercrime-operation/?&web_view=true"
+      - "https://research.checkpoint.com/2020/ransomware-evolved-double-extortion"
+
+  - id: AEG-T124
+    name: "Affiliate-vs-Operator Split (Attribution and Defense Impact)"
+    category: ransomware_playbook
+    description: >-
+      In the RaaS economy, the operator (who builds the malware and runs
+      the leak site) and the affiliate (who breaks in and detonates it) are
+      different actors with different skills, toolsets, and even
+      motivations. This split is why attacks under one brand name — LockBit
+      being the prime example — vary so wildly in TTPs: the malware is
+      constant, the humans are not. For defenders, the split means brand
+      attribution is nearly useless for detection; the stable unit of
+      analysis is the behavior chain, and for responders it means
+      negotiation dynamics depend on which affiliate holds the keys.
+    how_it_works: >-
+      Operators recruit, vet, and take a cut (historically 20-30%);
+      affiliates bring their own initial access, tooling preferences, and
+      negotiation style. The split creates observable seams: affiliates
+      defect between brands (Coveware notes fluid movement as RaaS trust
+      collapsed), use different toolsets per intrusion, and sometimes lose
+      access to decryptors when operators are disrupted by law
+      enforcement — leaving victims with no one to pay. The Conti leaks
+      exposed the operator side's internal organization (salaries, shifts,
+      management chats), while affiliate-side variance explains why one
+      'LockBit' incident looks nothing like another. Defenders exploit the
+      split by disrupting the operator's shared infrastructure (leak sites,
+      payment portals), which strands all affiliates at once.
+    variants:
+      - "Stable-operator / fluid-affiliate: one brand's infrastructure serving many independent intrusion teams with different TTPs."
+      - "Affiliate defection: operators losing affiliates to rival brands after disputes, taking their access pipelines with them."
+      - "Operator disruption stranding affiliates: takedowns removing decryptors and negotiators mid-incident."
+    indicators:
+      - "Incidents attributed to one ransomware brand showing sharply different toolsets, dwell times, or negotiation styles."
+      - "Threat-intel reporting of affiliate movement between brands or public disputes between operators and affiliates."
+      - "Victims unable to reach negotiators or obtain working decryptors after a law-enforcement action against the operator."
+      - "Leaked operator communications (as with Conti) revealing internal structure that does not match observed affiliate tradecraft."
+    detection:
+      rule: detect_affiliate_operator_seams
+      patterns:
+        - '(?i)(same.brand|same.ransomware).*(different.(toolset|ttp|dwell)|ttp.variance)'
+        - '(?i)(affiliate.*defect|operator.*dispute|brand.*(collapse|rebrand|exit.scam))'
+        - '(?i)(decryptor|negotiat).*(unavailable|no.response).*(takedown|seizure)'
+    severity: low
+    mitigations:
+      - "Build detections on behavior chains (access → lateral → exfil → encrypt), not on ransomware brand names or file hashes."
+      - "Support and publicize law-enforcement actions against operator infrastructure — the highest-leverage disruption point."
+      - "In incident response, verify decryptor viability and negotiator reachability before any payment discussion; operator disruption can void the transaction."
+      - "Track affiliate toolsets independently of brands in threat-intel profiles."
+    examples:
+      - summary: "The CISA/FBI LockBit advisory explicitly warns that the large number of unconnected affiliates makes LockBit attacks vary significantly in observed TTPs — the canonical statement of the affiliate-operator attribution problem."
+        reference: "https://www.securitymagazine.com/articles/print/99504-cisa-releases-information-on-lockbit"
+      - summary: "Coveware's Q2 2022 analysis describes how the Conti leaks exposed RaaS shared-service labor pools to moles and systemic collapse, driving sophisticated affiliates to operate independently and making attribution harder."
+        reference: "http://coveware.com/blog/2022/7/27/fewer-ransomware-victims-pay-as-medium-ransom-falls-in-q2-2022?format=amp&ref=hackernoon.com"
+    references:
+      - "https://www.securitymagazine.com/articles/print/99504-cisa-releases-information-on-lockbit"
+      - "http://coveware.com/blog/2022/7/27/fewer-ransomware-victims-pay-as-medium-ransom-falls-in-q2-2022?format=amp&ref=hackernoon.com"
+      - "http://coveware.com/2025/10/insider-threats-loom-while-ransom-payment-rates-plummet/"
+
+  - id: AEG-T125
+    name: "Backup Destruction TTPs"
+    category: ransomware_playbook
+    description: >-
+      Affiliates systematically destroy backups before detonating the
+      encryptor, because intact backups collapse their leverage. Typical
+      targets: Volume Shadow Copies, backup-server agents and catalogs,
+      hypervisor snapshots, and cloud backup credentials. CISA's
+      #StopRansomware guidance answers directly: maintain offline,
+      encrypted backups and regularly test restoration. Backup destruction
+      is often the earliest high-confidence signal that a ransomware
+      detonation is imminent — it happens in the staging phase, before
+      encryption begins.
+    how_it_works: >-
+      After reaching domain-level access, affiliates enumerate backup
+      infrastructure (backup servers, NAS targets, cloud backup consoles),
+      delete shadow copies and snapshots, stop or uninstall backup agents,
+      corrupt backup catalogs, and — increasingly — compromise cloud backup
+      credentials to delete immutable-seeming copies. Variants: local
+      shadow-copy and snapshot deletion; backup-server targeting (agent
+      removal, repository wiping); and cloud-console compromise to attack
+      off-site copies. Detection: any backup-deletion or agent-stop event
+      outside a maintenance window is treated as a pre-detonation alarm.
+    variants:
+      - "Local recovery destruction: shadow-copy deletion and recovery-partition tampering on endpoints and servers."
+      - "Backup-server targeting: backup agents stopped or uninstalled, repositories and catalogs wiped."
+      - "Cloud backup compromise: backup-console credentials abused to delete or corrupt off-site and 'immutable' copies."
+    indicators:
+      - "Shadow-copy deletion or snapshot removal commands executed outside any change window."
+      - "Backup agents stopped, uninstalled, or losing heartbeat across many hosts in a short window."
+      - "Backup repository free-space spikes or catalog corruption inconsistent with retention policies."
+      - "Logons to backup consoles or cloud backup portals from unusual accounts, hosts, or geographies."
+    detection:
+      rule: detect_backup_destruction
+      patterns:
+        - '(?i)(vssadmin|wmic).*(delete.*shadows|shadowcopy.*delete)'
+        - '(?i)(backup.agent|veeam|acronis|commvault).*(stop|uninstall|disable|heartbeat.lost)'
+        - '(?i)(snapshot|recovery.point).*(delete|revert).*(off.hours|no.ticket)'
+    severity: high
+    mitigations:
+      - "3-2-1-1-0 backup strategy: three copies, two media, one off-site, one offline/air-gapped or immutable — tested by actual restoration."
+      - "Separate backup credentials and network segment: backup infrastructure must not be reachable with domain-admin credentials from user networks."
+      - "Immutable and object-locked backups (WORM storage, cloud object lock) so even compromised consoles cannot delete them."
+      - "Alert on ANY backup-deletion, agent-stop, or snapshot-removal event as a pre-detonation indicator with automated isolation."
+    examples:
+      - summary: "CISA's ransomware guidance (via the #StopRansomware Guide) makes offline, encrypted, regularly tested backups the centerpiece recommendation — a direct response to affiliates' systematic backup-destruction playbooks."
+        reference: "https://www.threatlocker.com/blog/cisa-releases-updated-stopransomware-guide?utm_source=tldr&%3Butm_medium=word-copy-ad&%3Butm_campaign=2024-06-webianr-how-to-prevent-ransomware&%3Butm_term=save-your-spot-now"
+      - summary: "Maze and its successors routinely staged data theft and backup/recovery sabotage before encryption, which is why CISA warns that paying the ransom is not a solution — many payers found data corrupted or were attacked again."
+        reference: "https://stoneridgesoftware.com/cisas-tips-how-avoid-and-respond-ransomware/"
+    references:
+      - "https://www.threatlocker.com/blog/cisa-releases-updated-stopransomware-guide?utm_source=tldr&%3Butm_medium=word-copy-ad&%3Butm_campaign=2024-06-webianr-how-to-prevent-ransomware&%3Butm_term=save-your-spot-now"
+      - "https://stoneridgesoftware.com/cisas-tips-how-avoid-and-respond-ransomware/"
+      - "https://www.gao.gov/products/gao-22-104767?order=field_status_code&sort=asc"
+
+  - id: AEG-T126
+    name: "Negotiation-Phase Indicators"
+    category: ransomware_playbook
+    description: >-
+      The negotiation phase — ransom notes, victim chat portals, deadline
+      timers, and 'customer service' chats — is itself a rich intelligence
+      source. How the other side behaves reveals the operation's maturity:
+      professional negotiators with working decryptors versus disorganized
+      affiliates who may not even control decryption. Coveware's data shows
+      victims negotiate aggressively (actual payments averaging ~8.7% of
+      initial demands in 2025 reporting) and that most professionally
+      managed incidents now end without payment. Defenders use
+      negotiation-phase signals to assess decryptor viability, buy time for
+      recovery, and feed law enforcement.
+    how_it_works: >-
+      After detonation, victims find ransom notes pointing to Tor chat
+      portals; operators or affiliates negotiate price, 'prove' decryption
+      with free file tests, and set escalating deadlines (including
+      leak-site countdowns). Variants: operator-run professional
+      negotiation desks (mature RaaS); affiliate-run chats with erratic
+      pricing and broken decryptors; and negotiator-mediated talks via
+      incident-response firms, which is now the norm for insured victims.
+      Key defender reads: whether the decryptor actually works (test on
+      samples), whether deadlines slip (sign of disorganization or
+      bluffing), and whether the same wallet/chat infrastructure links to
+      other victims (attribution).
+    variants:
+      - "Professional negotiation desks: operator-run portals with working decryptors, free test decryptions, and structured discounting."
+      - "Affiliate-run chats: erratic pricing, missed deadlines, and sometimes non-functional decryptors."
+      - "IR-firm-mediated negotiation: professional incident responders handling talks, now standard for insured victims."
+    indicators:
+      - "Ransom notes and Tor portal URLs appearing across the environment — capture them as evidence, not just for reading."
+      - "Decryptor test results: failed or partial test decryptions indicating the affiliate cannot actually recover data."
+      - "Deadline extensions, price collapses, or contradictory messages suggesting disorganization or multiple actors."
+      - "Wallet addresses or chat handles reused across incidents — pivot points for attribution and law-enforcement referral."
+    detection:
+      rule: detect_negotiation_phase
+      patterns:
+        - '(?i)(ransom.note|tor.*chat|decrypt.*portal).*(found|accessed|observed)'
+        - '(?i)(deadline.*(extended|missed)|price.*(collapse|discount)).*(negotiat)'
+        - '(?i)(btc|wallet|monero).*(address).*(reused|shared|cluster)'
+    severity: low
+    mitigations:
+      - "Engage law enforcement (FBI field office / IC3) and counsel before any communication — never negotiate alone."
+      - "Use professional incident-response negotiators; do not let the adversary set the tempo or learn your recovery state."
+      - "Test decryptors on samples and verify key viability; a non-working decryptor changes the entire decision."
+      - "Preserve all negotiation artifacts (notes, portal URLs, wallets, chats) for attribution and potential key recovery from later takedowns."
+    examples:
+      - summary: "Coveware's Q2 2022 data showed the average ransom payment at $228,125 while the median fell 51% to $36,360 — evidence that aggressive negotiation was already compressing what victims actually paid."
+        reference: "http://coveware.com/blog/2022/7/27/fewer-ransomware-victims-pay-as-medium-ransom-falls-in-q2-2022?format=amp&ref=hackernoon.com"
+      - summary: "2025-2026 industry analysis drawing on Coveware data found actual payments averaging ~8.7% of initial demands, with a record non-payment rate — the negotiation phase is where most ransom value is now destroyed."
+        reference: "https://cnicsolutions.com/statistics/ransomware/ransomware-payout-statistics-2026/"
+    references:
+      - "http://coveware.com/blog/2022/7/27/fewer-ransomware-victims-pay-as-medium-ransom-falls-in-q2-2022?format=amp&ref=hackernoon.com"
+      - "https://cnicsolutions.com/statistics/ransomware/ransomware-payout-statistics-2026/"
+      - "http://coveware.com/2025/10/insider-threats-loom-while-ransom-payment-rates-plummet/"

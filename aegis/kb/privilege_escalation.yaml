@@ -1,0 +1,640 @@
+pack: privilege_escalation
+version: "1.0"
+techniques:
+  - id: AEG-T061
+    name: "Permission-Prompt Fatigue and Approver Social Engineering"
+    category: privilege_escalation
+    description: >-
+      Agents that gate dangerous actions behind human approval are only as
+      strong as the human's attention. Attackers defeat the gate without
+      touching any software: by flooding the approver with repeated prompts
+      until a reflexive "approve" slips through (prompt fatigue), or by
+      socially engineering the approver — impersonating IT support, inventing
+      urgency, or framing the action as routine — so the human willingly
+      authorizes the escalation. One approved prompt can hand an attacker
+      (or a hijacked agent) the exact privilege the policy was meant to
+      withhold.
+    how_it_works: >-
+      The approval dialog is a human security control, and humans are
+      influenceable at scale. Named variants: (1) prompt bombing / MFA
+      fatigue — dozens of approval or MFA push notifications in a short
+      window until the victim approves one out of annoyance or reflex (the
+      Lapsus$ playbook against Uber, Cisco, and Microsoft in 2022);
+      (2) pretexted approval — the attacker contacts the approver (chat,
+      email, voice) posing as support or a teammate and talks them into
+      approving the pending request, as in the Uber case where a WhatsApp
+      message impersonating IT support followed the push flood;
+      (3) framing manipulation — a hijacked agent presents a dangerous action
+      as low-risk or already-sanctioned ("routine cleanup", "approved by
+      policy") so the human approves without scrutiny. OWASP lists this
+      under ASI09 Human-Agent Trust Exploitation.
+    variants:
+      - "Prompt bombing / MFA fatigue: flooding the approver with notifications until a reflexive approval slips through (Lapsus$ 2022 playbook)"
+      - "Pretexted approval: attacker impersonates IT/teammate to talk the approver into authorizing the request"
+      - "Framing manipulation: hijacked agent presents a dangerous action as routine or pre-sanctioned to win approval"
+    indicators:
+      - "Bursts of approval prompts or MFA pushes (many per minute) targeting one approver, especially outside working hours"
+      - "Approvals granted within seconds during a burst, or after a long string of denials — the fatigue signature"
+      - "Approver contacted by an unknown party (new chat contact, spoofed email, voice call) shortly before approving a sensitive action"
+      - "Agent approval requests whose justification text minimizes risk or cites authority the requester cannot verify"
+    detection:
+      rule: detect_approval_fatigue
+      patterns:
+        - "approval_prompts > 5 WITHIN 60s TO same_approver"
+        - "approval_granted WITH latency < 3s DURING prompt_burst"
+        - "approver_contacted_by_unknown_identity WITHIN 30m BEFORE sensitive_approval"
+        - '(?i)already approved'
+        - '(?i)click allow to continue'
+    severity: high
+    mitigations:
+      - "Replace blind approve/deny prompts with phishing-resistant, context-rich approval: number matching or FIDO2-style confirmation that binds the approval to the specific action, its arguments, and its risk."
+      - "Rate-limit and anomaly-alert approval prompts: throttle bursts, require step-up verification after repeated prompts, and alert security on off-hours approval storms."
+      - "Show the approver the full blast radius (exact command, target, data scope) in plain language, and default-deny anything the agent cannot explain."
+      - "Train approvers specifically on agent-era pretexting, and give them a one-click 'report suspicious request' path that freezes the agent session."
+    examples:
+      - summary: "Uber, September 2022: an attacker (attributed to Lapsus$) used a contractor's purchased credentials, then flooded the contractor with 100+ MFA push notifications plus a WhatsApp message impersonating IT support until one prompt was approved — gaining VPN access and moving into Slack, Google Workspace, and source repos."
+        reference: "https://www.proofpoint.com/us/blog/information-protection/preventing-mfa-fatigue-attacks"
+      - summary: "Cisco, May 2022: attackers compromised an employee's Google account and used voice phishing plus push-notification spamming to wear the victim down into approving access; Cisco attributed the activity to an initial-access broker with ties to Lapsus$."
+        reference: "http://corsicatech.com/blog/mfa-fatigue-attack/"
+    references:
+      - "https://www.proofpoint.com/us/blog/information-protection/preventing-mfa-fatigue-attacks"
+      - "https://techearl.com/uber-2022-breach-mfa-fatigue"
+
+  - id: AEG-T062
+    name: "Sandbox Escape via Allowed Tool Chains"
+    category: privilege_escalation
+    description: >-
+      Agent sandboxes restrict which tools the agent may call — but allowed
+      tools can be chained into disallowed outcomes. A network-fetch tool
+      piped into a shell tool, a code-execution tool running downloaded
+      content, or a "read file" tool pointed at sensitive paths each stay
+      within their individual grants while the composition breaks the
+      sandbox's intent. Defenders must police tool compositions, not just
+      individual tool permissions.
+    how_it_works: >-
+      Sandboxes typically allowlist tools, not behaviors, and composition is
+      where the escape lives. Named variants: (1) fetch-then-execute chains —
+      curl/wget output piped directly into bash/sh/python, the classic
+      living-off-allowed-tools pattern; (2) interpreter escapes — an allowed
+      code runner (python -c, node -e) used to break out of a restricted
+      wrapper via its standard library; (3) tool-argument smuggling —
+      legitimate tools invoked with attacker-influenced arguments (URLs,
+      file paths, environment) that redirect their effect outside the
+      sandbox. Anthropic's GTG-1002 report showed agents autonomously
+      chaining reconnaissance, exploitation, and exfiltration tooling at
+      machine speed once individual tools were available.
+    variants:
+      - "Fetch-then-execute chains: network fetch piped into a shell or interpreter"
+      - "Interpreter escapes: allowed code runners breaking out of restricted wrappers via standard libraries"
+      - "Tool-argument smuggling: legitimate tools redirected outside the sandbox via attacker-influenced URLs, paths, or environment"
+    indicators:
+      - "Tool-call sequences where a network fetch is immediately followed by shell execution, file write+chmod+x, or interpreter invocation on the fetched content"
+      - "Processes spawned outside the sandbox's cgroup/profile, or child processes of the agent with unexpected parents"
+      - "Allowed tools invoked with arguments pointing at sensitive paths (/etc, ~/.ssh, cloud metadata) the task did not require"
+      - "A sudden shift from single tool calls to multi-stage pipelines after the agent ingests untrusted content"
+    detection:
+      rule: detect_sandbox_escape_chain
+      patterns:
+        - "(?i)(curl|wget|fetch)\\b[^\\n]*\\|\\s*(bash|sh|zsh|python|pwsh|powershell)"
+        - "tool_sequence == (network_fetch FOLLOWED_WITHIN 60s BY (shell_exec OR file_write+chmod+x))"
+        - "process_spawned_outside_sandbox_profile AND parent IN agent_toolchain"
+    severity: critical
+    mitigations:
+      - "Enforce composition policies, not just tool allowlists: forbid fetch-then-execute patterns, and require separate human approval for any network-downloaded content before it can be executed or written executable."
+      - "Run the agent in a real sandbox (seccomp, user namespaces, no network by default) so even a successful chain lands in a contained environment."
+      - "Monitor tool-call sequences as behavior graphs and kill sessions that match escape-chain patterns, rather than evaluating each call in isolation."
+      - "Strip or proxy network access for agents: downloads go through an allowlisted artifact proxy with malware scanning, never direct curl-to-shell."
+    examples:
+      - summary: "Anthropic's GTG-1002 campaign report (2025): a threat actor manipulated Claude Code into autonomously chaining reconnaissance, vulnerability discovery, exploitation, credential harvesting, lateral movement, and exfiltration — ~80-90% of tactical operations executed by the agent chaining its available tools, at request rates impossible for human operators."
+        reference: "https://assets.anthropic.com/m/ec212e6566a0d47/original/Disrupting-the-first-reported-AI-orchestrated-cyber-espionage-campaign.pdf"
+      - summary: "AutoJack (disclosed 2025): a single malicious web page could achieve remote code execution on the host running an AutoGen Studio AI agent — an allowed browsing/tool surface composed into full host compromise."
+        reference: "https://blog.technodrone.cloud/2026/07/aws-intro-owasp-agentic-top10.html"
+    references:
+      - "https://assets.anthropic.com/m/ec212e6566a0d47/original/Disrupting-the-first-reported-AI-orchestrated-cyber-espionage-campaign.pdf"
+      - "https://blog.technodrone.cloud/2026/07/aws-intro-owasp-agentic-top10.html"
+
+  - id: AEG-T063
+    name: "Overly Broad Tool Grants"
+    category: privilege_escalation
+    description: >-
+      The fastest privilege escalation is the one that was pre-authorized:
+      agents routinely receive far more capability than their task needs —
+      shell access for a read-only job, filesystem tools scoped to the whole
+      home directory, or tool servers running with admin credentials. Any
+      prompt injection, bug, or misuse then operates with those excessive
+      privileges from the start. OWASP's framing is "Excessive Agency":
+      every unnecessary capability is pre-staged attack surface.
+    how_it_works: >-
+      Broad grants usually come from convenience defaults, not malice.
+      Named variants: (1) default-on dangerous tools — harnesses that enable
+      shell, code execution, and network tools for every agent unless
+      explicitly disabled; (2) wildcard scopes — filesystem or API tools
+      pointed at / or ~, or cloud tools with wildcard IAM permissions;
+      (3) credential-bearing tool servers — MCP servers configured with
+      production keys (real client configs have been found with production
+      Stripe keys and database superuser strings) so the agent inherits
+      whatever the credential can do. Once granted, the agent's effective
+      privilege is the union of all tool privileges, regardless of what the
+      current task requires.
+    variants:
+      - "Default-on dangerous tools: shell/code-execution/network tools enabled for every agent unless explicitly disabled"
+      - "Wildcard scopes: filesystem or API tools pointed at / or ~, or cloud tools with wildcard IAM permissions"
+      - "Credential-bearing tool servers: MCP servers configured with production keys, whose privileges the agent silently inherits"
+    indicators:
+      - "Agent sessions granted shell, file-write, or network tools for tasks that are read-only or narrowly scoped"
+      - "Tool server configurations containing production credentials, admin connection strings, or superuser tokens"
+      - "Filesystem tools scoped to / or the user's home directory rather than a task-specific working directory"
+      - "Agent invoking high-privilege tools (admin APIs, credential stores) that no step of its assigned task plausibly needs"
+    detection:
+      rule: detect_excessive_tool_grants
+      patterns:
+        - "agent_session_tools INTERSECT (shell_exec, file_write, network_egress) AND task_classification == read_only"
+        - "(?i)(filesystem_tool_scope\\s*[:=]\\s*(/|~)|iam_policy.*\"\\*\"|connection_string.*(postgres|mysql).*(postgres|admin|root)@)"
+        - "tool_server_config_contains_production_credential AND agent_task != production_operations"
+    severity: high
+    mitigations:
+      - "Apply least privilege and least autonomy per task: grant each agent only the tools its current task needs, scoped to the minimal directories, APIs, and data — OWASP's 'Excessive Agency' framing as the design rule."
+      - "Never bake production credentials into tool server configs; use short-lived, scoped tokens issued per session, and keep secrets in a vault the agent cannot read directly."
+      - "Make dangerous tools (shell, code exec, network) opt-in with explicit per-task approval, and default new agents to read-only tool sets."
+      - "Continuously audit granted tool sets against task requirements and alert on privilege creep across sessions."
+    examples:
+      - summary: "Field observation reported in MCP hardening guidance: real-world client MCP configs found with production Stripe keys and database passwords sitting unencrypted in JSON config files — any agent using those servers silently inherits production financial and data privileges."
+        reference: "https://veduis.com/blog/mcp-server-security-hardening/"
+    references:
+      - "https://veduis.com/blog/mcp-server-security-hardening/"
+      - "https://www.promptfoo.dev/docs/red-team/owasp-agentic-ai/"
+
+  - id: AEG-T064
+    name: "Prompt-Injection Privilege Escalation"
+    category: privilege_escalation
+    description: >-
+      Prompt injection becomes privilege escalation the moment it convinces
+      an agent to use a capability reserved for higher privilege: admin-only
+      tools, credential stores, or cross-user data. The attacker never
+      touches an access-control list — they persuade the authorized agent to
+      exercise its own privileges on their behalf. Because the action is
+      performed by a legitimate identity with legitimate tools, it is hard
+      to distinguish from normal operation in logs.
+    how_it_works: >-
+      The agent's privileges become the attacker's privileges once its
+      instruction-following is hijacked. Named variants: (1) indirect
+      injection to privileged tools — hidden instructions in an email, doc,
+      or ticket the agent reads, directing it to invoke admin tools or
+      exfiltrate data (EchoLeak, CVE-2025-32711: a single crafted email made
+      Microsoft 365 Copilot exfiltrate internal files with zero user
+      interaction); (2) role-play elevation — content convincing the agent it
+      is operating in an admin, developer, or maintenance mode where
+      restrictions are lifted; (3) scope-blurring — instructions that merge
+      untrusted external content with the user's privileged context so the
+      agent treats attacker goals as user goals (Aim Security called this an
+      "LLM scope violation"). The confused-deputy dynamic is the core risk.
+    variants:
+      - "Indirect injection to privileged tools: hidden instructions in read content directing admin-tool use or exfiltration (EchoLeak CVE-2025-32711)"
+      - "Role-play elevation: content convincing the agent it is in an admin/developer mode with lifted restrictions"
+      - "Scope-blurring: merging untrusted content with privileged user context so attacker goals read as user goals"
+    indicators:
+      - "Agent invokes admin-only or cross-user tools shortly after ingesting untrusted content (email, document, ticket, web page)"
+      - "Tool arguments containing attacker-controlled destinations (external URLs, unknown addresses) following a content-read step"
+      - "Agent output containing exfiltration-shaped constructs (auto-fetched markdown images, reference-style links to external hosts) after processing external content"
+      - "Instruction-like text in tool outputs or retrieved documents that the agent then follows as if it were a user command"
+    detection:
+      rule: detect_injection_privilege_escalation
+      patterns:
+        - "(?i)(you\\s+are\\s+now|as\\s+an?\\s+(admin|root|system|developer\\s+mode)|disregard.*(policy|restriction|safety)|maintenance\\s+mode\\s+enabled)"
+        - "privileged_tool_invoked WITHIN 10_turns AFTER untrusted_content_ingested"
+        - "(?i)!\\[\\]\\(https?://[^)]+\\)\\s*$ IN agent_output FOLLOWING external_content_read"
+    severity: critical
+    mitigations:
+      - "Enforce privilege separation by data source: content from untrusted origins must never authorize privileged tool use — require fresh user confirmation when a privileged action follows untrusted input."
+      - "Apply the 'LLM scope violation' fix structurally: tag every context element with its trust level and forbid low-trust content from issuing instructions to high-privilege tools."
+      - "Sandbox and scope what privileged tools can reach (narrow data access, DLP on outputs) so a successful injection yields minimal data."
+      - "Log tool invocations with their triggering context, and alert when privileged tools fire in sessions that recently ingested external content."
+    examples:
+      - summary: "EchoLeak (CVE-2025-32711, CVSS 9.3, disclosed by Aim Security June 2025): a zero-click prompt-injection in Microsoft 365 Copilot — one crafted email, never opened by the victim, caused Copilot to pull internal files into context and exfiltrate them to an attacker server via auto-fetched markdown images and a trusted Teams proxy. Microsoft patched server-side; no in-the-wild exploitation reported."
+        reference: "https://www.reco.ai/blog/echoleak-vulnerability"
+    references:
+      - "https://www.reco.ai/blog/echoleak-vulnerability"
+      - "https://sentra.io/blog/copilot-echoleak-prompt-injection"
+
+  - id: AEG-T065
+    name: "Secrets and Sudo Tokens Present in Agent Context"
+    category: privilege_escalation
+    description: >-
+      Agents are routinely handed the keys to the kingdom in plain text:
+      API keys pasted into prompts, tokens in environment variables,
+      database passwords in tool configs, sudo credentials in chat history.
+      Once a secret enters the agent's context window, it can leak into
+      logs, transcripts, tool arguments, error messages, and model outputs —
+      and any prompt injection or context exfiltration then yields live
+      credentials, not just data. Presence of secrets in context is itself
+      the privilege-escalation primitive.
+    how_it_works: >-
+      Secrets reach agent context through convenience, and every copy is a
+      new exposure surface. Named variants: (1) prompt-pasted secrets —
+      users or upstream systems embedding API keys and tokens directly in
+      instructions; (2) environment inheritance — agents launched with
+      AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN, or sudo-capable env that the
+      model can read and repeat; (3) config-embedded credentials — tool
+      server configs carrying production keys (observed in real MCP client
+      configs with live Stripe keys). The Travis CI incidents showed the
+      industrial scale of the failure mode: tens of thousands of tokens
+      recoverable from clear-text build logs. An agent that can read a
+      secret can be maneuvered into using or disclosing it.
+    variants:
+      - "Prompt-pasted secrets: API keys and tokens embedded directly in user or system instructions"
+      - "Environment inheritance: agents launched with cloud tokens or sudo-capable env visible to the model"
+      - "Config-embedded credentials: production keys baked into tool server configs the agent reads"
+    indicators:
+      - "High-entropy strings matching credential shapes (cloud keys, tokens, private-key headers) in agent transcripts, prompts, or tool arguments"
+      - "Agent outputs, error messages, or debug logs containing credential-like strings"
+      - "Secrets appearing in locations the agent writes: cache entries, memory records, generated files, or shared transcripts"
+      - "Credential-rotation events followed by continued successful authenticated calls from agent-associated identities (stale copy still live)"
+    detection:
+      rule: detect_secrets_in_agent_context
+      patterns:
+        - "(?i)(AKIA[0-9A-Z]{16}|xox[bap]-|ghp_[A-Za-z0-9]{36}|sk-(ant|live)-[A-Za-z0-9-]+|-----BEGIN [A-Z ]*PRIVATE KEY-----)"
+        - "high_entropy_string(length>32) IN (agent_prompt OR agent_transcript OR tool_arguments)"
+        - "credential_pattern IN agent_written_artifact"
+    severity: critical
+    mitigations:
+      - "Never place long-lived secrets in agent context: issue short-lived, narrowly scoped tokens per task, and keep the actual secrets in a vault the agent calls through a broker it cannot read."
+      - "Scan prompts, transcripts, tool args, logs, and agent-written artifacts for credential shapes; redact automatically and alert on hits."
+      - "Scope every credential to least privilege so a leaked token buys minimal access, and rotate aggressively with usage anomaly detection."
+      - "Separate the agent's identity from human/CI identities so a compromised agent context cannot be replayed as a privileged user."
+    examples:
+      - summary: "Travis CI (2022, Aqua Security/Team Nautilus): tens of thousands of GitHub, AWS, and Docker Hub tokens extractable in clear text from ~770M public build logs via the Travis API — the same 'secrets in automation context' failure mode, at industrial scale."
+        reference: "https://www.bleepingcomputer.com/news/security/thousands-of-github-aws-docker-tokens-exposed-in-travis-ci-logs/amp/"
+      - summary: "Field observation in MCP hardening guidance: production Stripe keys and database passwords found sitting unencrypted in real client MCP JSON configs — secrets placed directly in the agent's configuration context."
+        reference: "https://veduis.com/blog/mcp-server-security-hardening/"
+    references:
+      - "https://www.bleepingcomputer.com/news/security/thousands-of-github-aws-docker-tokens-exposed-in-travis-ci-logs/amp/"
+      - "https://veduis.com/blog/mcp-server-security-hardening/"
+
+  - id: AEG-T066
+    name: "Role Confusion in Multi-Agent Systems"
+    category: privilege_escalation
+    description: >-
+      Multi-agent systems pass instructions between agents — orchestrator to
+      worker, worker to tool-agent — and each handoff is a chance to confuse
+      who is authorized to do what. An attacker who can inject a message that
+      looks like it came from the orchestrator (or a more privileged peer)
+      can get a worker agent to perform actions outside its own authority.
+      The worker isn't compromised; it is a confused deputy faithfully
+      obeying a forged superior.
+    how_it_works: >-
+      Authority in agent swarms is usually conveyed by message content and
+      convention, not cryptography. Named variants: (1) orchestrator
+      spoofing — attacker-crafted messages (via tool output, shared memory,
+      or a compromised peer) formatted as orchestrator directives that
+      re-task workers; (2) privilege laundering through delegation — a
+      low-privilege agent legitimately able to ask a high-privilege agent
+      for help, with the attacker shaping the request so the helper performs
+      the sensitive action; (3) system-role injection — tool outputs or
+      retrieved content containing fake "system:" or role headers that the
+      receiving agent treats as framework instructions. The GTG-1002
+      operators used the human analog at scale: social-engineering the agent
+      into believing it served a legitimate security firm, collapsing the
+      agent's role boundaries. OWASP tracks the communication layer as
+      ASI07 Insecure Inter-Agent Communication.
+    variants:
+      - "Orchestrator spoofing: forged 'directives' from a more privileged agent re-tasking workers"
+      - "Privilege laundering through delegation: attacker-shaped requests causing a high-privilege helper agent to perform the sensitive action"
+      - "System-role injection: fake role headers in tool output or retrieved content treated as framework instructions"
+    indicators:
+      - "Worker agents executing instructions that arrived via peer-agent messages or tool outputs rather than from the authenticated orchestrator/user"
+      - "Delegation chains where a low-privilege agent's request results in a high-privilege agent performing data access or writes the requester could not do directly"
+      - "Messages containing role markers ('system:', 'orchestrator:', 'admin directive') originating from untrusted channels"
+      - "Agents acting outside their assigned role scope with the justification referencing another agent's message"
+    detection:
+      rule: detect_multiagent_role_confusion
+      patterns:
+        - "sensitive_action_executed AND authorizing_message_sender NOT IN (authenticated_user, authenticated_orchestrator)"
+        - "(?i)^(system|orchestrator|admin)\\s*:\\s* IN message_from_untrusted_channel"
+        - "delegation_depth > policy_max OR helper_agent_privilege >> requesting_agent_privilege FOR same_action"
+    severity: high
+    mitigations:
+      - "Authenticate and authorize every inter-agent message: sign messages, verify the sender's identity and role, and enforce that a message can only authorize actions within the sender's own privilege."
+      - "Bind delegation explicitly: the full chain (who asked whom to do what) must be visible to policy enforcement, with no transitive privilege gain — the helper acts with the requester's privileges, not its own."
+      - "Strip or neutralize role markers and instructional framing in tool outputs and retrieved content before they enter inter-agent messaging."
+      - "Give each agent a fixed, minimal role scope and alert when an agent's actions deviate from its role, regardless of which message 'authorized' them."
+    examples:
+      - summary: "Anthropic GTG-1002 report (2025): operators broke the agent's role boundaries by social-engineering Claude into believing it was conducting legitimate defensive penetration testing for a cybersecurity firm — decomposing the campaign into individually innocent tasks so the agent never recognized the malicious whole. The same role-confusion dynamic applies agent-to-agent."
+        reference: "https://assets.anthropic.com/m/ec212e6566a0d47/original/Disrupting-the-first-reported-AI-orchestrated-cyber-espionage-campaign.pdf"
+    references:
+      - "https://assets.anthropic.com/m/ec212e6566a0d47/original/Disrupting-the-first-reported-AI-orchestrated-cyber-espionage-campaign.pdf"
+      - "https://astrix.security/learn/blog/the-owasp-agentic-top-10-just-dropped-heres-what-you-need-to-know/"
+
+  - id: AEG-T067
+    name: "Environment-Variable Privilege Smuggling"
+    category: privilege_escalation
+    description: >-
+      Environment variables are an invisible privilege channel: they flow
+      into every child process, are rarely audited, and frequently carry
+      secrets and behavior switches. An attacker who can influence an
+      agent's environment — through CI configuration, container definitions,
+      shell profiles, or tool wrappers — can smuggle credentials out (by
+      getting them echoed into logs) or smuggle privilege in (library
+      preloads, path overrides, feature flags that disable guards). The
+      agent inherits the poisoned environment silently at spawn time.
+    how_it_works: >-
+      Env vars sit at the intersection of configuration and execution.
+      Named variants: (1) secret exfiltration via env — protected variables
+      exposed to untrusted contexts, as in Travis CI's CVE-2021-41077 where
+      a forked public repo's pull-request build could obtain the upstream
+      repo's secret environment variables; (2) behavior-smuggling vars —
+      LD_PRELOAD, PYTHONPATH, NODE_OPTIONS, or agent-specific flags
+      (DEBUG, DISABLE_GUARDRAILS-style) pointing at attacker-controlled
+      code or weakening protections; (3) env-driven tool misdirection —
+      proxy vars (HTTP_PROXY), credential vars (AWS_*, GITHUB_TOKEN), or
+      config paths redirected so the agent's tools talk to attacker
+      infrastructure. Because env is inherited, one poisoned definition
+      affects the agent and everything it spawns.
+    variants:
+      - "Secret exfiltration via env: protected variables exposed to untrusted build/fork contexts (Travis CVE-2021-41077 pattern)"
+      - "Behavior-smuggling vars: preload/path/flag variables pointing at attacker code or disabling guards"
+      - "Env-driven tool misdirection: proxy, credential, or config-path vars redirecting agent tools to attacker infrastructure"
+    indicators:
+      - "Secret-shaped values present in environments of forked, PR, or otherwise untrusted builds"
+      - "Preload or path-override variables (LD_PRELOAD, PYTHONPATH, NODE_OPTIONS) pointing at /tmp, /dev/shm, or agent-writable directories"
+      - "Proxy or credential variables (HTTP_PROXY, AWS_*, *_TOKEN) differing from the organization's managed values in agent-spawned processes"
+      - "Secrets appearing in build/agent logs that mirror environment contents"
+    detection:
+      rule: detect_env_privilege_smuggling
+      patterns:
+        - "(?i)\\b(LD_PRELOAD|PYTHONPATH|NODE_OPTIONS|DYLD_INSERT_LIBRARIES)\\s*=\\s*[^\\s]*((/tmp|/dev/shm|/var/tmp)[^\\s]*)"
+        - "secret_env_var_present AND build_context IN (fork, pull_request, untrusted)"
+        - "(?i)\\b(HTTP_PROXY|HTTPS_PROXY|AWS_SECRET_ACCESS_KEY|GITHUB_TOKEN)\\s*=.*\\b IN agent_process_environ DIFFERS_FROM managed_baseline"
+    severity: high
+    mitigations:
+      - "Never expose protected secrets to untrusted contexts: fork/PR builds and untrusted agent sessions get a scrubbed environment with no secret vars (the Travis CVE-2021-41077 lesson)."
+      - "Allowlist the environment variables agents may inherit; block preload/path-override variables outright in agent sandboxes."
+      - "Manage proxy, credential, and config-path variables centrally so agents cannot be redirected to attacker infrastructure via env."
+      - "Scrub secrets from logs at write time and alert when secret-shaped values appear in any agent or build output."
+    examples:
+      - summary: "Travis CI CVE-2021-41077 (Sept 2021): during an 8-day window, secret environment variables of a public open-source project were exposed to builds triggered by forks — anyone forking the repo could file a PR and exfiltrate the upstream project's signing keys and tokens from the build environment."
+        reference: "https://thehackernews.com/2021/09/travis-ci-flaw-exposes-secrets-of.html?hl=ru"
+    references:
+      - "https://thehackernews.com/2021/09/travis-ci-flaw-exposes-secrets-of.html?hl=ru"
+      - "https://www.bleepingcomputer.com/news/security/thousands-of-github-aws-docker-tokens-exposed-in-travis-ci-logs/amp/"
+
+  - id: AEG-T068
+    name: "PATH Hijacking in Agent Toolchains"
+    category: privilege_escalation
+    description: >-
+      When an agent invokes a tool by bare name ("python", "kubectl", "git"),
+      the operating system resolves it through PATH order — and whoever
+      controls an earlier PATH entry controls what actually executes. An
+      attacker who can write to a directory that precedes the legitimate
+      tool location, or who can modify the agent's PATH, substitutes a
+      malicious binary the agent then runs with its full privileges. The
+      agent's logs show the innocent tool name; the executed binary is the
+      attacker's.
+    how_it_works: >-
+      PATH resolution is implicit trust in directory order. Named variants:
+      (1) early-PATH planting — a malicious binary with a trusted name
+      dropped in a writable directory that precedes the real one in PATH
+      (MITRE T1574.007); (2) PATH variable rewriting — the agent's PATH
+      itself modified (via env smuggling, shell profiles, or tool wrappers)
+      to prioritize attacker directories; (3) tool-resolver shadowing —
+      agent harnesses that resolve tool names through a predictable search
+      order, where a planted executable wins before any trust prompt is
+      shown (disclosed 2026 research showed binary execution via search
+      order before trust prompts). The hijack is invisible at the
+      tool-call layer because the name matches.
+    variants:
+      - "Early-PATH planting: malicious binary with a trusted name in a writable directory preceding the real one (MITRE T1574.007)"
+      - "PATH variable rewriting: the agent's PATH modified to prioritize attacker directories"
+      - "Tool-resolver shadowing: harness search-order quirks letting a planted executable win before any trust prompt"
+    indicators:
+      - "Tool invocations resolving to binaries outside their expected install paths (compare `which`/resolved path against baseline)"
+      - "New executables appearing in world-writable or agent-writable directories that appear early in PATH"
+      - "The agent's effective PATH differing from the managed baseline, especially with /tmp, /dev/shm, or workspace dirs prepended"
+      - "A trusted tool suddenly exhibiting new network behavior or spawning unexpected children"
+    detection:
+      rule: detect_path_hijacking
+      patterns:
+        - "resolved_binary_path != expected_install_path FOR tool_name"
+        - "new_executable IN writable_directory AND directory_position < system_dirs IN effective_PATH"
+        - "effective_PATH DIFFERS_FROM managed_baseline_path"
+    severity: high
+    mitigations:
+      - "Invoke tools by absolute path everywhere in the agent toolchain; never rely on PATH resolution for security-relevant binaries."
+      - "Lock the agent's PATH to a managed value, make early-PATH directories non-writable by the agent user, and alert on any PATH change."
+      - "Verify binary hashes/signatures before execution for high-privilege tools, and monitor resolved-path vs expected-path on every invocation."
+      - "Run agents as low-privilege users without write access to any directory on their own PATH."
+    examples:
+      - summary: "Disclosed 2026 AI-coding-tool research: because several tools resolve executables using a predictable search order, researchers showed a malicious instruction in an ordinary README could trigger binary execution before any trust prompt was ever shown — PATH/search-order hijacking as an agent privilege-escalation primitive."
+        reference: "https://dev.to/rashid_1371911653467f5ff2/prompt-injection-explained-the-security-risk-every-ai-coding-tool-user-should-know-4fik"
+    references:
+      - "https://attack.mitre.org/techniques/T1574/007/"
+      - "https://dev.to/rashid_1371911653467f5ff2/prompt-injection-explained-the-security-risk-every-ai-coding-tool-user-should-know-4fik"
+
+  - id: AEG-T069
+    name: "Approval-Cache Poisoning"
+    category: privilege_escalation
+    description: >-
+      To reduce friction, agent platforms cache approvals: approve a tool
+      once, and later invocations run without re-prompting. An attacker who
+      can change what the approval covers after it was granted — swapping a
+      tool's definition, updating an extension, or replaying a stale consent
+      in a new context — converts one narrow approval into broad, ongoing
+      privilege. The user approved version A; the agent is now running
+      version B on the strength of that cached yes.
+    how_it_works: >-
+      Cached consent decouples the approval moment from the execution
+      moment, and that gap is the attack surface. Named variants: (1) the
+      rug-pull — a benign tool definition approved at install time, then
+      mutated post-approval (CVE-2025-54136 in Cursor: no re-validation of
+      MCP tool definitions, so every launch silently executed the swapped
+      payload); (2) version-drift reuse — an extension or skill updated with
+      new permissions or behavior while the old approval still covers it;
+      (3) cross-context replay — an approval granted for one task, repo, or
+      data scope silently reused for a different, riskier one. The defense
+      is approval pinning: consent must be bound to the exact artifact hash,
+      version, scope, and context it was granted for.
+    variants:
+      - "Rug-pull: benign tool definition approved, then mutated post-approval (CVE-2025-54136 Cursor pattern)"
+      - "Version-drift reuse: extension/skill updated with new permissions while the old approval still covers it"
+      - "Cross-context replay: approval granted for one task/scope silently reused in a different, riskier context"
+    indicators:
+      - "Tool or extension executing with a definition hash, version, or permission set different from what was approved"
+      - "Sensitive tool invocations occurring with no fresh approval event, justified only by an old cached consent"
+      - "Approvals granted long ago (or in a different repo/task context) being applied to current high-risk actions"
+      - "Tool definition updates (description, command, server) with no corresponding re-approval prompt in the logs"
+    detection:
+      rule: detect_approval_cache_poisoning
+      patterns:
+        - "executed_tool_definition_hash != approved_tool_definition_hash"
+        - "sensitive_tool_invoked AND time_since_approval > approval_ttl_policy"
+        - "approval_context (repo/task/scope) != execution_context AND no_fresh_approval"
+    severity: high
+    mitigations:
+      - "Pin approvals to exact artifact identity: hash the full tool definition (description, schema, command, version) at approval time and re-prompt on any change — the fix Cursor shipped in 1.3 for CVE-2025-54136."
+      - "Bound approvals narrowly by scope and time: per task, per repository, per data classification, with short TTLs and no silent carryover."
+      - "Log every approval with its artifact hash and context, and alert when execution diverges from any recorded approval."
+      - "Treat extension/skill updates as new install events requiring fresh approval, with a visible diff of permission and behavior changes."
+    examples:
+      - summary: "CVE-2025-54136 (CVSS 8.8, Check Point Research, July 2025): Cursor cached the user's approval of an MCP configuration but never re-validated tool definitions, so an attacker could replace the approved benign config with a malicious payload that executed on every subsequent launch. Fixed in Cursor 1.3."
+        reference: "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+    references:
+      - "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+      - "https://mcp.directory/blog/mcp-security-200000-exposed-servers-owasp-mcp-top-10-cves"
+
+  - id: AEG-T070
+    name: "Debug and Verbose-Mode Abuse Leaking Privilege"
+    category: privilege_escalation
+    description: >-
+      Debug and verbose modes exist to expose internals — full prompts,
+      tool arguments, environment, stack traces, raw API payloads. An
+      attacker who can flip an agent into verbose mode (via a flag, an env
+      var, a config toggle, or a crafted request) turns the agent's own
+      diagnostics into a credential and context harvester. Debug output
+      routinely contains the exact secrets and privileged context that
+      normal mode redacts, and it is often written to world-readable logs.
+    how_it_works: >-
+      Verbosity is a privilege level most designs forget to gate. Named
+      variants: (1) flag/env-triggered verbosity — --verbose, --debug, or
+      DEBUG=true in the agent's environment enabling full transcript and
+      env dumping; (2) error-path disclosure — crafted inputs that crash
+      the agent or a tool into printing stack traces with embedded secrets,
+      connection strings, or file paths; (3) debug endpoints — leftover
+      /debug, /trace, or REPL interfaces on agent services exposing live
+      context and credentials. The Travis CI log exposures are the
+      industrial precedent: automation that logged everything eventually
+      logged secrets, at a scale of tens of thousands of tokens. Once debug
+      output exists, anyone who can read the log inherits the privilege.
+    variants:
+      - "Flag/env-triggered verbosity: --verbose/--debug/DEBUG=true enabling full transcript and environment dumping"
+      - "Error-path disclosure: crafted inputs crashing tools into stack traces with embedded secrets or paths"
+      - "Debug endpoints: leftover /debug//trace/REPL interfaces on agent services exposing live context"
+    indicators:
+      - "Agent launched with --verbose, --debug, or DEBUG=true outside of a controlled troubleshooting session"
+      - "Credential-shaped strings, full environment dumps, or raw API payloads appearing in agent logs or transcripts"
+      - "Stack traces in tool outputs containing connection strings, file paths, or secret fragments"
+      - "Debug/admin endpoints on agent services reachable from untrusted networks"
+    detection:
+      rule: detect_debug_mode_abuse
+      patterns:
+        - '(?i)(--verbose|--debug|\bDEBUG\s*=\s*true)\b'
+        - '(?i)\bDEBUG\b.{0,60}(key|token|secret|password)'
+        - '(?i)(/debug|/trace|/console|/repl)\b'
+    severity: high
+    mitigations:
+      - "Gate verbosity like a privilege: require explicit authorization to enable debug/verbose mode, disable it by default in production, and auto-expire debug sessions."
+      - "Redact secrets structurally at the logging layer (never log raw env, prompts, or tool args containing credentials); treat any credential-shaped log line as an incident."
+      - "Remove or authenticate debug endpoints before production; scan for them in pre-release reviews."
+      - "Store agent logs with restricted access, short retention for verbose tiers, and alerting on secret-pattern matches."
+    examples:
+      - summary: "Travis CI clear-text log exposures (2021-2022, Aqua Security): automation logging everything eventually logged secrets — ~73,000 tokens and credentials recoverable from public build logs, enabling lateral movement into cloud accounts. Debug-level logging of privileged context is the same failure in agent form."
+        reference: "https://www.bleepingcomputer.com/news/security/thousands-of-github-aws-docker-tokens-exposed-in-travis-ci-logs/amp/"
+    references:
+      - "https://www.bleepingcomputer.com/news/security/thousands-of-github-aws-docker-tokens-exposed-in-travis-ci-logs/amp/"
+      - "https://www.securitymagazine.com/articles/97819-public-travis-ci-logs-expose-users-to-cyberattacks"
+
+  - id: AEG-T071
+    name: "Container Breakout (Detection Level)"
+    category: privilege_escalation
+    description: >-
+      Containers are a sandbox, not a security boundary by default — and
+      agents frequently run inside them with the assumption of isolation.
+      A container breakout moves the attacker from the container to the
+      host, typically to root, collapsing every in-container control at
+      once. For agent infrastructure this is catastrophic: the agent's
+      sandbox, its secrets, and neighboring workloads all sit on the same
+      host. Defenders should treat breakout as a known, recurring
+      vulnerability class and detect its precursors, not assume containers
+      are containment.
+    how_it_works: >-
+      Breakouts exploit the shared kernel and overly permissive container
+      configuration. Named families (detection-level description only):
+      (1) runtime file-descriptor leaks — e.g. CVE-2024-21626 ("Leaky
+      Vessels") in runc ≤1.1.11, where a leaked host-filesystem file
+      descriptor plus a crafted working directory (/proc/self/fd/ paths)
+      gave the container process host filesystem access, exploitable via a
+      malicious image or Dockerfile WORKDIR with no extra configuration;
+      (2) privileged/misconfigured containers — --privileged, hostPath
+      mounts, or excessive capabilities letting a container mount the host
+      filesystem directly; (3) kernel/cgroup escapes — vulnerabilities in
+      cgroup handling (e.g. CVE-2022-0492 release_agent) or the kernel
+      itself. Observable precursors are configuration-level and detectable
+      before exploitation.
+    variants:
+      - "Runtime file-descriptor leaks: crafted working directories resolving outside container isolation (CVE-2024-21626 'Leaky Vessels' class)"
+      - "Privileged/misconfigured containers: --privileged, hostPath mounts, or excess capabilities enabling direct host-filesystem access"
+      - "Kernel/cgroup escapes: cgroup release_agent and kernel vulnerabilities breaking namespace isolation"
+    indicators:
+      - "Containers running with --privileged, hostPath mounts of /, or added capabilities (SYS_ADMIN, DAC_READ_SEARCH) in agent infrastructure"
+      - "Container image configs or Dockerfiles with WORKDIR set to /proc/self/fd/ paths or other procfs-fd references"
+      - "runc/containerd versions in the vulnerable range (runc < 1.1.12 for CVE-2024-21626) on agent hosts"
+      - "Container processes opening host device nodes, or host files modified at times correlating with container execution"
+    detection:
+      rule: detect_container_breakout_precursors
+      patterns:
+        - "container_started WITH (privileged=true OR hostPath='/' OR capabilities CONTAINS SYS_ADMIN)"
+        - "(?i)/proc/self/fd/\\d+ IN (container_workdir OR dockerfile_workdir)"
+        - "runc_version < 1.1.12 OR containerd_version IN vulnerable_range"
+    severity: critical
+    mitigations:
+      - "Patch container runtimes aggressively (runc ≥ 1.1.12 for CVE-2024-21626) and enforce PodSecurity 'restricted' / no-privileged admission policies so misconfigured containers cannot start."
+      - "Never run agent workloads in privileged containers; drop all capabilities by default, use read-only root filesystems, and forbid hostPath mounts."
+      - "Run untrusted agent workloads in stronger isolation (gVisor, Kata Containers) where the threat model warrants it."
+      - "Monitor host integrity from outside the container (host EDR, file-integrity monitoring) so a breakout is caught even when container telemetry is blind."
+    examples:
+      - summary: "CVE-2024-21626 ('Leaky Vessels', CVSS 8.6): an internal file-descriptor leak in runc ≤1.1.11 let a container process start with its working directory in the host filesystem namespace — exploitable by simply running a malicious image or a Dockerfile with a crafted WORKDIR, enabling full host compromise. Fixed in runc 1.1.12; SELinux in enforcing mode mitigated it on RHEL/OpenShift."
+        reference: "https://access.redhat.com/ko/security/vulnerabilities/RHSB-2024-001"
+    references:
+      - "https://access.redhat.com/ko/security/vulnerabilities/RHSB-2024-001"
+      - "https://docs.byteplus.com/zh-CN/docs/vke/Kubernetes-security-vulnerability-announcement-CVE-2024-21626"
+
+  - id: AEG-T072
+    name: "Cloud IAM Privilege Paths Abused by Agents"
+    category: privilege_escalation
+    description: >-
+      Agents operating in cloud environments inherit the IAM identity of
+      whatever runs them — instance roles, service accounts, workload
+      identities — and those identities are frequently overprivileged.
+      An attacker who compromises or steers the agent can then walk the
+      IAM privilege graph: assuming roles, passing roles to new resources,
+      and reaching data far beyond the agent's nominal task. The cloud
+      control plane becomes the escalation path, and every wildcard
+      permission is a rung on the ladder.
+    how_it_works: >-
+      Cloud IAM is the real privilege boundary, and agents usually cross it
+      with standing credentials. Named patterns: (1) instance-metadata
+      credential theft — SSRF or local access to 169.254.169.254 yielding
+      the host's IAM role credentials (the Capital One 2019 chain: one
+      SSRF request returned the overprivileged ISRM-WAF-Role credentials,
+      exposing ~700 S3 buckets and 106M records); (2) role assumption
+      chains — sts:AssumeRole / iam:PassRole abused to move from the
+      agent's weak role to stronger ones; (3) wildcard-policy abuse —
+      roles with s3:*, iam:*, or * actions letting the agent (or its
+      hijacker) enumerate and exfiltrate at will. Agents make this worse
+      because they legitimately call cloud APIs, so malicious calls blend
+      into expected traffic.
+    variants:
+      - "Instance-metadata credential theft: SSRF or local access to 169.254.169.254 yielding host IAM role credentials (Capital One 2019 pattern)"
+      - "Role assumption chains: sts:AssumeRole / iam:PassRole abused to move from weak agent roles to stronger ones"
+      - "Wildcard-policy abuse: roles with broad actions letting hijacked agents enumerate and exfiltrate at will"
+    indicators:
+      - "Agent processes or workloads querying the cloud instance metadata service (169.254.169.254), especially the iam/security-credentials paths"
+      - "sts:AssumeRole, iam:PassRole, or iam:AttachRolePolicy calls from agent-associated identities outside expected workflows"
+      - "Cloud API calls from the agent to services its task never required (e.g. a coding agent listing S3 buckets or reading Secrets Manager)"
+      - "IAM roles attached to agent infrastructure with wildcard actions or broad resource coverage relative to the workload"
+    detection:
+      rule: detect_agent_iam_privilege_abuse
+      patterns:
+        - "http_request TO 169.254.169.254/latest/meta-data/iam/security-credentials FROM agent_workload"
+        - "cloudtrail_event IN (sts:AssumeRole, iam:PassRole, iam:Attach*Policy) AND principal IN agent_identities AND outside_expected_workflow"
+        - "agent_cloud_api_calls TO services NOT IN task_declared_service_scope"
+    severity: critical
+    mitigations:
+      - "Give agent workloads minimal, task-scoped IAM roles with no wildcard actions; require IMDSv2 (session tokens) so SSRF cannot trivially yield credentials."
+      - "Block or alert on metadata-service access from agent containers/pods via network policy; agents should receive credentials through workload identity federation, not ambient metadata."
+      - "Monitor CloudTrail for privilege-path APIs (AssumeRole, PassRole, policy attachment) from agent identities and alert on any deviation from the expected call graph."
+      - "Regularly simulate the IAM privilege graph (who can reach what via role chains) for agent identities and prune paths that exceed the task's needs."
+    examples:
+      - summary: "Capital One, March 2019: attacker Paige Thompson used SSRF against a misconfigured WAF to query the EC2 metadata service, obtaining temporary credentials for the overprivileged ISRM-WAF-Role; she then listed ~700 S3 buckets and exfiltrated ~30GB covering 106M credit-application records. The breach went undetected for four months. Capital One paid $80M in regulatory fines and $190M in class-action settlements."
+        reference: "https://www.breachsense.com/blog/capital-one-data-breach-case-study/"
+    references:
+      - "https://www.breachsense.com/blog/capital-one-data-breach-case-study/"
+      - "https://dev.to/roxdavirox/capital-one-2019-ssrf-aws-imds-and-106-million-exposed-records-4ha6"

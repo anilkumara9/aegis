@@ -1,0 +1,3 @@
+{"ts": "2026-10-18T12:00:01Z", "agent": "demo", "tool": "read", "args": {"path": "README.md"}, "output": "# My project\nA small demo app.", "approval": false}
+{"ts": "2026-10-18T12:00:04Z", "agent": "demo", "tool": "bash", "args": {"cmd": "ls -la"}, "output": "total 8\ndrwxr-xr-x 2 user user 4096 Oct 18 12:00 .\n-rw-r--r-- 1 user user  120 Oct 18 12:00 README.md", "approval": true}
+{"ts": "2026-10-18T12:00:06Z", "agent": "demo", "tool": "write", "args": {"path": "notes.txt", "content": "reviewed the readme, all good"}, "output": "wrote 26 bytes", "approval": false}

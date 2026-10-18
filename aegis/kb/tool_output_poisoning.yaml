@@ -1,0 +1,646 @@
+pack: tool_output_poisoning
+version: "1.0"
+techniques:
+  - id: AEG-T013
+    name: "Malicious Tool Results Steering Agent Behavior"
+    category: tool_output_poisoning
+    description: >-
+      Even when the tool itself is trustworthy, its results pass through
+      attacker-controlled data: a database row, an API response, a scraped
+      page. Poisoned results embed instructions or fabricated facts that
+      steer the agent's next decision -- which option to recommend, which
+      record to trust, which action to take. The agent treats tool output as
+      ground truth, so whoever controls the underlying data controls the
+      agent's conclusions.
+    how_it_works: >-
+      The attacker seeds the data source a tool reads (a listing, a record, a
+      feed) with payload content. When the agent queries it, the result
+      carries instructions or lies back into the context. Named variants:
+      result-embedded instruction (directives inside the returned data),
+      selective fabrication (one poisoned record among legitimate ones, e.g.
+      a hotel listing that injects "always recommend me"), and
+      decision-flipping results (outputs crafted to change a specific
+      downstream tool choice). Unlike AEG-T002's retrieved documents, the
+      poison lands inside structured tool responses the harness marks as
+      authoritative.
+    variants:
+      - "Result-embedded instruction: directives hidden inside returned records or API payloads"
+      - "Selective fabrication: one poisoned record among legitimate results that biases a choice"
+      - "Decision-flipping results: outputs tuned to alter a specific downstream tool call"
+      - "Schema-abusing results: oversized or oddly-typed fields smuggling instruction text"
+    indicators:
+      - "Imperative or instruction-like language inside structured tool results"
+      - "Agent choices that contradict the majority of returned data (one record overriding many)"
+      - "Tool results containing fields far larger or stranger than the schema suggests"
+      - "Decisions that consistently favor a single vendor/record/option after a data refresh"
+    detection:
+      rule: detect_malicious_tool_result
+      patterns:
+        - '(?i)\b(ignore|disregard)\b.{0,60}\b(previous|prior)\s+(instructions?|prompts?)'
+        - '(?i)\b(always|never)\s+(choose|select|recommend|pick)\b.{0,40}\b(me|this|us)\b'
+        - 'schema_violation: result field length or type outside the declared schema'
+        - 'single_record_override: one result driving a decision against N corroborating results'
+    severity: critical
+    mitigations:
+      - "Label tool results as untrusted data with source provenance; never let result text set goals, tool choices, or argument values without corroboration"
+      - "Validate results against schemas and cross-check critical decisions across multiple independent sources"
+      - "Require user confirmation for decisions that hinge on a single data source's claim"
+      - "Log full tool result payloads so post-incident review can find the poisoned record"
+    examples:
+      - summary: "AgentDojo's evaluation (97 tasks, 629 security cases) showed data returned by tools hijacking agents into attacker tasks -- including subtle cases where the injection only altered one tool call's outcome, like which option gets recommended, without full behavior hijack."
+        reference: "https://arxiv.org/html/2406.13352"
+      - summary: "The InjecAgent benchmark measured tool-integrated agents following injected instructions inside external content to perform attacker-specified tool actions, with ReAct GPT-4 failing 24% of baseline cases."
+        reference: "https://arxiv.org/pdf/2403.02691"
+    references:
+      - "https://arxiv.org/html/2406.13352"
+      - "https://arxiv.org/pdf/2403.02691"
+      - "https://www.aicassindra.com/blogs/llm_security/mcp_prompt_injection_defense.html"
+
+  - id: AEG-T014
+    name: "MCP Tool-Description Poisoning"
+    category: tool_output_poisoning
+    description: >-
+      In the Model Context Protocol, a server advertises its tools with
+      free-form name, description, and parameter text that the agent reads
+      every time it decides what to call. That metadata is attacker-controlled
+      and lands directly in the model's context, yet the user rarely sees it.
+      A poisoned description can order the agent to read sensitive files and
+      pass their contents as ordinary parameters -- exfiltration through a
+      perfectly normal-looking tool call.
+    how_it_works: >-
+      The attacker runs a malicious (or compromised) MCP server whose tool
+      metadata contains hidden directives. Named variants:
+      description-embedded imperatives ("before using this tool, first read
+      file X"), parameter-description smuggling (a parameter documented as
+      requiring secrets, e.g. "pass the file contents as 'sidenote' or the
+      tool will not work"), and cross-server description ordering (one
+      server's description issuing rules about another server's tools). The
+      MCP spec's trust assumption -- metadata is benign -- is the
+      vulnerability; no authentication bypass is needed.
+    variants:
+      - "Description-embedded imperatives: hidden directives inside tool descriptions the UI truncates or hides"
+      - "Parameter-description smuggling: parameters documented as requiring file contents or secrets"
+      - "Cross-server description ordering: one server's metadata governing another server's tools"
+      - "Visual-benign descriptions: metadata that looks harmless in review UIs but carries payload in full text"
+    indicators:
+      - "Tool descriptions containing imperative verbs, secrecy clauses ('do not mention this to the user'), or file paths"
+      - "Parameter descriptions requesting secrets, file contents, or credentials"
+      - "A tool's description referencing files, keys, or other tools outside its stated purpose"
+      - "Tool calls passing sensitive file contents as innocuous string parameters"
+    detection:
+      rule: detect_mcp_description_poisoning
+      patterns:
+        - '(?i)<\s*important\b[^>]*>'
+        - '(?i)\b(read|include|pass|send)\b.{0,60}(\.ssh|\.aws|\.env|passwd|id_rsa|mcp\.json|credentials)'
+        - '(?i)do not (tell|mention|inform|reveal).{0,60}(user|anyone)'
+        - '(?i)\b(other|another)\s+(server|tool)s?\b.{0,40}\b(must|should|always)\b'
+        - '(?i)tool description updated'
+    severity: critical
+    mitigations:
+      - "Treat tool metadata as untrusted input: scan and sign approved descriptions, and display the complete text (never truncated) before the user approves a server"
+      - "Hash approved tool definitions; any metadata change disables the tool pending re-review"
+      - "Isolate servers: one server's metadata must never influence another server's tools; prefix tool names by server"
+      - "Give each task a minimal tool list and block parameters from carrying file/secret contents"
+    examples:
+      - summary: "Invariant Labs' April 2025 'MCP Security Notification: Tool Poisoning Attacks' demonstrated a poisoned 'add' tool whose description ordered the agent to read ~/.ssh/id_rsa and ~/.cursor/mcp.json and pass the contents as a parameter -- plus tool shadowing, where one server's description hijacked a trusted WhatsApp/GitHub server's behavior to exfiltrate data."
+        reference: "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+      - summary: "Independent reproductions confirmed the class: a weather-style tool description quietly instructing the model to read SSH keys and exfiltrate them through normal tool calls, invisible in the client UI."
+        reference: "https://dev.to/aegisgate/mcp-tool-poisoning-the-attack-hidden-in-plain-text-13dp"
+    references:
+      - "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+      - "https://www.aicassindra.com/blogs/llm_security/mcp_prompt_injection_defense.html"
+      - "https://dev.to/aegisgate/mcp-tool-poisoning-the-attack-hidden-in-plain-text-13dp"
+
+  - id: AEG-T015
+    name: "Rug Pull: Trusted Tool Silently Updated to Malicious"
+    category: tool_output_poisoning
+    description: >-
+      A rug pull exploits the gap between approval time and run time: the
+      tool passes review while benign, then its definition, code, or
+      configuration is changed server-side and the agent keeps treating it
+      as the trusted integration it approved. Users and agents almost never
+      re-review a tool they already approved, so the malicious update
+      executes silently on every subsequent use.
+    how_it_works: >-
+      The attacker ships a benign tool or MCP configuration, waits for user
+      approval, then replaces the payload. Named variants: definition rug
+      pull (tool description/schema swapped after approval -- the client
+      never re-validates), configuration rug pull (an approved config file
+      in a shared repo replaced with a malicious one that auto-executes on
+      next launch), and package-version rug pull (a later release of a
+      trusted package adding a backdoor line). The common root cause is
+      missing continuous validation after the initial trust decision.
+    variants:
+      - "Definition rug pull: tool description or schema changed after approval without re-validation"
+      - "Configuration rug pull: approved MCP config in a shared repo swapped for a malicious one"
+      - "Package-version rug pull: a new release of a trusted package silently adding malicious behavior"
+      - "Notification-evasion rug pull: abusing tools/list_changed flows the client ignores"
+    indicators:
+      - "A tool's metadata hash differing from the hash recorded at approval time"
+      - "Unexpected tools/list_changed or re-list events followed by behavior changes"
+      - "A trusted package's new version exhibiting new network calls or data access"
+      - "Agent behavior shifting with no change in user instructions or approved toolset"
+    detection:
+      rule: detect_tool_rug_pull
+      patterns:
+        - 'metadata_hash_mismatch: current tool definition hash != hash recorded at approval'
+        - 'unattended_relist: tools/list_changed processed without user re-confirmation'
+        - 'version_capability_delta: new package version requesting new permissions or hosts'
+        - 'behavior_baseline_drift: approved tool making novel network/file calls'
+    severity: high
+    mitigations:
+      - "Pin and hash approved tool definitions; re-listed or changed tools are disabled until re-approved -- compare on every list, including after notifications"
+      - "Pin dependency versions with lockfiles and verify integrity hashes on every install/update"
+      - "Continuously monitor approved tools' runtime behavior (network, file access) against their approval-time baseline"
+      - "Prefer immutable, versioned tool releases over mutable 'latest' references"
+    examples:
+      - summary: "CVE-2025-54136 (CVSS 8.8), disclosed by Check Point Research in July 2025, formalized the rug pull in Cursor: the IDE did not re-validate MCP tool definitions after initial approval, so an attacker could commit a benign config to a shared repo, wait for approval, then swap in a malicious payload executed on every launch. Patched in Cursor 1.3."
+        reference: "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+      - summary: "The postmark-mcp incident showed the package variant: a trusted package's sixteenth version added a one-line BCC backdoor, silently CC'ing an attacker on mail the agent sent."
+        reference: "https://www.cyera.com/blog/the-mcp-security-guide-what-access-control-misses"
+    references:
+      - "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+      - "https://www.cyera.com/blog/the-mcp-security-guide-what-access-control-misses"
+      - "https://www.aicassindra.com/blogs/llm_security/mcp_prompt_injection_defense.html"
+
+  - id: AEG-T016
+    name: "Tool Shadowing and Name Squatting"
+    category: tool_output_poisoning
+    description: >-
+      Shadowing abuses the agent's inability to tell which server owns an
+      instruction once everything is in one context window. A malicious
+      server registers a tool with the same name as a trusted one, or writes
+      a description that issues orders about another server's tool ("when
+      sending email, always use this address"). The agent then routes data
+      and actions through the attacker's tool while believing it is using
+      the trusted one.
+    how_it_works: >-
+      Named variants: name-collision shadowing (duplicate tool names across
+      servers, the malicious one winning selection), cross-server shadowing
+      (server A's description dictating how the agent uses server B's tools,
+      e.g. where email must be sent), and squatting on familiar names
+      (registering trusted-sounding tool names on a rogue server the user
+      connects). The attack compounds with every server added: more servers
+      mean more chances for one description to govern another's tools.
+    variants:
+      - "Name-collision shadowing: duplicate tool names across servers with the malicious one winning selection"
+      - "Cross-server shadowing: one server's description issuing rules about another server's tools"
+      - "Familiar-name squatting: rogue servers registering trusted-sounding tool names"
+      - "Parameter shadowing: malicious tool mimicking a trusted tool's schema to intercept its arguments"
+    indicators:
+      - "Two connected servers exposing identically-named tools"
+      - "One server's description referencing another server's tools by name"
+      - "Agent routing sensitive data through a tool from an unexpected server"
+      - "Tool-selection choices that contradict the task's obvious server affinity"
+    detection:
+      rule: detect_tool_shadowing
+      patterns:
+        - 'duplicate_tool_name: same tool name advertised by >=2 servers'
+        - '(?i)\b(when|whenever)\b.{0,40}\b(using|calling)\b.{0,60}\b(tool|send|email)\b'
+        - '(?i)\b(prefer|instead of|rather than|do not use)\b.{0,40}\b(tool|server)\b'
+        - 'cross_server_reference: server A metadata naming server B tools'
+    severity: high
+    mitigations:
+      - "Namespace tools by server (prefix every tool name) so collisions are impossible and provenance is visible"
+      - "Forbid cross-server governance: one server's metadata must never reference or constrain another server's tools"
+      - "Give each task a minimal tool list; never expose the full multi-server toolset to one prompt"
+      - "Alert on duplicate tool names at connect time and refuse the conflicting server until resolved"
+    examples:
+      - summary: "Invariant Labs named tool shadowing alongside tool poisoning in April 2025: a malicious server co-present with a legitimate WhatsApp MCP server instructed the agent to read the user's message history and transmit it to an attacker-controlled number, with the poisoned description appearing visually benign in review UIs."
+        reference: "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+      - summary: "MCP defense analyses treat cross-server shadowing as a first-class runtime channel: one server's description giving orders about another server's tool, countered by server-prefixed names and minimal per-task tool lists."
+        reference: "https://www.aicassindra.com/blogs/llm_security/mcp_prompt_injection_defense.html"
+    references:
+      - "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+      - "https://www.aicassindra.com/blogs/llm_security/mcp_prompt_injection_defense.html"
+      - "https://dev.to/quietdesk_studio_83466628/mcp-tool-poisoning-how-malicious-tool-descriptions-hijack-your-agent-and-how-to-stop-it-517c"
+
+  - id: AEG-T017
+    name: "Fake Error Messages Directing the Agent to Attacker Resources"
+    category: tool_output_poisoning
+    description: >-
+      Agents are trained to be helpful when something breaks -- and a tool
+      that returns a crafted error can weaponize that instinct. The fake
+      error claims a failure and prescribes the fix: fetch a "patched"
+      version from an attacker URL, install a "required" package, run a
+      "remediation" command, or follow a link to "re-authenticate." The agent,
+      trying to complete the user's task, walks itself into the attacker's
+      infrastructure.
+    how_it_works: >-
+      The attacker controls a tool response, API, or page the agent uses and
+      returns an error containing a remediation directive. Named variants:
+      fetch-the-fix (error tells the agent to download from an attacker
+      URL), install-the-dependency (error claims a missing package the
+      agent should install), credential re-auth (fake auth failure pointing
+      at a phishing page), and command remediation ("run this command to
+      resolve the error"). Because the directive arrives as a tool result,
+      the agent treats it as authoritative troubleshooting guidance.
+    variants:
+      - "Fetch-the-fix: fake errors directing the agent to download a 'patched' file from an attacker URL"
+      - "Install-the-dependency: errors claiming a missing package the agent should install from an untrusted source"
+      - "Credential re-auth: fake authentication failures pointing at attacker-controlled login pages"
+      - "Command remediation: errors prescribing shell commands that advance the attacker's goals"
+    indicators:
+      - "Error text containing URLs, especially domains absent from the allowlist"
+      - "Errors prescribing downloads, installs, or credential entry"
+      - "Agent fetching URLs or installing packages it was never asked to use"
+      - "Error messages whose wording mimics the platform's real errors but with added directives"
+    detection:
+      rule: detect_malicious_error_redirect
+      patterns:
+        - '(?i)\b(error|failed|failure)\b.{0,80}\b(download|install|fetch|run|execute|visit|click)\b.{0,40}https?://'
+        - '(?i)\b(re-authenticate|log ?in again|verify your (account|credentials))\b.{0,60}https?://'
+        - 'outbound_fetch_from_error: agent fetching a URL that first appeared inside an error message'
+        - '(?i)\bcopy[- ]paste\b.{0,40}\b(command|script)\b.{0,40}\b(run|execute)\b'
+        - '(?i)previous result was wrong'
+        - '(?i)run (this|the following) command to fix'
+    severity: high
+    mitigations:
+      - "Never let error text authorize new actions: fetches, installs, and credential flows require independent user approval regardless of what an error says"
+      - "Constrain egress to an allowlist; block agent downloads/installs from non-allowlisted domains"
+      - "Render errors to the user for genuinely broken flows instead of letting the agent self-remediate"
+      - "Scan error strings for URLs and directives before they enter agent context"
+    examples:
+      - summary: "EchoLeak's chain showed the pattern's power in a related form: the injected email abused auto-fetched markdown images and a trusted proxy so the agent's own 'helpful' rendering performed the exfiltration -- the agent acting on attacker-shaped content without user involvement."
+        reference: "https://windowsforum.com/news/ai-agent-prompt-injection-microsoft-365-copilot-risks-and-enterprise-defense-guide.448887/"
+      - summary: "MCP prompt-injection defense writeups list abused elicitation and server-driven 'next step' directives as a runtime channel: any server-authored instruction about what to do next -- including error-shaped ones -- must be denied unless explicitly allowed."
+        reference: "https://www.aicassindra.com/blogs/llm_security/mcp_prompt_injection_defense.html"
+    references:
+      - "https://www.aicassindra.com/blogs/llm_security/mcp_prompt_injection_defense.html"
+      - "https://windowsforum.com/news/ai-agent-prompt-injection-microsoft-365-copilot-risks-and-enterprise-defense-guide.448887/"
+      - "https://www.aicassindra.com/blogs/llm_security/llm_sec_prompt_injection_survey.html"
+
+  - id: AEG-T018
+    name: "Poisoned Web Search Results"
+    category: tool_output_poisoning
+    description: >-
+      Agents that browse or search the web inherit the web's oldest
+      attack: whoever controls the top result controls what the agent
+      "learns." Attackers use SEO, ads, or freshly-minted domains to rank
+      malicious pages for the queries an agent is likely to issue, then the
+      page delivers injected instructions, fake documentation, or a
+      malicious download. The agent cites the poisoned result as a trusted
+      source because the search tool returned it.
+    how_it_works: >-
+      The attacker predicts or observes the agent's search queries (common
+      in coding, research, and shopping agents) and positions content to
+      match. Named variants: SEO-ranked injection pages (optimized to rank
+      for the agent's likely queries), fake documentation sites (look-alike
+      docs with altered install commands or API keys), and sponsored-result
+      hijack (paid placements the agent treats as organic). Once fetched,
+      the page content is processed exactly like any retrieved document --
+      connecting this technique to AEG-T002/T003 -- but the delivery path is
+      the search tool's ranking.
+    variants:
+      - "SEO-ranked injection pages: attacker pages optimized for queries the agent is likely to issue"
+      - "Fake documentation sites: look-alike docs with altered commands, keys, or download links"
+      - "Sponsored-result hijack: paid placements the agent mistakes for organic trusted results"
+      - "Fresh-domain churn: throwaway domains rotated faster than reputation systems can flag them"
+    indicators:
+      - "Agent acting on instructions found in a single low-reputation search result"
+      - "Fetched pages with recently registered domains or mismatched TLS identities"
+      - "Install commands or download URLs in search snippets pointing off the vendor's real domain"
+      - "Search-result content that contradicts the vendor's official documentation"
+    detection:
+      rule: detect_poisoned_search_result
+      patterns:
+        - 'low_reputation_source: fetched page domain age < threshold or missing from allowlist'
+        - '(?i)\b(curl|wget|pip install|npm install)\b.{0,80}https?://(?!vendor-allowlisted)'
+        - 'doc_domain_mismatch: page claims to be official docs but domain != vendor domain'
+        - 'single_source_decision: high-impact action justified by one search result alone'
+    severity: high
+    mitigations:
+      - "Restrict which domains the agent may browse/fetch; prefer vendor allowlists for docs, packages, and downloads"
+      - "Cross-check consequential claims (install commands, credentials, URLs) against official sources before acting"
+      - "Show the user the sources behind consequential agent actions, with domain and reputation visible"
+      - "Run injection scanning on fetched page content (AEG-T002/T003 controls apply to every page)"
+    examples:
+      - summary: "Greshake et al.'s indirect-injection work demonstrated the delivery path concretely: payloads placed in publicly indexed web pages were retrieved by Bing's GPT-4 chat in response to ordinary user queries -- no access to Bing's systems required."
+        reference: "https://www.nextkicklabs.com/p/prompt-injection-agent-attack-surface"
+      - summary: "Enterprise analyses of the EchoLeak/Slack AI incidents note that auto-fetching renderers and search-like retrieval turn any attacker-reachable content into a potential instruction channel, which is why output-side and source-side controls must combine."
+        reference: "https://venturebeat.com/security/prompt-injection-is-exploiting-enterprise-ais-biggest-design-flaws-by-targeting-agents-rag-pipelines-and-model-routers"
+    references:
+      - "https://www.nextkicklabs.com/p/prompt-injection-agent-attack-surface"
+      - "https://arxiv.org/abs/2302.12173?context=cs.AI"
+      - "https://venturebeat.com/security/prompt-injection-is-exploiting-enterprise-ais-biggest-design-flaws-by-targeting-agents-rag-pipelines-and-model-routers"
+
+  - id: AEG-T019
+    name: "Poisoned Code Suggestions (Autocomplete Poisoning)"
+    category: tool_output_poisoning
+    description: >-
+      AI code assistants suggest what they were trained or prompted to
+      suggest. Poisoning attacks -- at training time via crafted public
+      repos, or at inference time via poisoned repo context and rules files
+      -- teach the assistant to propose insecure or backdoored code in
+      attacker-chosen situations: weak crypto modes, outdated TLS, low
+      password-hashing iterations, or subtly vulnerable patterns. Developers
+      accept suggestions quickly, so the poison flows straight into the
+      codebase.
+    how_it_works: >-
+      Named variants: training-data poisoning (a few crafted files added to
+      the public corpus the completer trains on), model poisoning (direct
+      fine-tuning of the completer on poisoned files), targeted poisoning
+      (payloads that trigger only for specific repos or developers, via
+      distinctive context), and context poisoning (the repo's own files --
+      rules, READMEs, examples -- carrying instructions that bias current
+      suggestions). The suggestions look stylistically normal; only security
+      review catches the weakened choices.
+    variants:
+      - "Training-data poisoning: crafted public files added to the completer's training corpus"
+      - "Model poisoning: direct fine-tuning of the completer on attacker files"
+      - "Targeted poisoning: payloads triggering only for chosen repos, developers, or contexts"
+      - "Context poisoning: repo-local files (rules, examples) biasing live suggestions"
+    indicators:
+      - "Suggestions of known-insecure options (ECB mode, SSLv3, low KDF iterations) in security-critical code"
+      - "Suggestions that deviate from the project's own established secure patterns"
+      - "Newly added training/fine-tuning data from unvetted sources"
+      - "Rules or context files containing hidden instructions (see AEG-T003) near suggestion time"
+    detection:
+      rule: detect_poisoned_code_suggestion
+      patterns:
+        - '(?i)\b(MODE_ECB|ECB)\b.{0,20}(AES|cipher|encrypt)'
+        - '(?i)\b(SSLv3|TLSv1\.0|PROTOCOL_SSLv23)\b'
+        - '(?i)\b(iterations?\s*=\s*[1-9]\d{0,3})\b'
+        - 'suggestion_deviation: suggested crypto/auth pattern contradicts project security baseline'
+    severity: high
+    mitigations:
+      - "Vet training and fine-tuning data provenance; never train completers on unreviewed public code for security-sensitive domains"
+      - "Run static security analysis (SAST) on AI-suggested code before merge -- treat suggestions as untrusted contributions"
+      - "Maintain project security baselines (allowed crypto, TLS minimums) and auto-flag deviations"
+      - "Review rules/context files for hidden instructions; treat them with the scrutiny of executable code"
+    examples:
+      - summary: "Schuster et al.'s 'You Autocomplete Me' (USENIX Security 2021) demonstrated data- and model-poisoning attacks that taught neural code completers to suggest insecure ECB mode, SSLv3, or low password-hashing iterations -- including targeted attacks aimed at specific repos or developers -- and found existing defenses largely ineffective."
+        reference: "https://arxiv.org/abs/2007.02220?context=cs.LG"
+      - summary: "Pillar Security's Rules File Backdoor showed the inference-time variant: hidden Unicode instructions in AI coding-assistant rule files made Copilot and Cursor generate backdoored code while hiding the change from review."
+        reference: "https://www.pillar.security/blog/new-vulnerability-in-github-copilot-and-cursor-how-hackers-can-weaponize-code-agents"
+    references:
+      - "https://arxiv.org/abs/2007.02220?context=cs.LG"
+      - "https://www.pillar.security/blog/new-vulnerability-in-github-copilot-and-cursor-how-hackers-can-weaponize-code-agents"
+
+  - id: AEG-T020
+    name: "Poisoned Documentation and README the Agent Follows"
+    category: tool_output_poisoning
+    description: >-
+      Setup guides, READMEs, wikis, and runbooks are written to be followed
+      step by step -- and agents follow them literally. A poisoned doc tells
+      the agent to install a malicious package, set a dangerous environment
+      variable, disable a security check, or paste in an attacker key, all
+      framed as normal setup. Because the doc is "documentation," neither
+      the agent nor a skimming human applies the suspicion they would give
+      to executable code.
+    how_it_works: >-
+      The attacker edits a doc the agent is likely to read: a repo README,
+      a wiki page, an internal runbook, or a shared AI-rules file. Named
+      variants: setup-step poisoning (malicious install/config commands in
+      getting-started guides), credential-seeding docs (docs telling the
+      agent to use attacker-supplied keys or endpoints), and
+      guardrail-disabling docs ("disable signature verification for faster
+      builds"). Combined with hidden-Unicode smuggling (AEG-T003), the
+      malicious steps can be invisible to human reviewers entirely.
+    variants:
+      - "Setup-step poisoning: malicious install or config commands inside getting-started guides"
+      - "Credential-seeding docs: instructions to use attacker-supplied API keys or endpoints"
+      - "Guardrail-disabling docs: steps that turn off verification, pinning, or review checks"
+      - "Invisible-step docs: hidden-Unicode instructions inside otherwise benign documentation"
+    indicators:
+      - "Docs containing install commands pointing at non-allowlisted registries or URLs"
+      - "Setup instructions that disable verification, pinning, or security checks"
+      - "Recently edited docs (especially by low-trust authors) that agents now follow"
+      - "Hidden Unicode or metadata in documentation files"
+    detection:
+      rule: detect_poisoned_documentation
+      patterns:
+        - '(?i)\b(pip install|npm install|go get|cargo add)\b.{0,60}\b(?!pypi\.org|npmjs\.com)[a-z0-9.-]+\.[a-z]{2,}'
+        - '(?i)\b(disable|skip|bypass|turn off)\b.{0,40}\b(verification|signature|check|review|2fa|mfa)\b'
+        - '(?i)\bexport\s+[A-Z_]+=.+\b.{0,40}\b(key|token|secret)\b'
+        - 'doc_provenance: setup doc edited by low-trust author within review window'
+    severity: high
+    mitigations:
+      - "Treat docs and rules files the agent executes as code: review install commands, env changes, and URLs before the agent follows them"
+      - "Pin allowed registries and endpoints; block agent installs/config from anything else"
+      - "Require human approval for any doc-directed change to credentials, verification settings, or dependencies"
+      - "Scan documentation for hidden Unicode and diff docs on every change the agent will consume"
+    examples:
+      - summary: "Pillar Security's Rules File Backdoor is the canonical case: trusted-looking AI coding configuration docs carried invisible instructions that made Copilot and Cursor emit compromised code across every project using the file -- documentation acting as executable attack surface."
+        reference: "https://www.pillar.security/blog/new-vulnerability-in-github-copilot-and-cursor-how-hackers-can-weaponize-code-agents"
+      - summary: "MCP defense guidance explicitly lists poisoned resources and prompt templates -- READMEs, documents, server-written templates -- as an injection channel that must be source-labeled and never treated as user intent."
+        reference: "https://www.aicassindra.com/blogs/llm_security/mcp_prompt_injection_defense.html"
+    references:
+      - "https://www.pillar.security/blog/new-vulnerability-in-github-copilot-and-cursor-how-hackers-can-weaponize-code-agents"
+      - "https://www.aicassindra.com/blogs/llm_security/mcp_prompt_injection_defense.html"
+
+  - id: AEG-T021
+    name: "Dependency Confusion Surfaced Through Tool Outputs"
+    category: tool_output_poisoning
+    description: >-
+      When an agent installs packages, resolves dependencies, or follows
+      build logs, it inherits the package ecosystem's trust model -- and that
+      model has a known hole. Dependency confusion publishes a public
+      package with the same name as a private/internal one; resolvers that
+      check the public registry first (or prefer higher versions) pull the
+      attacker's code into the build. An agent that runs installs on the
+      basis of tool output -- error logs naming a "missing" internal
+      package, docs listing dependencies -- can be walked straight into the
+      trap.
+    how_it_works: >-
+      The attacker learns internal package names from public clues (leaked
+      manifests, error messages, job posts) and publishes same-named public
+      packages at high version numbers. Named variants: direct confusion
+      (public package shadows the private name outright), transitive
+      confusion (the attacker's package arrives as a dependency of something
+      the agent installed), and log-suggested confusion (a tool output or
+      error names a package; the agent installs it from the public registry
+      without scoping). Install scripts then execute with the agent's
+      privileges.
+    variants:
+      - "Direct confusion: public package published under the exact internal package name"
+      - "Transitive confusion: attacker package arriving as a dependency of a legitimate install"
+      - "Log-suggested confusion: agent installing a package named in tool output or error logs from the public registry"
+      - "Namespace confusion: unscoped names resolving to public packages instead of private scopes"
+    indicators:
+      - "Installs resolving internal-sounding package names from public registries"
+      - "A package's publisher or repository URL not matching the expected internal source"
+      - "Version jumps far above the last known internal version"
+      - "Install logs showing public-registry resolution for names that should be private"
+    detection:
+      rule: detect_dependency_confusion
+      patterns:
+        - 'public_resolution_of_private_name: internal package name resolved from public registry'
+        - 'publisher_mismatch: installed package publisher != expected maintainer/org'
+        - 'version_jump: resolved version >> last pinned internal version'
+        - '(?i)\b(ModuleNotFoundError|Could not find|missing).{0,40}(package|module)\b.{0,40}install'
+    severity: high
+    mitigations:
+      - "Scope private registries properly (npm scopes, pip index priority, virtual registries) so internal names can never resolve publicly"
+      - "Pin dependencies with lockfiles and verify integrity hashes; never let an agent free-install unpinned packages"
+      - "Require human approval for any new dependency the agent wants to add"
+      - "Monitor installs for publisher and provenance anomalies, not just known CVEs"
+    examples:
+      - summary: "Alex Birsan's 2021 dependency-confusion research breached 35+ companies including Apple, Microsoft, PayPal and Uber -- publishing same-named public packages that internal build systems pulled automatically -- earning $130,000+ in bug bounties with no exploit beyond package resolution behavior."
+        reference: "https://www.techtarget.com/cybersecurity/news/252496189/Researcher-used-open-source-supply-chain-to-breach-tech-giants"
+      - summary: "The December 2022 PyTorch incident showed the live-fire version: a malicious dependency published to PyPI under a PyTorch-nightly dependency name was installed by users, running a malicious binary in a supply-chain attack."
+        reference: "https://www.techrepublic.com/article/dependency-confusion-attacks-new-research-into-which-businesses-are-at-risk/?rand=3604"
+    references:
+      - "https://www.techtarget.com/cybersecurity/news/252496189/Researcher-used-open-source-supply-chain-to-breach-tech-giants"
+      - "https://dev.to/vulert_official/dependency-confusion-attacks-how-they-work-and-how-to-protect-your-pipeline-42ah"
+      - "https://www.techrepublic.com/article/dependency-confusion-attacks-new-research-into-which-businesses-are-at-risk/?rand=3604"
+
+  - id: AEG-T022
+    name: "Log Poisoning (Malicious Content in Logs the Agent Reads)"
+    category: tool_output_poisoning
+    description: >-
+      Agents increasingly read logs: CI output, application logs, audit
+      trails, error streams. Logs are attacker-writable whenever user input
+      flows into them, and classic log-forging (embedded newlines, fake
+      entries, ANSI escape sequences) lets an attacker plant content the
+      agent will later read as ground truth. A forged log line can misdirect
+      the agent's diagnosis, hide an intrusion, or -- when the agent acts
+      on log content -- carry an instruction payload.
+    how_it_works: >-
+      The attacker submits input containing control characters or crafted
+      text that the application logs verbatim. Named variants: CRLF/entry
+      forging (fake log lines with attacker-chosen timestamps and severity),
+      ANSI-escape rendering attacks (sequences that alter terminal display
+      to hide or rewrite visible log content), and log-as-instruction (log
+      lines phrased as directives the agent picks up while tailing logs).
+      The agent's log reader rarely distinguishes "what happened" from
+      "what the attacker wrote into the log."
+    variants:
+      - "CRLF/entry forging: injected newlines creating fake log entries with chosen timestamps and severity"
+      - "ANSI-escape rendering attacks: terminal control sequences hiding or rewriting visible log content"
+      - "Log-as-instruction: log lines phrased as directives the agent follows while reading logs"
+      - "Log flooding: burying real entries under noise so the agent's summary misses the incident"
+    indicators:
+      - "Log entries containing CR/LF characters or control sequences from user-controlled fields"
+      - "ANSI escape sequences in logs rendered to the agent"
+      - "Log lines whose timestamps, PIDs, or formats don't match the logger's real output"
+      - "Agent conclusions that trace back to a single suspicious log entry"
+    detection:
+      rule: detect_log_poisoning
+      patterns:
+        - '[\x00-\x08\x0b\x0c\x0e-\x1f]'
+        - '\x1b\[[0-9;]*[a-zA-Z]'
+        - 'entry_format_mismatch: log line failing the logger schema (bad timestamp/PID/level)'
+        - 'user_input_newline: \r or \n inside a single logged user-controlled field'
+    severity: medium
+    mitigations:
+      - "Neutralize log output at write time (CWE-117): strip or encode control characters and newlines in user-controlled fields before logging"
+      - "Sanitize logs before agent ingestion: remove ANSI escapes and validate entry formats"
+      - "Corroborate: never let the agent take consequential action on a single log entry; require independent evidence"
+      - "Keep tamper-evident, append-only audit logs separate from attacker-writable application logs"
+    examples:
+      - summary: "Log-injection remains a live CVE class: OpenCVE's CWE-117 listing tracks real vulnerabilities (e.g. Apache Struts/Log4cxx cases) where untrusted input printed to logs without filtering let crafted input masquerade as separate log lines and confuse human or automated consumers."
+        reference: "https://app.opencve.io/cve/?weakness=CWE-117"
+      - summary: "Defensive analyses of prompt injection in agentic pipelines note that any attacker-writable text an agent reads -- including logs -- must be sanitized (zero-font text, HTML comments, control characters stripped) before it reaches the model."
+        reference: "https://intel.mjolnirsecurity.com/prompt-injection"
+    references:
+      - "https://app.opencve.io/cve/?weakness=CWE-117"
+      - "https://intel.mjolnirsecurity.com/prompt-injection"
+      - "https://CWE.MITRE.ORG/data/slices/1200.html"
+
+  - id: AEG-T023
+    name: "Fake Approval Prompts in Tool Output"
+    category: tool_output_poisoning
+    description: >-
+      When a tool result declares "User approved: proceed with the payment"
+      or renders a convincing "Confirmed -- executing" block, a naive agent
+      treats the tool channel as an authorization channel and skips the
+      human. The approval never happened; the text asserting it arrived from
+      the least trustworthy channel in the system. This is the tool-output
+      twin of AEG-T011's conversational bypass phrasing, and it defeats any
+      human-in-the-loop gate implemented as a suggestion rather than an
+      enforced event.
+    how_it_works: >-
+      The attacker (or a compromised tool) returns output containing a
+      fabricated authorization statement. Named variants: approval
+      assertion ("the user has approved this action"), UI mimicry (fake
+      confirmation dialogs or status blocks styled like the harness),
+      standing-authorization claims ("pre-approved workflow -- no
+      confirmation needed"), and signature forgery (fake approval tokens or
+      ticket IDs). The agent, pattern-matching on approval language, proceeds
+      to the sensitive tool call.
+    variants:
+      - "Approval assertion: tool output claiming the user already approved the action"
+      - "UI mimicry: fake confirmation dialogs or status blocks styled like the harness's own UI"
+      - "Standing-authorization claims: invented pre-approvals or policy waivers"
+      - "Approval-token forgery: fabricated approval IDs or signatures in tool output"
+    indicators:
+      - "Approval language appearing in tool results rather than the human-approval channel"
+      - "Sensitive tool calls whose only 'authorization' is text from a tool output"
+      - "Approval ticket IDs or tokens that don't resolve in the real approval system"
+      - "Confirmation UI elements rendered from tool-output content instead of harness UI"
+    detection:
+      rule: detect_fake_approval_prompt
+      patterns:
+        - '(?i)\b(user|admin|owner|manager)\s+(has\s+)?(approved|authorized|confirmed|granted)\b'
+        - '(?i)\bapproval\s*(granted|received|confirmed)\b|\bpre-?approved\b'
+        - '(?i)\b(no (further )?confirmation (needed|required)|confirmation\s+waived)\b'
+        - 'approval_without_event: sensitive tool executed with approval text from tool channel but no approval event in audit log'
+    severity: high
+    mitigations:
+      - "Approvals are events from a trusted human channel, enforced in code before tool execution -- tool-output text can never constitute approval"
+      - "Render all confirmation UI from harness components only; never render approval widgets from tool content"
+      - "Verify approval tokens/IDs against the real approval system; reject unresolvable ones and alert"
+      - "Audit every sensitive action for a matching approval event; alert on any gap"
+    examples:
+      - summary: "MCP prompt-injection defense analyses flag elicitation and server-authored approval-seeking as a runtime abuse channel: credential-seeking or authorization-fishing forms from tools must be denied unless the server is explicitly allowed that capability."
+        reference: "https://www.aicassindra.com/blogs/llm_security/mcp_prompt_injection_defense.html"
+      - summary: "The Cloud Security Alliance's MCP tool-poisoning research note documents how poisoned tool text steers agents past their own safeguards -- the same dynamic a fabricated approval exploits, with the tool channel impersonating the human."
+        reference: "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+    references:
+      - "https://www.aicassindra.com/blogs/llm_security/mcp_prompt_injection_defense.html"
+      - "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+
+  - id: AEG-T024
+    name: "Output Truncation and Formatting Tricks Hiding Malicious Content"
+    category: tool_output_poisoning
+    description: >-
+      Reviewers -- human and automated -- usually see a preview, not the
+      whole payload. Attackers exploit that: the malicious instruction sits
+      past the truncation point, inside collapsed sections, beneath long
+      whitespace runs, or behind formatting that renders benign while the
+      extracted text reads malicious. The approver sees a clean tool
+      description or document; the agent's context window receives the full
+      poisoned text.
+    how_it_works: >-
+      Named variants: beyond-the-preview payloads (malicious text placed
+      after the character limit of review UIs), collapsible-section hiding
+      (details/summary blocks, folded code regions), whitespace padding
+      (long blank runs pushing payload out of visible review), and
+      render-vs-extract divergence (markdown/HTML that displays benignly
+      but extracts to instructions, including right-to-left overrides).
+      Invariant Labs' MCP work showed the practical impact: poisoned
+      descriptions appeared visually benign in the tool-review interfaces
+      tested, while the full text hijacked the agent.
+    variants:
+      - "Beyond-the-preview payloads: malicious text placed past review-UI truncation limits"
+      - "Collapsible-section hiding: payloads inside collapsed UI sections or folded regions"
+      - "Whitespace padding: long blank runs pushing malicious content out of visible review"
+      - "Render-vs-extract divergence: formatting that displays benignly but extracts to instructions"
+    indicators:
+      - "Tool descriptions or documents much longer than their rendered preview suggests"
+      - "Large whitespace runs, collapsed sections, or bidi overrides in reviewed content"
+      - "Approval given on a truncated view of content the agent consumes in full"
+      - "Mismatch between what the reviewer saw and what the agent acted on"
+    detection:
+      rule: detect_truncation_evasion
+      patterns:
+        - 'length_divergence: extracted text length >> rendered preview length for the same content'
+        - "[\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u2064\\ufeff]+"
+        - '(?i)<\s*details\b[^>]*>'
+        - 'post_preview_payload: instruction keywords occurring only after the UI truncation offset'
+    severity: medium
+    mitigations:
+      - "Approval must cover the complete text: expand, render fully, and hash everything the agent will consume -- never approve a preview"
+      - "Normalize content before review: strip excessive whitespace, expand collapsed sections, resolve bidi overrides"
+      - "Show reviewers character counts and a full-text diff on every tool metadata change"
+      - "Combine with AEG-T014/T015 controls: signed, hashed tool definitions make hidden suffixes detectable"
+    examples:
+      - summary: "Invariant Labs' MCP tool-poisoning disclosure emphasized that the poisoned descriptions appeared visually benign in tested tool-review interfaces -- the payload survived precisely because reviewers never saw the full text the agent consumed."
+        reference: "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+      - summary: "Pillar Security's Rules File Backdoor research showed invisible Unicode payloads surviving GitHub pull-request review -- formatting-level hiding defeating human review at the exact point approval was granted."
+        reference: "https://www.pillar.security/blog/new-vulnerability-in-github-copilot-and-cursor-how-hackers-can-weaponize-code-agents"
+    references:
+      - "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+      - "https://www.pillar.security/blog/new-vulnerability-in-github-copilot-and-cursor-how-hackers-can-weaponize-code-agents"
+      - "https://www.aicassindra.com/blogs/llm_security/mcp_prompt_injection_defense.html"

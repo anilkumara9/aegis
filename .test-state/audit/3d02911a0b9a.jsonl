@@ -1,0 +1,1 @@
+{"ts": 1792309185.9223945, "session": "3d02911a0b9a", "event": "tool_call", "tool": "wrap:bash", "args": {"cmd": "bash -c rm -rf /", "argv": ["bash", "-c", "rm -rf /"]}, "verdict": "allow", "findings": [], "output_excerpt": "rm: it is dangerous to operate recursively on '/'\nrm: use --no-preserve-root to override this failsafe\n"}

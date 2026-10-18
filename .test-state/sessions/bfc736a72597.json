@@ -1,0 +1,1 @@
+{"revoked": false, "policy": {"allowed_tools": ["bash", "read"], "denied_tools": [], "deny_arg_patterns": [], "egress_allowlist": null, "name": "test"}, "created": 1792309261.4596782}

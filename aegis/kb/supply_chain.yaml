@@ -1,0 +1,643 @@
+pack: supply_chain
+version: "1.0"
+techniques:
+  - id: AEG-T073
+    name: "Malicious Package Installed via Injected Instructions"
+    category: supply_chain
+    description: >-
+      An AI agent installs a malicious software package (npm, PyPI, or similar)
+      because injected instructions told it to. The instruction can arrive
+      through tool output, a retrieved document, a chat message, or a poisoned
+      tool description, and the agent treats it as a legitimate setup step.
+      Because agents routinely install dependencies to complete tasks, this
+      turns a prompt-injection into arbitrary code execution on the agent's host
+      or build environment.
+    how_it_works: >-
+      The attacker first publishes a malicious package to a public registry or
+      compromises a legitimate one, then plants an instruction to install it
+      somewhere the agent will read: a web page the agent browses, a document
+      it summarizes, a tool description, or a chat transcript. When the agent
+      follows the instruction it runs the package manager with install hooks
+      enabled, and the package's setup scripts execute attacker code at install
+      time. Variants: (1) direct install command embedded in retrieved content
+      ("run pip install <malicious-pkg> to continue"); (2) poisoned MCP tool
+      description that steers the agent toward a trojanized helper package;
+      (3) malicious setup instructions in a README or tutorial the agent was
+      asked to follow; (4) dependency added to a generated requirements file
+      that the agent then installs without review.
+    variants:
+      - "Install command embedded in browsed web content or documents"
+      - "Poisoned tool description steering the agent to a trojanized package"
+      - "Malicious setup steps in README/tutorial the agent follows"
+      - "Trojanized dependency injected into agent-generated lockfiles"
+    indicators:
+      - "Package-manager invocation (pip/npm install) whose package name first appeared in untrusted tool output or retrieved web content rather than in user instructions"
+      - "Newly installed packages with very recent publish dates, zero or near-zero download history, or no link to a reputable repository"
+      - "Install-time network connections to unknown hosts during or immediately after the package install step"
+      - "Tool-call trace shows an install command issued within a few turns of the agent reading external content containing that exact package name"
+    detection:
+      rule: detect_injection_driven_install
+      patterns:
+        - "(?i)(pip|pip3|npm|yarn|pnpm)\\s+(install|i|add)\\s+[^\\s]*"
+        - "(?i)(curl|wget)\\s+[^\\s]*\\.(sh|py|js)\\s*\\|\\s*(bash|sh|python)"
+        - "package name from tool output installed without user approval"
+    severity: critical
+    mitigations:
+      - "Require explicit human approval before any package installation, and present the package name, registry, publisher, and install-hook presence on the approval card"
+      - "Maintain an allowlist of vetted packages/registries for agent environments; block installs of packages published within a short recency window or with anomalous metadata"
+      - "Run installs in an isolated sandbox with no credentials and no network egress except to the registry, and scan installed packages for install hooks and obfuscated payloads before use"
+      - "Log the provenance of every install command (which input introduced the package name) so injection-driven installs are attributable in the audit trail"
+    examples:
+      - summary: "In September 2025 researchers identified postmark-mcp v1.0.16, a near-exact replica of a legitimate MCP email server on npm with one added line that silently blind-copied every outbound email to an attacker address. It was downloaded 1,643 times before removal, showing how a trojanized package slides into agent toolchains through the normal install path."
+        reference: "https://threatprotect.qualys.com/2025/09/30/malicious-mcp-server-on-npm-postmark-mcp-exploited-in-attack/"
+      - summary: "Invariant Labs' April 2025 tool-poisoning disclosure demonstrated an agent redirected by hidden instructions in a tool description to exfiltrate data through a legitimate messaging tool, establishing the injection-to-action pattern that also drives malicious installs."
+        reference: "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+    references:
+      - "https://threatprotect.qualys.com/2025/09/30/malicious-mcp-server-on-npm-postmark-mcp-exploited-in-attack/"
+      - "https://www.paubox.com/blog/malicious-mcp-server-found-in-fake-postmark-mcp-package"
+      - "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+
+  - id: AEG-T074
+    name: "Typosquatted MCP Servers and Agent Skills"
+    category: supply_chain
+    description: >-
+      Attackers publish lookalike MCP servers, agent skills, or plugin packages
+      whose names differ by a typo, a missing scope, or a swapped word from a
+      popular legitimate one. Developers and agents mistype or misselect the
+      name and install the malicious twin, which then runs with the broad
+      permissions agents grant to tools. The payload is usually credential
+      theft, data exfiltration, or a staged downloader.
+    how_it_works: >-
+      The attacker surveys popular MCP servers and agent skills, then registers
+      near-identical names on npm, PyPI, or skill registries. The malicious
+      twin copies the legitimate package's code and behavior so it passes
+      casual inspection, adding a small backdoor such as an extra exfiltration
+      recipient or a credential harvester. Discovery happens when a human
+      mistypes a name, when an agent resolves an ambiguous tool reference to
+      the wrong package, or when a search result surfaces the twin first.
+      Variants: (1) character-swap typosquats of popular servers; (2) missing
+      or altered scope prefixes (unscoped twin of a scoped package);
+      (3) cross-ecosystem squats that reuse a familiar name from another
+      registry; (4) malicious forks that keep the real name but ship from an
+      unofficial publisher account.
+    variants:
+      - "Character-swap or omission typosquats of popular MCP servers"
+      - "Unscoped twins of scoped packages and vice versa"
+      - "Cross-ecosystem name reuse to fool multi-language developers and agents"
+      - "Malicious forks published under lookalike publisher identities"
+    indicators:
+      - "Installed MCP server or skill whose package name has low edit distance to a well-known package but a different publisher or repository URL"
+      - "Package metadata anomalies: recent first publish, no changelog, repository link pointing to an unrelated or empty repo"
+      - "A skill/server that behaves identically to the legitimate one but makes unexpected outbound network calls or reads credential stores"
+      - "Agent tool-call logs showing resolution of an ambiguous server name to an unvetted registry entry"
+    detection:
+      rule: detect_typosquat_server
+      patterns:
+        - "(?i)edit.?distance\\s*(<=?|:)\\s*[12]\\s+from\\s+known.?good"
+        - "(?i)(publisher|author|maintainer)\\s+mismatch\\s+vs\\s+allowlist"
+        - "new MCP server package with <30 days age and >0 network egress"
+    severity: high
+    mitigations:
+      - "Pin MCP servers and skills to exact package names, versions, and publisher identities in an allowlist; resolve tool references only against the allowlist"
+      - "Require cryptographic provenance (signed packages, verified publisher) before an agent may load a new server or skill"
+      - "Diff newly installed servers against the known-good upstream before first use, and alert on any added network calls or credential access"
+      - "Monitor registries for typosquats of the servers your agents depend on and preemptively block the lookalike names"
+    examples:
+      - summary: "Socket's threat research documented typosquatted npm packages (e.g. lookalikes of ethers.js, nodemon, react-router-dom) whose postinstall scripts spawned hidden terminals, ran multi-layer obfuscated loaders, and deployed a PyInstaller infostealer targeting system keyrings, browsers, SSH keys, and API tokens."
+        reference: "https://www.bleepingcomputer.com/news/security/malicious-npm-packages-fetch-infostealer-for-windows-linux-macos/"
+      - summary: "Datadog's GuardDog flagged the MUT-8694 campaign spreading infostealers through typosquatted packages on both npm and PyPI, including a PyPI package that downloaded and executed an external Windows binary at install time."
+        reference: "https://securitylabs.datadoghq.com/articles/mut-8964-an-npm-and-pypi-malicious-campaign-targeting-windows-users/"
+    references:
+      - "https://www.bleepingcomputer.com/news/security/malicious-npm-packages-fetch-infostealer-for-windows-linux-macos/"
+      - "https://securitylabs.datadoghq.com/articles/mut-8964-an-npm-and-pypi-malicious-campaign-targeting-windows-users/"
+      - "https://www.paubox.com/blog/malicious-mcp-server-found-in-fake-postmark-mcp-package"
+
+  - id: AEG-T075
+    name: "Compromised Agent Plugins and Extensions"
+    category: supply_chain
+    description: >-
+      A legitimate agent plugin, IDE extension, or MCP server the agent relies
+      on is compromised at its source: the maintainer's account is hijacked, a
+      malicious update is pushed, or the build pipeline is subverted. Because
+      agents and developers auto-update these components, the backdoor reaches
+      the whole install base silently and inherits the plugin's permissions,
+      which in agent environments are often broad.
+    how_it_works: >-
+      The attacker gains publish rights through credential theft, token leaks,
+      or CI compromise, then ships a trojanized update that preserves the
+      plugin's normal behavior while adding malicious logic such as
+      exfiltrating data handled by the tool, harvesting credentials from the
+      environment, or downloading a second stage. Users and agents accept the
+      update because it is signed by the trusted publisher and versioned
+      normally. Variants: (1) maintainer account takeover followed by a
+      malicious release; (2) leaked publish tokens used to push an update
+      without the maintainer's knowledge; (3) build-pipeline injection that
+      alters the published artifact after code review; (4) malicious fork
+      promoted as the "maintained" successor of an abandoned plugin.
+    variants:
+      - "Maintainer account takeover with trojanized release"
+      - "Leaked publish tokens used to push silent malicious updates"
+      - "Build-pipeline injection altering artifacts post-review"
+      - "Malicious fork promoted as the maintained successor"
+    indicators:
+      - "A trusted plugin update that adds new network endpoints, new permission requests, or new credential-store access compared with the previous version"
+      - "Version published outside the maintainer's normal release cadence, or from an unfamiliar CI runner or IP range"
+      - "Plugin suddenly reading files, environment variables, or secrets unrelated to its stated function"
+      - "Anomaly in the plugin's code signature, publisher identity, or repository commit history coinciding with the new release"
+    detection:
+      rule: detect_plugin_update_anomaly
+      patterns:
+        - "(?i)(new|added)\\s+(network|egress|socket|fetch)\\s+calls?\\s+in\\s+update"
+        - "(?i)publish(er)?\\s+(token|identity|fingerprint)\\s+changed"
+        - "(?i)permission\\s+(request|scope)\\s+expanded\\s+vs\\s+prior\\s+version"
+    severity: critical
+    mitigations:
+      - "Pin plugin versions and require human review of the diff before any update is rolled to agent environments"
+      - "Enforce least privilege on every plugin: scope file, network, and credential access to the minimum the plugin's function requires, enforced outside the model"
+      - "Verify publisher identity and artifact signatures on every update, and alert when the signing identity or build provenance changes"
+      - "Monitor plugin behavior at runtime for new egress or secret access, and quarantine plugins that deviate from their established baseline"
+    examples:
+      - summary: "The September 2025 postmark-mcp incident was a trojanized MCP server update path: a near-exact replica of a legitimate email MCP server added one line blind-copying all outbound mail to an attacker address, reaching hundreds of developer workflows before removal."
+        reference: "https://aviatrix.ai/threat-research-center/malicious-mcp-server-npm-2025-supply-chain-email-theft/"
+      - summary: "In early 2024 researchers found 19 malicious VS Code extensions on the official Marketplace, distributed since February with RATs hidden in disguised PNG files, showing how compromised or malicious editor plugins reach developers through trusted update channels."
+        reference: "https://aviatrix.ai/threat-research-center/vscode-marketplace-2024-supply-chain-malicious-extensions/"
+    references:
+      - "https://aviatrix.ai/threat-research-center/malicious-mcp-server-npm-2025-supply-chain-email-theft/"
+      - "https://aviatrix.ai/threat-research-center/vscode-marketplace-2024-supply-chain-malicious-extensions/"
+      - "https://threatprotect.qualys.com/2025/09/30/malicious-mcp-server-on-npm-postmark-mcp-exploited-in-attack/"
+
+  - id: AEG-T076
+    name: "Dependency Confusion"
+    category: supply_chain
+    description: >-
+      An attacker publishes a package to a public registry using the exact name
+      of a private, internal dependency, usually with a higher version number.
+      When the victim's package manager resolves dependencies across both the
+      private and public registries, it picks the attacker's public copy, and
+      the attacker's code executes in the victim's build or agent environment.
+      No credential theft or registry breach is needed, only knowledge of the
+      internal package name.
+    how_it_works: >-
+      Internal package names leak through public code, error messages, job
+      listings, or documentation. The attacker registers those names on the
+      public registry and publishes a high-versioned package containing a
+      payload, often in an install hook so it runs automatically. Build systems
+      and agents that consult the public index alongside the private one
+      install the attacker's version because resolvers prefer the higher
+      version regardless of source. Variants: (1) classic public-registry
+      squat of a private name with inflated version; (2) exploiting
+      --extra-index-url / multi-feed configurations where public feeds are
+      consulted first; (3) namespace confusion in unscoped registries;
+      (4) targeting AI agent dependency installers that add public feeds by
+      default.
+    variants:
+      - "Public-registry squat of a private package name with inflated version"
+      - "Multi-feed resolver misconfiguration (public feed consulted first)"
+      - "Unscoped namespace collisions across registries"
+      - "Agent environments with default public feeds alongside private ones"
+    indicators:
+      - "A private dependency suddenly resolving to a public-registry version with an unexpectedly high version number"
+      - "Package lockfiles or install logs showing a known-internal name fetched from the public index URL instead of the private feed"
+      - "Newly registered public packages whose names exactly match internal package names"
+      - "Install-hook execution (setup.py, preinstall scripts) from a package that should be an internal-only artifact"
+    detection:
+      rule: detect_dependency_confusion
+      patterns:
+        - "(?i)internal\\s+package\\s+name\\s+resolved\\s+from\\s+public\\s+(registry|index)"
+        - "(?i)version\\s+spike[^\\n]*internal\\s+dependency"
+        - "registry URL mismatch: expected private feed, observed pypi.org|npmjs.org"
+    severity: critical
+    mitigations:
+      - "Reserve/squat all internal package names on public registries (or use scoped namespaces) so attackers cannot register them"
+      - "Configure resolvers to consult only the private feed for internal names: explicit per-package registry routing, never --extra-index-url style fallback"
+      - "Pin versions with lockfiles and verify the resolved registry URL for every dependency in CI before install"
+      - "Alert on any install where a private-named package resolves from a public index, and fail the build closed"
+    examples:
+      - summary: "In December 2022 the PyTorch nightly chain was hit: an attacker uploaded a malicious torchtriton package to PyPI with the same name as PyTorch's private index dependency, and pip's public-index precedence caused nightly users to install it. The payload exfiltrated system data via encrypted DNS queries."
+        reference: "https://pytorch.org/blog/compromised-nightly-dependency/"
+      - summary: "Security researcher Alex Birsan demonstrated dependency confusion in February 2021 by publishing benign proof-of-concept packages under internal names used by Apple, Microsoft, PayPal and 30+ others, reaching their internal build systems and earning over $130,000 in bounties."
+        reference: "https://www.techtarget.com/cybersecurity/news/252496189/Researcher-used-open-source-supply-chain-to-breach-tech-giants"
+    references:
+      - "https://pytorch.org/blog/compromised-nightly-dependency/"
+      - "https://www.techtarget.com/cybersecurity/news/252496189/Researcher-used-open-source-supply-chain-to-breach-tech-giants"
+      - "https://appleinsider.com/articles/21/02/10/researcher-breaches-apple-microsoft-and-others-with-installer-attack"
+
+  - id: AEG-T077
+    name: "Compromised Build Tooling"
+    category: supply_chain
+    description: >-
+      Attackers subvert the build or release pipeline itself so that the
+      published artifact differs from the reviewed source. The compromise can
+      hide in build scripts, test fixtures, CI workflows, or release
+      automation, which means code review of the repository finds nothing and
+      every downstream consumer, including agents that install the artifact,
+      receives the backdoor.
+    how_it_works: >-
+      The attacker gains influence over the build path: a long-game maintainer
+      persona, a CI workflow injection, or stolen release credentials. Malicious
+      logic is then introduced during the build, for example hidden in files
+      that look like test fixtures and are only unpacked by the release
+      tarball's build script, or injected by a compromised CI job after the
+      code-review step. The published package is signed and versioned normally,
+      so consumers cannot distinguish it from a clean release. Variants:
+      (1) malicious code smuggled through build scripts or test fixtures that
+      are absent from the visible source tree; (2) CI workflow injection via
+      crafted pull requests or branch names; (3) release-credential theft used
+      to publish tampered artifacts; (4) compromised compiler or build
+      plugins.
+    variants:
+      - "Malicious logic hidden in build scripts or binary test fixtures"
+      - "CI workflow injection via crafted PRs or branch names"
+      - "Stolen release credentials publishing tampered artifacts"
+      - "Compromised compiler, bundler, or build plugins"
+    indicators:
+      - "Published artifact hash differs from a reproducible build of the tagged source"
+      - "Release tarball contains files (fixtures, binaries, scripts) absent from the version-controlled source tree"
+      - "CI workflow runs triggered by unusual PRs, odd branch names, or unexpected workflow_dispatch events near release time"
+      - "Release published from an unfamiliar runner, account, or signing identity"
+    detection:
+      rule: detect_build_artifact_divergence
+      patterns:
+        - "(?i)artifact\\s+hash\\s+mismatch\\s+vs\\s+reproducible\\s+build"
+        - "(?i)tarball\\s+contains\\s+files?\\s+absent\\s+from\\s+(git|source)\\s+tree"
+        - "(?i)suspicious\\s+(workflow|action)\\s+(run|trigger).*(pull_request|branch)"
+    severity: critical
+    mitigations:
+      - "Require reproducible builds and verify published artifact hashes against independent rebuilds before adoption"
+      - "Harden CI: pin actions to SHAs, sanitize all PR-controlled inputs (branch names, titles) before interpolation into workflows, and require review for workflow changes"
+      - "Separate build, sign, and publish duties; use short-lived OIDC-based publishing (trusted publishers) instead of long-lived API tokens"
+      - "Monitor release provenance (SLSA-style attestations) and alert when the builder identity or build inputs change"
+    examples:
+      - summary: "The XZ Utils backdoor (CVE-2024-3094) was planted over two years by a trusted maintainer persona; malicious code hid in binary test fixtures and was only injected by the release tarball's build script, yielding pre-auth remote code execution on systems where sshd linked the library. It was caught by a performance anomaly before reaching most stable distributions."
+        reference: "https://www.cisa.gov/news-events/alerts/2024/03/29/reported-supply-chain-compromise-affecting-xz-utils-data-compression-library-cve-2024-3094"
+      - summary: "In December 2024 the Ultralytics AI library shipped trojanized versions 8.3.41/8.3.42 after attackers exploited a known GitHub Actions script injection via crafted pull requests, inserting a cryptominer after code review so the PyPI artifact diverged from the reviewed source."
+        reference: "https://www.wiz.io/blog/ultralytics-ai-library-hacked-via-github-for-cryptomining"
+    references:
+      - "https://www.cisa.gov/news-events/alerts/2024/03/29/reported-supply-chain-compromise-affecting-xz-utils-data-compression-library-cve-2024-3094"
+      - "https://www.darkreading.com/vulnerabilities-threats/are-you-affected-by-the-backdoor-in-xz-utils/"
+      - "https://www.wiz.io/blog/ultralytics-ai-library-hacked-via-github-for-cryptomining"
+
+  - id: AEG-T078
+    name: "Poisoned Container Base Images"
+    category: supply_chain
+    description: >-
+      Malicious container images are published to public registries under
+      plausible names, sometimes typosquatting official images. When an agent
+      or developer pulls and runs one, usually as a task sandbox or build
+      environment, the image's entrypoint executes attacker code with the
+      container's privileges. Cryptominers are the common payload, but the
+      same vector delivers backdoors and credential harvesters.
+    how_it_works: >-
+      The attacker builds an image on top of a popular base, adds a malicious
+      entrypoint script or background process, and publishes it with a
+      trustworthy-sounding name or a subtle misspelling of an official image.
+      Victims pull it because it appears in search results or is referenced by
+      a tutorial or an agent's setup instructions. On container start the
+      entrypoint runs the payload, which typically mines cryptocurrency,
+      beacons to command infrastructure, and scans for further targets.
+      Variants: (1) typosquatted official images; (2) trojanized images
+      published under fake organization names; (3) compromised image layers
+      injected into otherwise legitimate community images; (4) images that
+      download the payload at first run to evade static registry scanning.
+    variants:
+      - "Typosquatted official images on public registries"
+      - "Trojanized images under fake organization namespaces"
+      - "Compromised layers inside community images"
+      - "First-run downloaders that evade static image scanning"
+    indicators:
+      - "Container entrypoint or CMD differs from the official image's documented entrypoint"
+      - "Unexpected sustained CPU usage or outbound connections to mining pools from a freshly pulled image"
+      - "Image pulled from an unverified publisher namespace despite an official image existing"
+      - "Image layers containing scripts that download and execute remote payloads on first run"
+    detection:
+      rule: detect_poisoned_image
+      patterns:
+        - "(?i)entrypoint\\s+mismatch\\s+vs\\s+official\\s+image"
+        - "(?i)(xmrig|minerd|stratum\\+tcp)\\s+in\\s+container"
+        - "(?i)unverified\\s+publisher\\s+image\\s+pull"
+    severity: critical
+    mitigations:
+      - "Pull only from verified publishers and pin images by digest, never by mutable tags"
+      - "Scan images before first run, including entrypoint scripts and all layers, and re-scan on every pull"
+      - "Run agent sandboxes with CPU and network egress limits so a miner or beacon is throttled and immediately visible"
+      - "Require image signatures (cosign/Sigstore) and reject unsigned images in agent environments"
+    examples:
+      - summary: "Palo Alto's Unit 42 found the Docker Hub account 'azurenql' hosting six malicious images that had been pulled over two million times; each ran a Python entrypoint script mining Monero while evading network detection with Tor and ProxyChains, earning the operator hundreds of XMR."
+        reference: "https://www.cybersecurity-help.cz/blog/1349.html"
+    references:
+      - "https://www.cybersecurity-help.cz/blog/1349.html"
+      - "https://unit42.paloaltonetworks.com/graboid-first-ever-cryptojacking-worm-found-in-images-on-docker-hub/?pdf=print&lg=en&_wpnonce=7c5b7e4b95"
+
+  - id: AEG-T079
+    name: "Malicious Editor Extensions in Agent Environments"
+    category: supply_chain
+    description: >-
+      AI coding agents run inside editors like VS Code, Cursor, and their
+      forks, which load third-party extensions with broad host access.
+      Attackers publish malicious or trojanized extensions, often disguised as
+      harmless themes or productivity tools, that execute code on every editor
+      session. Because the agent's working directories hold source code,
+      credentials, and tokens, a malicious extension sitting beside the agent
+      is positioned for theft and persistence.
+    how_it_works: >-
+      The attacker publishes an extension to the VS Code Marketplace or Open
+      VSX with an appealing name and description. The extension declares an
+      activation event such as startup, then runs JavaScript that downloads
+      payloads, harvests files, or opens a backdoor. Themes are a favored
+      disguise because users assume they are inert, yet the extension host
+      gives them code execution. Variants: (1) trojanized themes or icon packs
+      with hidden loaders; (2) typosquatted copies of popular developer
+      extensions; (3) compromised legitimate extensions updated maliciously
+      after gaining users; (4) extensions abusing leaked marketplace publish
+      tokens to push updates to an existing install base.
+    variants:
+      - "Trojanized themes or icon packs shipping hidden loaders"
+      - "Typosquatted copies of popular developer extensions"
+      - "Legitimate extensions updated maliciously after gaining users"
+      - "Leaked marketplace tokens used to push updates to existing installs"
+    indicators:
+      - "An extension whose declared category (theme, icons, snippets) ships executable JavaScript unrelated to that function"
+      - "Extension spawning child processes, writing batch or shell scripts to temp directories, or making outbound network calls"
+      - "Heavy obfuscation in extension code, including zero-width Unicode encoding or embedded encrypted blobs"
+      - "Extension installed from Open VSX or sideloaded VSIX in an agent environment where the Marketplace copy was removed for malice"
+    detection:
+      rule: detect_malicious_editor_extension
+      patterns:
+        - "(?i)theme\\s+extension\\s+with\\s+(executable|activation)\\s+events"
+        - "(?i)(eval\\(|new\\s+Function|child_process|powershell\\.exe|cmd\\.exe)\\s+in\\s+extension"
+        - "(?i)zero.?width|\\u200b|\\u200c|\\u200d\\s+in\\s+extension\\s+source"
+    severity: high
+    mitigations:
+      - "Allowlist editor extensions in agent environments; block sideloaded VSIX files and unverified publishers"
+      - "Prefer the curated Marketplace over Open VSX mirrors for agent hosts, and remove extensions flagged by threat research promptly"
+      - "Run the agent's editor in a sandbox without access to host credential stores, and monitor extension processes for spawned children and egress"
+      - "Audit installed extensions for unnecessary executable code, especially themes and cosmetic packs"
+    examples:
+      - summary: "Socket's threat research uncovered the GlassWorm-linked cluster of VS Code themes that shipped executable JavaScript behind harmless color schemes: one ran a Windows downloader, another carried an AES-256-CBC loader executed via eval(), with zero-width Unicode obfuscation, across both the VS Code Marketplace and Open VSX."
+        reference: "https://socket.dev/blog/glassworm-vscode-themes"
+      - summary: "In early 2024 researchers found 19 malicious extensions on the VS Code Marketplace hiding remote-access trojans inside disguised PNG files, downloaded by thousands of developers before Microsoft removed them."
+        reference: "https://aviatrix.ai/threat-research-center/vscode-marketplace-2024-supply-chain-malicious-extensions/"
+    references:
+      - "https://socket.dev/blog/glassworm-vscode-themes"
+      - "https://aviatrix.ai/threat-research-center/vscode-marketplace-2024-supply-chain-malicious-extensions/"
+
+  - id: AEG-T080
+    name: "Poisoned Data Read by the Agent"
+    category: supply_chain
+    description: >-
+      The agent's inputs, documentation, datasets, web pages, and retrieved
+      files, are themselves a supply chain. Attackers poison data the agent is
+      likely to read: subtly altered images, documents with hidden
+      instructions, or datasets with corrupted labels. The poison can corrupt
+      model behavior, plant false facts the agent repeats, or carry injected
+      instructions that steer the agent's actions.
+    how_it_works: >-
+      Poison is crafted to be invisible to humans but effective on models:
+      pixel perturbations that change how a training or vision pipeline
+      interprets an image, hidden text in documents that only the agent's
+      parser sees, or mislabeled dataset entries. When the agent ingests the
+      data during retrieval or training, the corruption takes effect, either
+      degrading specific capabilities or embedding trigger behaviors.
+      Variants: (1) training-data poisoning that corrupts model concepts with
+      few samples; (2) hidden instructions in documents, PDFs, or web pages
+      the agent retrieves (indirect prompt injection via poisoned data);
+      (3) poisoned evaluation or reference datasets that skew agent decisions;
+      (4) watermarked or fingerprinted content planted to track where the
+      agent's outputs appear.
+    variants:
+      - "Training-data poisoning corrupting specific model concepts"
+      - "Hidden instructions in retrieved documents and web pages"
+      - "Poisoned reference or evaluation datasets skewing decisions"
+      - "Planted canary content used to track agent outputs"
+    indicators:
+      - "Retrieved documents containing text invisible to human readers (white-on-white, zero-width characters, metadata fields) that the agent nevertheless acts on"
+      - "Training or fine-tuning data with anomalous label distributions or statistically detectable perturbations on specific concepts"
+      - "Agent repeating false claims traceable to a single poisoned source document"
+      - "Image inputs with adversarial perturbations that change model outputs while looking identical to humans"
+    detection:
+      rule: detect_poisoned_agent_data
+      patterns:
+        - "(?i)(hidden|invisible)\\s+text\\s+in\\s+retrieved\\s+document"
+        - "(?i)label\\s+distribution\\s+anomaly\\s+in\\s+training\\s+data"
+        - "(?i)adversarial\\s+perturbation\\s+detected\\s+in\\s+image\\s+input"
+    severity: high
+    mitigations:
+      - "Treat retrieved content as untrusted data, never as instructions: enforce instruction hierarchy so document text cannot issue tool commands"
+      - "Validate training and reference datasets with provenance tracking, deduplication, and statistical anomaly screening before the agent uses them"
+      - "Render documents for human review (visible-text extraction) when the agent will act on their contents, exposing hidden text"
+      - "Deploy perturbation detectors for image inputs in vision pipelines and quarantine suspicious samples"
+    examples:
+      - summary: "University of Chicago researchers demonstrated Nightshade, a prompt-specific poisoning attack that corrupts text-to-image models with fewer than 100 subtly perturbed images per concept; the poison images look identical to humans but rewire the model's learned associations, published at IEEE Security & Privacy 2024."
+        reference: "https://arxiv.org/html/2310.13828v3/"
+    references:
+      - "https://arxiv.org/html/2310.13828v3/"
+      - "https://semiautonomous.systems/blog/what-is-data-poisoning/"
+
+  - id: AEG-T081
+    name: "Compromised Model Artifacts"
+    category: supply_chain
+    description: >-
+      Pre-trained models downloaded from hubs are executable-adjacent
+      artifacts: formats like pickle, PyTorch .pt/.bin, and Keras files can
+      run arbitrary code at load time. Attackers publish backdoored models
+      that look and benchmark like legitimate ones but execute a payload the
+      moment the agent or pipeline loads them, giving full control of the
+      machine doing inference or fine-tuning.
+    how_it_works: >-
+      Python's pickle deserialization executes attacker-controlled callables
+      during unpickling, and PyTorch's torch.load uses pickle by default, so a
+      crafted weight file runs code as a side effect of "loading the model".
+      Attackers upload such models to hubs with convincing cards, metrics, and
+      download counts. Scanners that inspect pickle opcodes can be evaded with
+      malformed streams that the scanner rejects but the loader still
+      executes. Variants: (1) pickle __reduce__ payloads in .pt/.bin/.pkl
+      files; (2) scanner-evasive malformed pickle streams; (3) backdoored
+      model weights with trigger phrases that alter behavior without code
+      execution; (4) typosquatted model repos or namespaces on hubs.
+    variants:
+      - "Pickle deserialization payloads in PyTorch and pickle weight files"
+      - "Malformed pickle streams that evade hub scanners but still execute"
+      - "Weight-level backdoors triggered by specific phrases"
+      - "Typosquatted model repositories on public hubs"
+    indicators:
+      - "Model files in pickle-based formats from unverified publishers, especially with no safetensors alternative offered"
+      - "Deserialization of weight files triggering process spawns, network connections, or file writes at load time"
+      - "Model repository with inflated download counts, recently created publisher account, or missing training provenance"
+      - "Pickle opcode scans flagging STACK_GLOBAL, REDUCE, or GLOBAL opcodes referencing os, subprocess, or socket modules"
+    detection:
+      rule: detect_malicious_model_artifact
+      patterns:
+        - "(?i)pickle\\s+opcodes?\\s+(REDUCE|STACK_GLOBAL|GLOBAL)\\s+.*(os|subprocess|socket|system)"
+        - "(?i)torch\\.load\\s+.*weights_only\\s*=\\s*False"
+        - "(?i)process\\s+spawn\\s+during\\s+model\\s+deserialization"
+    severity: critical
+    mitigations:
+      - "Load models with weights_only=True (or equivalent safe loaders) and prefer safetensors/ONNX formats that cannot execute code"
+      - "Scan every model artifact with a pickle scanner before loading, in an isolated sandbox with no network and no credentials"
+      - "Pin models by hash to publisher-signed commits, and verify publisher identity and training provenance before adoption"
+      - "Monitor model-loading processes for child process creation and network activity, and kill loads that deviate"
+    examples:
+      - summary: "JFrog's 2024 research found around 100 malicious ML models on Hugging Face whose pickle payloads opened reverse shells on the loading machine, in one case connecting back to an IP on Korea's research network, demonstrating silent full compromise via model download."
+        reference: "https://jfrog.com/blog/data-scientists-targeted-by-malicious-hugging-face-ml-models-with-silent-backdoor/"
+    references:
+      - "https://jfrog.com/blog/data-scientists-targeted-by-malicious-hugging-face-ml-models-with-silent-backdoor/"
+      - "https://thehackernews.com/2024/03/over-100-malicious-aiml-models-found-on.html?version=meter+at+null"
+
+  - id: AEG-T082
+    name: "Update-Channel Hijacking"
+    category: supply_chain
+    description: >-
+      Attackers compromise the channel through which software updates are
+      delivered: the vendor's update server, the download mirror, or the
+      signing keys. Victims then install malware believing it is a routine
+      trusted update, because it arrives from the legitimate server and often
+      carries a valid signature. For agents, this covers auto-updated tools,
+      MCP servers, and base images refreshed on schedule.
+    how_it_works: >-
+      The attacker breaches the vendor's distribution infrastructure or steals
+      code-signing certificates, then publishes trojanized binaries as
+      ordinary updates. Because the files come from official servers and pass
+      signature checks, endpoint defenses stay quiet. Some campaigns add
+      targeting logic so the second-stage payload only activates on selected
+      victims, keeping the mass-distributed first stage inconspicuous.
+      Variants: (1) update-server compromise serving trojanized binaries;
+      (2) stolen or misused code-signing certificates; (3) mirror or CDN
+      poisoning; (4) malicious auto-update manifests pointing clients at
+      attacker files.
+    variants:
+      - "Update-server compromise serving trojanized binaries"
+      - "Stolen code-signing certificates legitimizing malware"
+      - "Mirror or CDN poisoning of update payloads"
+      - "Malicious auto-update manifests redirecting clients"
+    indicators:
+      - "An update binary whose hash differs from the vendor's published checksum or transparency log entry"
+      - "Update traffic to unexpected hosts, or update manifests referencing unfamiliar download URLs"
+      - "A signed binary whose certificate, while valid, was issued outside the vendor's normal signing pipeline or timeframe"
+      - "Targeted second-stage downloads that activate only on specific hosts (e.g. MAC-address allowlists)"
+    detection:
+      rule: detect_update_channel_hijack
+      patterns:
+        - "(?i)update\\s+binary\\s+hash\\s+mismatch\\s+vs\\s+vendor\\s+manifest"
+        - "(?i)update\\s+download\\s+from\\s+unlisted\\s+host"
+        - "(?i)signing\\s+certificate\\s+anomaly\\s+on\\s+update\\s+binary"
+    severity: critical
+    mitigations:
+      - "Verify every update against vendor-published hashes and certificate transparency / binary transparency logs before installation"
+      - "Pin update endpoints and manifests; alert on any change of download host, signing certificate, or manifest content"
+      - "Stage updates in a canary environment and diff behavior (new egress, new processes) before fleet-wide rollout"
+      - "Require multi-party authorization for changes to update infrastructure and signing keys"
+    examples:
+      - summary: "Operation ShadowHammer (disclosed by Kaspersky, March 2019) hijacked the ASUS Live Update channel between June and November 2018, pushing backdoored utilities signed with legitimate ASUS certificates from official update servers to an estimated one million users, with second-stage payloads gated by hardcoded MAC addresses."
+        reference: "https://usa.kaspersky.com/about/press-releases/2019_operation-shadowhammer-new-supply-chain-attack"
+      - summary: "In 2017 attackers compromised CCleaner's distribution, shipping a backdoored v5.33 signed with a valid Symantec-issued certificate to about 2.27 million users over a month before Cisco Talos spotted it."
+        reference: "https://www.theregister.com/2017/10/06/ccleaner_megahack_timeline/"
+    references:
+      - "https://usa.kaspersky.com/about/press-releases/2019_operation-shadowhammer-new-supply-chain-attack"
+      - "https://www.bleepingcomputer.com/news/security/asus-live-update-infected-with-backdoor-in-supply-chain-attack/"
+      - "https://www.theregister.com/2017/10/06/ccleaner_megahack_timeline/"
+
+  - id: AEG-T083
+    name: "Malicious Git Submodules"
+    category: supply_chain
+    description: >-
+      Git submodules pin an external repository by URL and commit, and agents
+      that clone projects typically initialize submodules recursively without
+      inspecting them. Attackers exploit this by hijacking the referenced
+      repository (renamed accounts, expired domains, deleted repos reclaimed
+      under the old name) or by getting a malicious submodule committed into a
+      trusted project, so a routine clone pulls attacker-controlled code.
+    how_it_works: >-
+      A submodule entry in .gitmodules points at a URL the project owner does
+      not fully control. If the upstream owner renames their account, the old
+      namespace can be reclaimed by an attacker (repojacking), and every
+      project still pointing at the old URL now fetches the attacker's
+      content. Alternatively a contributor adds a submodule that looks
+      legitimate but points at a trojanized fork. Recursive clones and agent
+      setup scripts fetch and check out the pinned commit without verifying
+      the new owner's identity. Variants: (1) repojacked submodule URLs after
+      upstream renames; (2) malicious submodules added via compromised
+      contributor accounts; (3) submodule URLs pointing at expired domains
+      re-registered by attackers; (4) nested submodules hiding the malicious
+      reference several layers deep.
+    variants:
+      - "Repojacked submodule URLs after upstream account renames"
+      - "Malicious submodules committed via compromised contributors"
+      - "Expired-domain submodule URLs re-registered by attackers"
+      - "Nested submodules hiding malicious references layers deep"
+    indicators:
+      - ".gitmodules entries whose remote URL owner differs from the expected maintainer or shows a recent account rename"
+      - "Submodule remotes resolving to newly created accounts, expired-then-renewed domains, or repos with rewritten history"
+      - "Recursive clone fetching submodule commits not present in the previously known history of that repository"
+      - "Agent setup logs showing submodule initialization from URLs never seen in prior runs of the same project"
+    detection:
+      rule: detect_malicious_submodule
+      patterns:
+        - "(?i)\\.gitmodules.*url.*(owner|account)\\s+changed|renamed"
+        - "(?i)submodule\\s+remote\\s+points\\s+to\\s+(new|reclaimed)\\s+account"
+        - "(?i)recursive\\s+clone\\s+fetched\\s+unknown\\s+submodule\\s+commit"
+    severity: high
+    mitigations:
+      - "Pin submodules to commit hashes and verify the remote's owner identity against an allowlist before recursive initialization"
+      - "Audit .gitmodules on every dependency update; treat new or changed submodule URLs as security-sensitive changes requiring review"
+      - "Monitor upstream namespaces your submodules depend on for renames, deletions, or ownership changes, and re-pin immediately"
+      - "Clone without --recursive by default in agent environments; initialize each submodule explicitly after verification"
+    examples:
+      - summary: "Checkmarx's RepoJacking research showed how GitHub's namespace retirement could be bypassed so attackers reclaim a renamed user's old repository URL, exposing over 4,000 packages across Go, PHP, Swift, and GitHub Actions, the exact mechanism that turns a trusted submodule or dependency URL into an attacker-controlled one."
+        reference: "https://securityaffairs.com/150713/hacking/repojacking-attack-github-repositories.html"
+    references:
+      - "https://securityaffairs.com/150713/hacking/repojacking-attack-github-repositories.html"
+      - "https://www.cpomagazine.com/cyber-security/github-vulnerability-allows-hackers-to-hijack-thousands-of-popular-open-source-packages/"
+
+  - id: AEG-T084
+    name: "Package Install Hooks Executed by the Agent"
+    category: supply_chain
+    description: >-
+      Package managers run lifecycle scripts automatically at install time:
+      setup.py, preinstall/postinstall hooks, and build scripts. Any package
+      the agent installs, even a transitive dependency it never chose, gets
+      arbitrary code execution with the agent's privileges at the moment of
+      installation. Attackers rely on this: the malicious logic does not wait
+      for the package to be imported, it fires during install.
+    how_it_works: >-
+      The attacker places the payload in an install hook rather than in the
+      package's runtime code, so static review of the library's main modules
+      misses it. When pip, npm, or a similar manager installs the package, the
+      hook executes: downloading a second stage, harvesting environment
+      variables and credentials, or establishing persistence. Because agents
+      install dependencies autonomously to satisfy task requirements, the hook
+      fires with whatever secrets and network access the agent's environment
+      holds. Variants: (1) npm preinstall/postinstall scripts; (2) Python
+      setup.py or setup.cfg cmdclass overrides; (3) build.rs / build scripts
+      in compiled-language packages; (4) malicious hooks hidden in transitive
+      dependencies several layers deep.
+    variants:
+      - "npm preinstall and postinstall lifecycle scripts"
+      - "Python setup.py and custom install command classes"
+      - "Compiled-language build scripts executed at install"
+      - "Malicious hooks buried in transitive dependencies"
+    indicators:
+      - "Install-time process execution (curl, powershell, cmd, python) spawned by the package manager rather than by the agent's explicit commands"
+      - "Package metadata declaring install scripts in a package whose function should not need them"
+      - "Obfuscated or minified code concentrated in setup.py, preinstall.js, or build scripts instead of the main modules"
+      - "Environment variable or credential-store reads occurring during the install phase of a new package"
+    detection:
+      rule: detect_install_hook_execution
+      patterns:
+        - "(?i)(preinstall|postinstall|setup\\.py)\\s+.*(curl|wget|powershell|Invoke-WebRequest|os\\.system|subprocess)"
+        - "(?i)package\\s+manager\\s+spawned\\s+(network|shell)\\s+process\\s+during\\s+install"
+        - "(?i)install\\s+hook\\s+reads?\\s+(AWS_|GITHUB_|NPM_|\\.ssh|\\.aws)"
+    severity: critical
+    mitigations:
+      - "Install with hooks disabled by default (--ignore-scripts and equivalents); enable per-package only after review"
+      - "Run all agent package installs in an isolated, credential-free sandbox and promote only scanned artifacts into the working environment"
+      - "Block install-time network egress except to the package registry, and alert on any spawned subprocess during installation"
+      - "Audit transitive dependencies for lifecycle scripts, not just top-level packages, and fail closed on unexpected hooks"
+    examples:
+      - summary: "The October 2021 ua-parser-js hijack shipped malicious versions (0.7.29, 0.8.0, 1.0.0) whose preinstall scripts installed a Monero miner on Linux and a credential-stealing trojan on Windows within hours of the maintainer's npm account being taken over."
+        reference: "https://www.rapid7.com/blog/post/2021/10/25/npm-library-ua-parser-js-hijacked-what-you-need-to-know/"
+      - summary: "Socket's typosquatting research showed malicious npm packages using postinstall scripts that spawned hidden terminals, displayed fake CAPTCHAs to look legitimate, and deployed multi-layer-obfuscated infostealers."
+        reference: "https://www.bleepingcomputer.com/news/security/malicious-npm-packages-fetch-infostealer-for-windows-linux-macos/"
+    references:
+      - "https://www.rapid7.com/blog/post/2021/10/25/npm-library-ua-parser-js-hijacked-what-you-need-to-know/"
+      - "https://cloud.google.com/blog/topics/threat-intelligence/supply-chain-node-js/"
+      - "https://www.bleepingcomputer.com/news/security/malicious-npm-packages-fetch-infostealer-for-windows-linux-macos/"

@@ -1,0 +1,612 @@
+pack: evasion
+version: "1.0"
+techniques:
+  - id: AEG-T085
+    name: "Log Tampering"
+    category: evasion
+    description: >-
+      An attacker with a foothold, or a compromised agent acting on injected
+      instructions, modifies log entries to alter the recorded history: editing
+      timestamps, rewriting fields, or inserting benign-looking entries. The
+      goal is to make malicious actions appear legitimate or to implicate
+      something else, so investigators reconstruct the wrong story. Unlike
+      deletion, tampering preserves log volume and can pass naive
+      completeness checks.
+    how_it_works: >-
+      With write access to log files, databases, or SIEM ingestion pipelines,
+      the attacker edits entries in place: changing IP addresses, usernames,
+      or command lines to benign values, backdating malicious events into
+      noisy periods, or injecting fabricated entries that provide cover. In
+      agent environments the same applies to the agent's own action logs and
+      tool-call histories if they are stored where the agent can write.
+      Variants: (1) in-place editing of text log files; (2) database row
+      updates in centralized logging stores; (3) log-shipper or pipeline
+      manipulation that rewrites events in transit; (4) agent tool-call history
+      rewritten via file tools the agent legitimately holds.
+    variants:
+      - "In-place editing of text log files on the host"
+      - "Row updates in centralized logging databases"
+      - "Log-shipper or pipeline manipulation rewriting events in transit"
+      - "Agent tool-call history rewritten through the agent's own file tools"
+    indicators:
+      - "Log entries with inconsistent internal ordering, such as timestamps that do not match sequence numbers or ingestion order"
+      - "Gaps or duplications in normally monotonic log fields after a period of attacker activity"
+      - "Checksum or hash-chain verification failures on append-only log stores"
+      - "Tool-call history showing edits to log files shortly after sensitive operations in the same session"
+    detection:
+      rule: detect_log_tampering
+      patterns:
+        - "(?i)log\\s+(integrity|hash|checksum)\\s+(failure|mismatch)"
+        - "(?i)(timestamp|sequence)\\s+(anomaly|out\\s+of\\s+order)\\s+in\\s+logs"
+        - "(?i)(edit|write|modify)\\s+.*(\\.log|audit\\.json|trace\\.jsonl)"
+    severity: medium
+    mitigations:
+      - "Ship logs off-host in real time to append-only, tamper-evident storage (hash-chained or WORM) that the agent and workloads cannot modify"
+      - "Verify log integrity continuously with hash chains or signed batches, and alert on any verification failure"
+      - "Separate duties: the agent's file tools must never have write access to its own audit trail or the system log directories"
+      - "Correlate multiple independent log sources so a single tampered stream contradicts the others"
+    examples:
+      - summary: "MITRE's ATT&CK procedure examples for clearing Linux and Mac system logs document malware families such as Proton removing logs from /var/logs and /Library/logs, and Rocke clearing files within /var/log/, showing log manipulation as a standard intrusion step."
+        reference: "https://attack.mitre.org/versions/v7/techniques/T1070/002/"
+    references:
+      - "https://attack.mitre.org/versions/v7/techniques/T1070/002/"
+      - "https://community.sophos.com/intercept-x-endpoint/i/att-ck/t1070-001---indicator-removal-on-host-clear-windows-event-logs---removal-of-evtx-files"
+
+  - id: AEG-T086
+    name: "Trace and Audit-Log Deletion"
+    category: evasion
+    description: >-
+      The attacker deletes the records of their activity outright: clearing
+      event logs, removing command history, deleting the agent's trace files,
+      or wiping audit databases. Deletion is cruder than tampering but
+      effective when the defender has no independent copy, and the absence
+      itself is often the only remaining signal.
+    how_it_works: >-
+      Standard utilities do the work: event-log clearing commands, history
+      file truncation, recursive deletion of trace directories, or direct
+      removal of audit database tables. Attackers typically delete at the end
+      of an operation or incrementally as they go, and may delete the security
+      log specifically while leaving operational logs intact to look normal.
+      A compromised agent can do the same to its own JSONL traces if they live
+      in writable workspace paths. Variants: (1) clearing Windows Security or
+      System event logs; (2) truncating shell history and cloud shell logs;
+      (3) deleting the agent's session trace files; (4) dropping or truncating
+      audit tables in logging databases.
+    variants:
+      - "Clearing Windows Security or System event logs"
+      - "Truncating shell and command history files"
+      - "Deleting agent session trace and tool-call history files"
+      - "Dropping or truncating audit tables in logging databases"
+    indicators:
+      - "Event ID 1102 (audit log cleared) or 104 (log file cleared) appearing outside maintenance windows"
+      - "Abrupt truncation of the agent's trace file mid-session, or a session with tool calls but no corresponding trace records"
+      - "Mass deletion of files under log directories (rm -rf /var/log/*, del of .evtx files) by a non-admin process or the agent itself"
+      - "History files (bash_history, PowerShell history) that are empty or missing on hosts with recent interactive activity"
+    detection:
+      rule: detect_audit_log_deletion
+      patterns:
+        - "(?i)event\\s*id\\s*(=|:)\\s*(1102|104)"
+        - "(?i)(wevtutil|auditpol).*(cl|clear-log)"
+        - "(?i)(rm\\s+-rf|del\\s+/f)\\s+.*(\\/var\\/log|winevt|\\.evtx|trace\\.jsonl)"
+        - '(?i)(deleted|cleared|wiped|removed).{0,40}(audit[\s-]*logs?|shell history|command history)'
+        - '(?i)clear.{0,20}history'
+    severity: medium
+    mitigations:
+      - "Forward all audit events to an off-host collector before local retention, so local deletion cannot destroy the record"
+      - "Alert immediately on log-clear events (EID 1102/104) and on unexpected shrinkage or disappearance of trace files"
+      - "Make the agent's trace sink append-only from the agent's perspective: the agent writes through a service it cannot delete from"
+      - "Back up audit databases with point-in-time recovery so dropped tables can be restored and investigated"
+    examples:
+      - summary: "The leaked Conti ransomware playbooks documented the gang's standard intrusion tradecraft including tooling to operate inside victim networks; defenders widely detect the affiliated log-clearing and defense-evasion steps (wevtutil log clears, event-log wiping) as core ransomware behavior."
+        reference: "https://www.bleepingcomputer.com/news/security/angry-conti-ransomware-affiliate-leaks-gangs-attack-playbook"
+    references:
+      - "https://attack.mitre.org/techniques/T1070/004/"
+      - "https://community.sophos.com/intercept-x-endpoint/i/att-ck/t1070-001---indicator-removal-on-host-clear-windows-event-logs---removal-of-evtx-files"
+      - "https://www.bleepingcomputer.com/news/security/angry-conti-ransomware-affiliate-leaks-gangs-attack-playbook"
+
+  - id: AEG-T087
+    name: "Living off Allowed Tools"
+    category: evasion
+    description: >-
+      Instead of introducing malware, the attacker (or a hijacked agent) uses
+      only the tools already available and permitted: the agent's own file,
+      shell, browser, and messaging tools, or standard system utilities. Every
+      individual action looks benign and policy-compliant, while the sequence
+      achieves a malicious objective such as exfiltration or persistence. This
+      defeats detectors that look for known-bad binaries or signatures.
+    how_it_works: >-
+      The attacker maps the allowed toolset and composes a malicious workflow
+      from legitimate calls: read a sensitive file with the file tool, then
+      send it with the messaging or email tool, then delete the trace with the
+      shell tool. Because each call is authorized and the tools are trusted,
+      allowlist-based controls see nothing wrong. The maliciousness exists
+      only in the composition and the data flow between calls. Variants:
+      (1) data staging through legitimate file and archive tools; (2)
+      exfiltration through sanctioned messaging, email, or webhook tools;
+      (3) persistence via legitimate schedulers and startup mechanisms;
+      (4) reconnaissance via built-in directory, process, and network listing
+      tools.
+    variants:
+      - "Staging data with legitimate file and archive tools"
+      - "Exfiltration through sanctioned messaging or email tools"
+      - "Persistence via legitimate schedulers and startup entries"
+      - "Reconnaissance with built-in listing and query tools"
+    indicators:
+      - "A sequence of individually benign tool calls whose data flow connects a sensitive source (credential store, private repo) to an external destination"
+      - "Use of messaging, email, or file-transfer tools with recipients or destinations never seen in the agent's normal baseline"
+      - "Archive or encoding tools applied to sensitive directories shortly before an outbound transfer"
+      - "Tool-call chains that mirror known malicious compositions (collect, compress, exfiltrate, clean) using only allowed tools"
+    detection:
+      rule: detect_living_off_allowed_tools
+      patterns:
+        - "(?i)sensitive\\s+source\\s+->\\s+(archive|encode)\\s+->\\s+external\\s+destination"
+        - "(?i)first\\s+seen\\s+recipient.*(messaging|email|webhook)\\s+tool"
+        - "(?i)tool\\s+chain\\s+matches\\s+malicious\\s+composition\\s+template"
+    severity: high
+    mitigations:
+      - "Enforce data-flow policies, not just per-call allowlists: flag any path from sensitive sources to external destinations regardless of which tools carry it"
+      - "Baseline each agent's normal tool-use graph and alert on novel compositions, new recipients, and new destination domains"
+      - "Apply egress controls and human approval to external sends even when the sending tool is fully authorized"
+      - "Log full tool-call chains with arguments so compositions can be reconstructed and reviewed"
+    examples:
+      - summary: "The September 2025 postmark-mcp incident showed living-off-allowed-tools in its purest form: the trojanized MCP email server did its legitimate job perfectly, with one added line blind-copying every message to an attacker address. The tool worked; that was the cover."
+        reference: "https://threatprotect.qualys.com/2025/09/30/malicious-mcp-server-on-npm-postmark-mcp-exploited-in-attack/"
+      - summary: "The MCPTox benchmark (45 live MCP servers, 353 real tools, 1312 attack cases) found agents broadly vulnerable to tool poisoning, with the most capable models most susceptible, because the attacks use legitimate tools for unauthorized operations that existing safety alignment does not refuse."
+        reference: "https://arxiv.org/abs/2508.14925v1"
+    references:
+      - "https://arxiv.org/abs/2508.14925v1"
+      - "https://labs.cloudsecurityalliance.org/research/csa-research-note-mcp-tool-poisoning-ai-agent-exfiltration-2/"
+      - "https://threatprotect.qualys.com/2025/09/30/malicious-mcp-server-on-npm-postmark-mcp-exploited-in-attack/"
+
+  - id: AEG-T088
+    name: "Slow-Drip Exfiltration Under Rate Limits"
+    category: evasion
+    description: >-
+      The attacker exfiltrates data in small, paced chunks that stay beneath
+      volume-based alerts and rate limits. By spreading the transfer over hours
+      or days and keeping each batch unremarkable, a large theft looks like
+      ordinary background traffic. This is the exfiltration counterpart to
+      low-and-slow reconnaissance.
+    how_it_works: >-
+      After staging data, the attacker chunks it into fixed small sizes or
+      throttles throughput below the defender's alerting thresholds, often
+      scheduling transfers during busy hours to blend in. Standard encrypted
+      web protocols carry the chunks so each connection looks like normal
+      browsing or API use. Some operations additionally rotate protocols or
+      destinations per chunk. Variants: (1) fixed-size chunking below alert
+      thresholds; (2) time-throttled transfers paced over days; (3) blending
+      into peak-hour traffic; (4) multi-protocol rotation across chunks.
+    variants:
+      - "Fixed-size chunking below volume alert thresholds"
+      - "Time-throttled transfers paced over days or weeks"
+      - "Scheduling exfiltration inside peak-hour traffic"
+      - "Rotating protocols or destinations per chunk"
+    indicators:
+      - "Long-lived, low-bandwidth outbound sessions to a single external host that persist for days with steady small transfers"
+      - "Repeated similar-sized outbound transfers just under a known alerting threshold"
+      - "Off-hours or precisely scheduled transfer patterns inconsistent with the user's or agent's normal activity"
+      - "Cumulative egress to a new destination that is large in aggregate but unremarkable in any single hour"
+    detection:
+      rule: detect_slow_drip_exfiltration
+      patterns:
+        - "(?i)cumulative\\s+egress\\s+to\\s+new\\s+destination\\s+>\\s+[0-9]+\\s*MB\\s+over\\s+[0-9]+\\s*days"
+        - "(?i)repeated\\s+similar\\s+sized\\s+transfers\\s+below\\s+threshold"
+        - "(?i)long\\s+lived\\s+low\\s+bandwidth\\s+session\\s+to\\s+external\\s+host"
+    severity: high
+    mitigations:
+      - "Alert on cumulative egress per destination over rolling multi-day windows, not just per-hour or per-connection volumes"
+      - "Baseline normal egress per host, agent, and destination, and flag sustained deviations even when each transfer is small"
+      - "Require approval for new external destinations receiving more than a trivial cumulative volume"
+      - "Inspect long-lived low-bandwidth sessions with protocol analysis rather than dismissing them as idle"
+    examples:
+      - summary: "In the 2017 Equifax breach, attackers ran roughly 9,000 queries across dozens of databases and removed the data in small increments over about 76 days using standard encrypted web protocols, disguising the theft as normal network traffic until a certificate renewal restored inspection."
+        reference: "https://www.security.org/identity-theft/breach/equifax/"
+      - summary: "MITRE's exfiltration techniques document adversaries exfiltrating in fixed-size chunks or below packet-size thresholds specifically to avoid triggering network data-transfer threshold alerts."
+        reference: "https://attack.mitre.org/versions/v3/techniques/T1048/"
+    references:
+      - "https://www.security.org/identity-theft/breach/equifax/"
+      - "https://www.secureworld.io/industry-news/equifax-breach-report"
+      - "https://attack.mitre.org/versions/v3/techniques/T1048/"
+
+  - id: AEG-T089
+    name: "Timestamp Manipulation"
+    category: evasion
+    description: >-
+      The attacker alters file timestamps (timestomping) or log timestamps so
+      malicious files blend in with legitimate ones and the true sequence of
+      events is obscured. A backdoor stamped with the same times as system
+      files survives cursory timeline review, and reordered timestamps break
+      forensic reconstruction of the intrusion.
+    how_it_works: >-
+      Using standard file utilities or API calls, the attacker sets a dropped
+      file's modification, access, and creation times to match surrounding
+      legitimate files or to predate the intrusion. Log timestamps can be
+      similarly rewritten where the attacker has write access. The technique
+      is almost always paired with other anti-forensics, since timestamps
+      alone rarely stop an investigation but make every other step harder to
+      sequence. Variants: (1) cloning timestamps from legitimate system files;
+      (2) backdating files to before the intrusion window; (3) forward-dating
+      to confuse retention and rotation logic; (4) timestamp manipulation of
+      agent artifacts and trace files.
+    variants:
+      - "Cloning timestamps from legitimate system files"
+      - "Backdating malicious files to before the intrusion window"
+      - "Forward-dating to confuse retention and rotation logic"
+      - "Timestamp manipulation of agent artifacts and traces"
+    indicators:
+      - "Files whose timestamps are identical to system files down to the second but whose content hashes are unknown"
+      - "Executable files with creation times older than the operating system install date"
+      - "Timeline anomalies where file timestamps contradict filesystem journal or log evidence of when the file actually appeared"
+      - "Bulk timestamp changes across many files in a short window outside of updates or backups"
+    detection:
+      rule: detect_timestomping
+      patterns:
+        - "(?i)(creation|modified)\\s+time\\s+older\\s+than\\s+os\\s+install"
+        - "(?i)timestamp\\s+identical\\s+to\\s+system\\s+file.*unknown\\s+hash"
+        - "(?i)bulk\\s+(mtime|ctime)\\s+changes?\\s+outside\\s+maintenance"
+    severity: medium
+    mitigations:
+      - "Correlate file timestamps with filesystem journals, $MFT/USN records, and independent logs rather than trusting timestamps alone"
+      - "Alert on timestamp modifications of executables and on creation times that predate the OS install"
+      - "Monitor for utilities and API calls commonly used to alter timestamps when invoked outside administrative tooling"
+      - "Preserve original forensic images so manipulated timestamps can be compared against ground truth"
+    examples:
+      - summary: "MITRE ATT&CK documents timestomping (T1070.006) as a standard indicator-removal sub-technique used across intrusions to make malware blend with legitimate files and to break forensic timelines; it is listed alongside file deletion and log clearing in the indicator-removal family."
+        reference: "https://attack.mitre.org/techniques/T1070/009/"
+    references:
+      - "https://attack.mitre.org/techniques/T1070/009/"
+      - "https://attack.mitre.org/techniques/T1070/004/"
+
+  - id: AEG-T090
+    name: "Output Truncation to Hide Malicious Actions"
+    category: evasion
+    description: >-
+      The attacker, or a compromised agent, truncates, summarizes, or
+      selectively omits parts of tool output and action logs so that malicious
+      steps never appear in what the human reviewer or downstream monitor
+      sees. Because reviewers typically read summaries rather than raw
+      traces, the hidden actions proceed unnoticed. This is particularly
+      effective against approval workflows that display abbreviated
+      confirmations.
+    how_it_works: >-
+      The agent is instructed (via injection) or configured to present
+      condensed views: showing only the last N lines of output, summarizing
+      multi-step operations while dropping the sensitive steps, or rendering
+      confirmation dialogs that obscure critical fields such as recipients,
+      destinations, or full command arguments. The raw trace may still exist,
+      but every human and automated check that consumes the truncated view
+      misses the malicious action. Variants: (1) truncated command output
+      hiding exfiltration commands; (2) summarized action reports omitting
+      sensitive steps; (3) confirmation dialogs that hide recipient or
+      destination fields; (4) paginated logs where malicious entries sit
+      beyond the displayed page.
+    variants:
+      - "Truncated command output hiding malicious commands"
+      - "Summarized action reports omitting sensitive steps"
+      - "Confirmation dialogs obscuring recipient or destination fields"
+      - "Malicious entries pushed beyond displayed log pages"
+    indicators:
+      - "Approval confirmations that omit material fields (full recipient, destination URL, complete arguments) present in the raw trace"
+      - "Summaries whose step count or content diverges from the underlying tool-call sequence"
+      - "Tool outputs consistently truncated at suspicious boundaries, cutting off before sensitive operations"
+      - "Human approvals granted on abbreviated views for actions that the raw trace shows were broader"
+    detection:
+      rule: detect_output_truncation
+      patterns:
+        - "(?i)confirmation\\s+omits\\s+(recipient|destination|argument)"
+        - "(?i)summary\\s+step\\s+count\\s+mismatch\\s+vs\\s+raw\\s+trace"
+        - "(?i)output\\s+truncated\\s+before\\s+sensitive\\s+operation"
+    severity: medium
+    mitigations:
+      - "Render approval cards from the raw trace, always showing full recipients, destinations, and arguments; never approve from agent-written summaries"
+      - "Independently verify that displayed confirmations match the underlying tool calls before treating an approval as informed"
+      - "Log the exact text shown to the approver alongside the raw action, so truncation is auditable after the fact"
+      - "Treat any agent attempt to summarize away material action details as a policy violation"
+    examples:
+      - summary: "In Invariant Labs' April 2025 tool-poisoning demonstration, the agent's confirmation screen obscured the true recipient and message contents while it exfiltrated data through a messaging tool, showing how truncated confirmations defeat human oversight."
+        reference: "https://generativeai.pub/mcp-security-part-2-the-owasp-mcp-top-10-in-practice-f0e3ceb86c9f?gi=2f2e2a1a663a"
+    references:
+      - "https://generativeai.pub/mcp-security-part-2-the-owasp-mcp-top-10-in-practice-f0e3ceb86c9f?gi=2f2e2a1a663a"
+      - "https://arxiv.org/abs/2508.14925v1"
+
+  - id: AEG-T091
+    name: "Benign-Looking Tool-Argument Obfuscation"
+    category: evasion
+    description: >-
+      Malicious intent is hidden inside tool arguments that look innocuous:
+      a URL with a deceptive subdomain, a filename that is actually a command
+      separator, or an argument that decodes to something malicious at
+      execution time. Reviewers and pattern matchers see a plausible string;
+      the executed reality differs. This targets the gap between what an
+      argument appears to say and what the tool does with it.
+    how_it_works: >-
+      The attacker crafts arguments that survive visual inspection: homoglyph
+      domains, overlong paths that push the suspicious part out of displayed
+      fields, encoded blobs that the tool decodes, or shell metacharacters
+      tucked inside quoted strings. In agent tool calls this appears as
+      arguments to shell, fetch, or file tools that look like ordinary
+      filenames or URLs but resolve to attacker infrastructure or chained
+      commands. Variants: (1) deceptive URLs and homoglyph domains in fetch
+      arguments; (2) shell metacharacters hidden in quoted filename arguments;
+      (3) encoded or encrypted argument blobs decoded at runtime; (4)
+      argument smuggling through tools that concatenate user input into
+      commands.
+    variants:
+      - "Deceptive URLs and homoglyph domains in fetch arguments"
+      - "Shell metacharacters hidden inside quoted filename arguments"
+      - "Encoded argument blobs decoded at execution time"
+      - "Argument smuggling through string-concatenating tools"
+    indicators:
+      - "Tool arguments containing shell metacharacters (;, &&, ||, $(), backticks) inside fields expected to be plain filenames or URLs"
+      - "URLs whose displayed domain differs from the effective destination after redirects, punycode, or @-tricks"
+      - "Arguments with high entropy or nested encoding (base64 within base64, URL-encoded payloads) passed to execution tools"
+      - "Fetch or shell tool calls whose arguments decode to a different command than their surface text suggests"
+    detection:
+      rule: detect_argument_obfuscation
+      patterns:
+        - "(?i)(;|&&|\\|\\||\\$\\(|`)\\s*.*(curl|wget|bash|sh|powershell|cmd)"
+        - "(?i)xn--|@.*\\/\\/|%[0-9a-f]{2}.*%[0-9a-f]{2}"
+        - "(?i)high\\s+entropy\\s+argument\\s+to\\s+(shell|exec|fetch)\\s+tool"
+    severity: medium
+    mitigations:
+      - "Parse and normalize every tool argument (URL canonicalization, decoding, punycode rendering) before display and policy evaluation"
+      - "Reject shell metacharacters in arguments to tools that should receive plain data, and use parameterized execution instead of string-built commands"
+      - "Show approvers the fully resolved destination and decoded command, not the raw argument string"
+      - "Alert on nested encoding or high-entropy arguments to execution-capable tools"
+    examples:
+      - summary: "Socket's analysis of typosquatted npm packages found loaders using four stacked obfuscation layers (self-decoding eval wrapper, XOR decryption with dynamic key, URL-encoded payload, control-flow obfuscation) so the install-time arguments and payloads looked benign to static review."
+        reference: "https://www.bleepingcomputer.com/news/security/malicious-npm-packages-fetch-infostealer-for-windows-linux-macos/"
+    references:
+      - "https://www.bleepingcomputer.com/news/security/malicious-npm-packages-fetch-infostealer-for-windows-linux-macos/"
+      - "https://attack.mitre.org/techniques/T1048/003/"
+
+  - id: AEG-T092
+    name: "Splitting a Malicious Workflow Across Sessions"
+    category: evasion
+    description: >-
+      A malicious workflow is divided into individually innocent steps spread
+      across multiple agent sessions, conversations, or time windows, so no
+      single session contains the full attack. Session-scoped monitors see
+      only fragments that each look legitimate; the malicious composition
+      emerges only when the fragments are correlated. This defeats
+      per-session review and per-conversation approval gates.
+    how_it_works: >-
+      The attacker (via staged injections or a compromised long-running agent)
+      performs reconnaissance in one session, stages data in another, and
+      exfiltrates in a third, with days between steps. State is carried in
+      files, memory stores, or external dead drops rather than in
+      conversation context. Each session's tool calls pass review because the
+      sensitive source and the external destination never appear together.
+      Variants: (1) multi-session staging with file-based handoffs;
+      (2) slow multi-day campaigns with one step per session; (3) splitting
+      across different agents or identities that share a workspace;
+      (4) using scheduled tasks or cron to resume the workflow later.
+    variants:
+      - "Multi-session staging with file-based handoffs"
+      - "One-step-per-session campaigns spread over days"
+      - "Splitting across agents or identities sharing a workspace"
+      - "Scheduled tasks resuming the workflow in later sessions"
+    indicators:
+      - "Files written in one session (staged archives, encoded blobs, target lists) read and exfiltrated in a later session by a different conversation"
+      - "Recurring sessions that each perform one step of a known malicious composition without ever completing it in-session"
+      - "Scheduled jobs or cron entries created in one session whose payloads execute attacker-relevant actions later"
+      - "Cross-session entity correlation: the same external destination appears across sessions that each look benign alone"
+    detection:
+      rule: detect_cross_session_workflow
+      patterns:
+        - "(?i)staged\\s+file\\s+written\\s+in\\s+session\\s+A.*read\\s+in\\s+session\\s+B"
+        - "(?i)same\\s+external\\s+destination\\s+across\\s+multiple\\s+sessions"
+        - "(?i)scheduled\\s+task\\s+created.*later\\s+session\\s+execution"
+    severity: medium
+    mitigations:
+      - "Correlate tool-call telemetry across sessions by entity (files, destinations, credentials), not just within a single conversation"
+      - "Track staged artifacts: flag files written but never legitimately consumed, especially archives and encoded blobs in shared workspaces"
+      - "Review scheduled tasks and cron entries with the same scrutiny as interactive actions, including their future payloads"
+      - "Maintain a persistent per-agent risk profile so a series of individually benign sessions can accumulate into an investigation"
+    examples:
+      - summary: "Agent-security research on MCP tool poisoning describes 'toxic flows' in which each individual tool call looks benign while the multi-step sequence is harmful (read a file, then post to a webhook); such flows are undetectable by static scanning of any single call and require cross-call runtime visibility."
+        reference: "https://explainx.ai/blog/mcp-rug-pull-tool-poisoning-explained-scanner-guide-2026"
+    references:
+      - "https://explainx.ai/blog/mcp-rug-pull-tool-poisoning-explained-scanner-guide-2026"
+      - "https://arxiv.org/abs/2508.14925v1"
+
+  - id: AEG-T093
+    name: "Using Legitimate Admin Tools for Malicious Ends"
+    category: evasion
+    description: >-
+      Attackers abuse tools that administrators legitimately use: remote
+      management software, scripting engines, service controllers, and cloud
+      consoles. Because these tools are signed, expected in the environment,
+      and often explicitly allowlisted, their malicious use blends into normal
+      administration. For agents, the equivalent is abusing granted admin-level
+      tool permissions (cloud CLIs, deployment tools) beyond the task's scope.
+    how_it_works: >-
+      The attacker inventories the admin tooling present, remote access
+      agents, monitoring tools, package managers, cloud CLIs, and uses them
+      for attacker purposes: persistence through legitimate remote-access
+      agents, execution through admin scripting, exfiltration through backup
+      tools. Defenders hesitate to block these tools because the business
+      depends on them, and their telemetry is voluminous. Variants:
+      (1) remote-management (RMM) tools used for persistence and access;
+      (2) admin scripting engines used for payload execution; (3) backup and
+      sync tools used for exfiltration; (4) cloud admin consoles used to
+      modify infrastructure or disable protections.
+    variants:
+      - "Remote-management tools abused for persistence and access"
+      - "Admin scripting engines abused for payload execution"
+      - "Backup and sync tools abused for exfiltration"
+      - "Cloud admin consoles abused to alter infrastructure or protections"
+    indicators:
+      - "Remote-access agents (AnyDesk, Atera, TeamViewer-class tools) installed or active on hosts where no legitimate admin use is documented"
+      - "Admin scripting or service-control tools invoked with unusual arguments, at unusual hours, or by unusual accounts"
+      - "Backup tools transferring data to destinations outside the documented backup architecture"
+      - "Cloud console actions (policy changes, protection disabling) that deviate from the change-management baseline"
+    detection:
+      rule: detect_admin_tool_abuse
+      patterns:
+        - "(?i)(unauthorized|undocumented)\\s+(rmm|remote\\s+access)\\s+(install|agent)"
+        - "(?i)admin\\s+tool\\s+invoked\\s+with\\s+anomalous\\s+(args|account|hour)"
+        - "(?i)backup\\s+tool\\s+egress\\s+to\\s+non\\s+backup\\s+destination"
+    severity: high
+    mitigations:
+      - "Inventory every admin tool and define its legitimate use baseline: who runs it, when, with what arguments, to what destinations"
+      - "Require approval for new installations of remote-access tools and alert on any undocumented instance"
+      - "Restrict admin tool permissions to named administrators and named scopes; agents get task-scoped credentials, not standing admin rights"
+      - "Monitor cloud-console and infrastructure-change actions with the same rigor as endpoint telemetry"
+    examples:
+      - summary: "The leaked Conti playbooks showed the gang's affiliates relying on legitimate remote-access tooling, with defenders advised to hunt for unauthorized AnyDesk persistence and Atera agent installations, because the ransomware operation deliberately lived inside trusted admin software."
+        reference: "https://www.bleepingcomputer.com/news/security/angry-conti-ransomware-affiliate-leaks-gangs-attack-playbook"
+    references:
+      - "https://www.bleepingcomputer.com/news/security/angry-conti-ransomware-affiliate-leaks-gangs-attack-playbook"
+      - "https://www.picussecurity.com/resource/blog/t1562-001-disable-or-modify-tools"
+
+  - id: AEG-T094
+    name: "Disabling Audit Logging"
+    category: evasion
+    description: >-
+      Rather than covering tracks afterward, the attacker prevents tracks from
+      being created: disabling event logging, stopping audit services,
+      muting cloud trail logging, or turning off the agent's own telemetry.
+      Subsequent malicious actions then occur in a blind spot. This is one of
+      the highest-value evasion steps because it degrades every downstream
+      detection at once.
+    how_it_works: >-
+      With sufficient privilege, the attacker stops or reconfigures logging:
+      disabling Windows event logging via registry or policy, impairing
+      command-history logging, turning off cloud audit trails, or killing the
+      telemetry agent. In agent environments the equivalent is disabling the
+      tool-call logger, setting log levels to suppress, or revoking the
+      monitor's credentials. The change is often brief, just long enough to
+      cover the malicious window, then logging is restored. Variants:
+      (1) disabling Windows event logging; (2) impairing shell command-history
+      logging; (3) disabling cloud audit trails; (4) silencing or
+      misconfiguring the agent's own telemetry pipeline.
+    variants:
+      - "Disabling Windows event logging via registry or policy"
+      - "Impairing shell command-history logging"
+      - "Disabling cloud audit trails and log exports"
+      - "Silencing the agent's own telemetry pipeline"
+    indicators:
+      - "Audit policy or registry changes that reduce logging verbosity outside of change windows"
+      - "Telemetry gaps: hosts or agents that stop emitting logs while remaining active"
+      - "Cloud trail or audit-log configuration changes (trail stopped, log group deleted, retention slashed)"
+      - "Security tooling processes stopped, uninstalled, or excluded shortly before malicious activity"
+    detection:
+      rule: detect_audit_logging_disabled
+      patterns:
+        - "(?i)(audit|event\\s+log|cloudtrail)\\s+(disabled|stopped|deleted)"
+        - "(?i)telemetry\\s+gap\\s+while\\s+host\\s+active"
+        - "(?i)logging\\s+policy\\s+(weakened|changed)\\s+outside\\s+change\\s+window"
+    severity: high
+    mitigations:
+      - "Protect logging configuration with tamper-proofing: require multi-party approval for changes and alert on any modification in real time"
+      - "Monitor the monitors: independent heartbeat checks that page when any host, agent, or cloud trail stops emitting"
+      - "Make audit logs immutable at the collector (append-only storage, object lock) so disabling local logging still leaves the off-host copy"
+      - "Run the agent's telemetry as a separate privileged service the agent cannot reconfigure or stop"
+    examples:
+      - summary: "Leaked Conti internal materials showed operators systematically working to evade and break through endpoint security tooling, including discussions of defeating products like Carbon Black and Sophos, illustrating how ransomware operations prioritize blinding defenses before acting."
+        reference: "https://www.pcrisk.com/internet-threat-news/21576-conti-ransomwares-secret-backdoor-discovered"
+    references:
+      - "https://attack.mitre.org/versions/v7/techniques/T1562/"
+      - "https://www.picussecurity.com/resource/blog/t1562-001-disable-or-modify-tools"
+      - "https://www.pcrisk.com/internet-threat-news/21576-conti-ransomwares-secret-backdoor-discovered"
+
+  - id: AEG-T095
+    name: "Encoding Tricks to Evade Pattern Matching"
+    category: evasion
+    description: >-
+      Payloads and indicators are transformed so signature and keyword
+      detectors do not recognize them: base64, hexadecimal, Unicode
+      homoglyphs, zero-width characters, or stacked encodings. The content is
+      decoded at execution time, so the malicious logic runs while every
+      static inspection sees only noise. Defenders who match on plaintext
+      miss the attack entirely.
+    how_it_works: >-
+      The attacker encodes commands, URLs, and payloads, sometimes in
+      multiple layers, and includes a small decoder stub that reconstructs
+      the real content at runtime. Zero-width Unicode characters can hide
+      text inside apparently normal strings; homoglyphs defeat visual and
+      keyword review. Encoded content also defeats naive DLP and exfiltration
+      signatures when data leaves encoded. Variants: (1) base64/hex-encoded
+      commands decoded at runtime; (2) zero-width Unicode steganography in
+      text; (3) stacked multi-layer encoding (encode of an encode);
+      (4) homoglyph substitution defeating keyword and visual review.
+    variants:
+      - "Base64 or hex-encoded commands decoded at runtime"
+      - "Zero-width Unicode steganography hiding text in plain sight"
+      - "Stacked multi-layer encoding defeating single-pass decoders"
+      - "Homoglyph substitution defeating keyword and visual review"
+    indicators:
+      - "High-entropy strings, long base64 blobs, or hex strings in tool arguments, scripts, or extension code"
+      - "Presence of zero-width Unicode characters (U+200B-U+200D, U+FEFF) in source files or documents"
+      - "Decoder stubs (base64 decode followed by eval/exec, nested decoders) in installed packages or extensions"
+      - "Outbound data that is encoded or encrypted where the baseline shows plaintext, defeating DLP signatures"
+    detection:
+      rule: detect_encoding_evasion
+      patterns:
+        - "(?i)(base64|fromhex|\\bhex\\b).*(decode|deobfuscat).*(eval|exec|invoke)"
+        - "(?i)\\u200b|\\u200c|\\u200d|\\ufeff\\s+in\\s+(source|document)"
+        - "(?i)nested\\s+encoding\\s+depth\\s+>\\s*2\\s+in\\s+tool\\s+argument"
+    severity: medium
+    mitigations:
+      - "Recursively decode and normalize content (all layers) before running signatures, DLP, and policy checks"
+      - "Strip or flag zero-width and non-printing Unicode characters in code, documents, and tool inputs"
+      - "Alert on decoder-stub patterns (decode-then-execute) in packages, extensions, and agent tool arguments"
+      - "Apply entropy analysis to tool arguments and outbound data to catch encoded exfiltration"
+    examples:
+      - summary: "Socket's GlassWorm research found a VS Code theme extension concealing its Windows downloader with heavily obfuscated JavaScript using zero-width Unicode character encoding, so the malicious logic was invisible to anyone reviewing the extension source."
+        reference: "https://socket.dev/blog/glassworm-vscode-themes"
+    references:
+      - "https://socket.dev/blog/glassworm-vscode-themes"
+      - "https://attack.mitre.org/techniques/T1048/003/"
+
+  - id: AEG-T096
+    name: "Social-Engineering the Human Approver"
+    category: evasion
+    description: >-
+      When technical gates require human approval, the attacker targets the
+      human instead of the gate: impersonating a trusted person to get the
+      approver to click approve, manufacturing urgency to short-circuit
+      scrutiny, or compromising the approver's own account. The audit trail
+      then shows a legitimate approval for a malicious action, which is far
+      harder to investigate than a bypassed control.
+    how_it_works: >-
+      The attacker studies the approval workflow, who approves what, then
+      applies pressure: voice-phishing the approver while posing as an
+      executive or IT support, sending fake approval requests that mimic real
+      ones, or creating urgency ("production is down, approve now") that
+      discourages verification. In agent deployments this means tricking the
+      human in the loop into approving a malicious tool call, or socially
+      engineering help-desk staff to reset the agent's credentials and hand
+      over the account. Variants: (1) vishing the approver or help desk;
+      (2) fake approval-request messages mimicking legitimate ones;
+      (3) urgency and authority pressure to skip verification; (4) MFA fatigue
+      or reset abuse against the approver's own account.
+    variants:
+      - "Vishing the approver or help desk to grant access or approval"
+      - "Forged approval requests mimicking legitimate workflow messages"
+      - "Urgency and authority pressure to skip verification steps"
+      - "MFA fatigue or help-desk reset abuse against approver accounts"
+    indicators:
+      - "Approvals granted unusually fast, outside business hours, or without the approver opening the full action details"
+      - "Help-desk password or MFA resets followed shortly by anomalous privileged actions"
+      - "Approval requests arriving through unusual channels (personal email, chat) instead of the workflow system"
+      - "A burst of MFA push prompts (fatigue attack) targeting approvers or administrators"
+    detection:
+      rule: detect_approver_social_engineering
+      patterns:
+        - "(?i)approval\\s+granted\\s+in\\s+<\\s*60\\s*seconds\\s+without\\s+detail\\s+view"
+        - "(?i)(mfa|password)\\s+reset\\s+via\\s+help\\s+desk.*privileged\\s+action"
+        - "(?i)mfa\\s+push\\s+burst\\s+>\\s*[0-9]+\\s+in\\s+[0-9]+\\s*min"
+    severity: high
+    mitigations:
+      - "Require out-of-band verification for high-impact approvals: the approver confirms through a second channel, not the request itself"
+      - "Enforce phishing-resistant MFA and strict identity-verification procedures for help-desk resets, with mandatory cooling-off for privileged changes"
+      - "Show approvers full, non-truncated action details and enforce a minimum review dwell time for sensitive approvals"
+      - "Alert on anomalous approval patterns: speed, hour, channel, and approver-behavior deviations"
+    examples:
+      - summary: "In September 2023 the Scattered Spider group breached MGM Resorts and Caesars Entertainment by voice-phishing IT help desks into resetting credentials and MFA, bypassing technical controls entirely through the humans operating them; MGM reported roughly $100 million in impact."
+        reference: "https://specopssoft.com/blog/mgm-resorts-service-desk-hack/"
+    references:
+      - "https://specopssoft.com/blog/mgm-resorts-service-desk-hack/"
+      - "https://cloudsecurityalliance.org/blog/2025/11/10/scattered-spider-and-the-finance-sector-ransomware-tactics-banks-can-t-afford-to-ignore"

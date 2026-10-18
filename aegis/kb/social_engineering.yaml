@@ -1,0 +1,663 @@
+pack: social_engineering
+version: "1.0"
+techniques:
+  - id: AEG-T127
+    name: "Spear-Phishing Tradecraft Families"
+    category: social_engineering
+    description: >-
+      Spear-phishing is targeted deception mail (or message) crafted for a
+      specific person or role, using reconnaissance to make the lure
+      irresistible — a real project name, a real colleague, a real event.
+      The FBI/CISA October 2026 joint PSA warns that AI-generated content
+      has removed the old tells: messages now use native language and
+      common vernacular, and deepfake audio/video bolsters the schemes.
+      Families range from credential-harvest lures to attachment weapons
+      to business-process hijacks; all share one trait — they exploit
+      trust, not software flaws.
+    how_it_works: >-
+      Operators research targets (LinkedIn, conference agendas, breached
+      data), then send lures through the channel the target trusts most.
+      Variants: credential-harvest (cloned login pages stealing passwords
+      and tokens); attachment-weaponized (documents exploiting viewers or
+      abusing macros); link-to-fake-service (bogus DocuSign, HR portal, or
+      IT-reset pages); and thread-hijack (replying inside a real
+      compromised email thread). Detectable tells: linguistic (urgency +
+      authority + secrecy triad, slight tone mismatch with the supposed
+      sender); technical (lookalike domains, auth failures, first-seen
+      URLs); procedural (requests that bypass normal workflow, e.g. 'don't
+      call me, just click').
+    variants:
+      - "Credential-harvest lures: cloned SSO, webmail, or VPN pages capturing credentials and session tokens."
+      - "Attachment-weaponized lures: documents or archives exploiting rendering flaws or macro/script execution."
+      - "Thread-hijack and service-impersonation lures: replies inside real threads or fake HR/IT service pages."
+    indicators:
+      - "Urgency + authority + secrecy framing in a message requesting credentials, payment changes, or link clicks."
+      - "Lookalike or newly registered sender domains, or SPF/DKIM/DMARC failures on mail claiming to be internal."
+      - "First-seen URLs clicked by a small set of high-value recipients in a tight time window."
+      - "Requests that explicitly route around verification ('don't call the helpdesk, use this link')."
+    detection:
+      rule: detect_spearphishing_lure
+      patterns:
+        - '(?i)(urgent|immediately|asap|deadline.today).*(wire|transfer|credentials|password|verify.account)'
+        - '(?i)(do.not.call|dont.call|keep.confidential|between.us).*(click|link|approve)'
+        - '(?i)(docu-?sign|hr-?portal|it-?reset|vpn-?login).*(lookalike|first.seen|auth.fail)'
+    severity: high
+    mitigations:
+      - "Email authentication at enforcement (DMARC reject) plus lookalike-domain monitoring and rapid takedown."
+      - "Link isolation/rewriting and attachment sandboxing on all inbound mail paths."
+      - "Phishing-resistant MFA (FIDO2/WebAuthn) so stolen passwords alone are insufficient."
+      - "Role-targeted awareness training with simulations reflecting current lure families, and a one-click reporting button."
+    examples:
+      - summary: "The FBI/CISA joint PSA of October 2026 (I-101626-PSA) warns election teams that AI-enhanced phishing and smishing now use native-quality language and deepfake media to harvest credentials and deploy malware — the modern spear-phishing baseline."
+        reference: "https://windowsforum.com/news/fbi-and-cisa-warn-election-teams-of-ai-deepfake-phishing-and-smishing-ahead-of-2026-midterms.448654/"
+      - summary: "CrowdStrike's 2026 threat reporting documents CHARMING KITTEN's spear-phishing of MENA technology and government workers with decoy files tied to a real conference — reconnaissance-driven personalization in action."
+        reference: "https://go.crowdstrike.com/rs/281-OBQ-266/images/CrowdStrike2026TechnologyThreatLandscapeReport.pdf?utm%5C_medium=dir&"
+    references:
+      - "https://windowsforum.com/news/fbi-and-cisa-warn-election-teams-of-ai-deepfake-phishing-and-smishing-ahead-of-2026-midterms.448654/"
+      - "https://intel.threadlinqs.com/threat/TL-2026-3753"
+      - "https://go.crowdstrike.com/rs/281-OBQ-266/images/CrowdStrike2026TechnologyThreatLandscapeReport.pdf?utm%5C_medium=dir&"
+
+  - id: AEG-T128
+    name: "Business Email Compromise (BEC)"
+    category: social_engineering
+    description: >-
+      BEC is pure process fraud: criminals impersonate executives, vendors,
+      or partners over email to redirect payments or steal data — no
+      malware required. The FBI's IC3 calls it one of the most financially
+      damaging online crimes: nearly $55.5 billion in global exposed losses
+      between October 2013 and December 2023, and ~$3 billion in reported
+      U.S. losses in 2025 alone. The classic play is the vendor bank-detail
+      change: a convincing email swaps the account number on a legitimate
+      invoice, and accounts payable wires the money to the criminal.
+    how_it_works: >-
+      Actors either spoof/lookalike-domain impersonate a trusted party or
+      compromise a real mailbox and study its threads to time the fraud.
+      Variants: vendor impersonation / invoice fraud (bank-detail swap);
+      CEO fraud (executive authority demanding an urgent wire); payroll
+      diversion (HR asked to change direct-deposit details); and data-theft
+      BEC (W-2/tax-form harvesting). Detectable tells: linguistic
+      (manufactured urgency, authority pressure, secrecy); technical
+      (reply-to mismatch, lookalike domain, first-time sender with
+      thread knowledge); procedural (payment-detail changes arriving only
+      by email, resistance to voice verification).
+    variants:
+      - "Vendor impersonation / invoice fraud: bank details on a legitimate invoice swapped via a convincing email."
+      - "CEO/executive fraud: authority-driven urgent wire or gift-card requests purporting to come from leadership."
+      - "Payroll diversion and data theft: HR tricked into changing direct deposits, or finance into sending tax forms."
+    indicators:
+      - "Any payment-detail or bank-account change request arriving by email, especially with urgency framing."
+      - "Reply-to address or sender domain differing subtly from the known contact (lookalike domain, free-mail reply-to)."
+      - "A 'known' contact writing for the first time from a new address with accurate internal context (possible mailbox compromise)."
+      - "Instructions to skip verification steps ('I'm in meetings, don't call, just process it')."
+    detection:
+      rule: detect_bec_fraud
+      patterns:
+        - '(?i)(bank.(details|account)|wire.instructions).*(changed|updated|new.account).*(urgent|asap|today)'
+        - '(?i)(ceo|cfo|president|director).*(wire|transfer|gift.card).*(urgent|confidential)'
+        - '(?i)(reply.to|sender).*(mismatch|lookalike|freemail).*(known.vendor|executive)'
+    severity: critical
+    mitigations:
+      - "Out-of-band verification for ALL payment-detail changes: call back on a known number before changing any banking instructions — no exceptions."
+      - "Dual authorization on wire transfers above a threshold, with the second approver independently verifying."
+      - "Email authentication (DMARC enforcement), display-name spoofing controls, and mailbox-compromise detection (impossible travel, new forwarding rules)."
+      - "Vendor master-data discipline: bank changes only through a verified vendor portal or documented onboarding process, never email alone."
+    examples:
+      - summary: "FBI IC3 data shows BEC caused nearly $55.5B in global exposed losses over a decade (Oct 2013–Dec 2023) across 305,000+ incidents — the costliest social-engineering crime category on record."
+        reference: "https://www.infosecurity-magazine.com/news/business-email-compromise-55bn/"
+      - summary: "The FBI's 2025 Internet Crime Report recorded 24,768 BEC complaints with over $3B in reported losses, with criminals increasingly routing proceeds through cryptocurrency to reduce recoverability."
+        reference: "https://www.adamsandreese.com/the-ledger/fbi-releases-2025-internet-crime-report-key-takeaways-for-the-payments-industry"
+    references:
+      - "https://www.infosecurity-magazine.com/news/business-email-compromise-55bn/"
+      - "https://www.adamsandreese.com/the-ledger/fbi-releases-2025-internet-crime-report-key-takeaways-for-the-payments-industry"
+      - "https://www.claimspages.com/news/business-cybercrime-losses-top-35-billion-as-email-fraud-drives-claims-exposure-20260922/"
+
+  - id: AEG-T129
+    name: "Vishing (Voice Phishing)"
+    category: social_engineering
+    description: >-
+      Vishing uses phone calls — increasingly with AI-cloned voices — to
+      impersonate IT staff, executives, banks, or law enforcement and talk
+      victims into approving access, revealing codes, or moving money. The
+      FBI's 2026 warnings describe impersonation campaigns via calls and
+      messaging apps as a standing threat, and note that AI-generated voice
+      now removes the old accent and audio-quality tells. Because a live
+      human voice carries enormous trust, vishing defeats controls that
+      stop purely technical attacks.
+    how_it_works: >-
+      Callers spoof caller ID, open with accurate personal details
+      (harvested from breaches or social media) to establish credibility,
+      then apply urgency and authority. Variants: IT-support vishing
+      ('approve the MFA prompt to stop the alerts'); executive vishing
+      ('the CEO needs this wire now'); authority vishing (fake FBI/IRS
+      demanding payment — the FBI stresses real agents never demand money
+      by phone); and callback vishing (a voicemail or email asking the
+      victim to call a criminal-run number). Detectable tells: linguistic
+      (pressure to act during the call, refusal to allow hang-up-and-verify);
+      technical (spoofed or unknown caller ID, VoIP artifacts); procedural
+      (requests for codes, remote-access approval, or payment over the
+      phone).
+    variants:
+      - "IT-support vishing: impersonating helpdesk or security staff to get MFA approvals, password resets, or remote access."
+      - "Executive/authority vishing: fake CEO, bank, or law-enforcement caller demanding urgent action or payment."
+      - "Callback vishing: lures (voicemail, email, text) directing the victim to call a criminal-controlled number."
+    indicators:
+      - "Unsolicited calls requesting MFA approvals, one-time codes, passwords, or remote-access sessions."
+      - "Caller discourages verification: 'don't hang up,' 'don't call the official number,' or manufactured time pressure."
+      - "Caller ID shows an expected name/number but the request pattern is abnormal (verification via callback fails)."
+      - "Follow-up calls escalating pressure after an initial refusal."
+    detection:
+      rule: detect_vishing_attempt
+      patterns:
+        - '(?i)(approve.*(mfa|prompt)|read.*(code|otp)|install.*(remote|anydesk|teamviewer)).*(phone|call)'
+        - '(?i)(fbi|irs|police|bank).*(demand|payment|arrest|warrant).*(phone|gift.card|crypto)'
+        - '(?i)(do.not.hang.up|stay.on.the.line|dont.call.back).*(urgent|immediately)'
+    severity: high
+    mitigations:
+      - "Verification culture: any unsolicited call requesting access, codes, or money gets hung up on and verified via an independently known number."
+      - "Helpdesk identity-proofing standards (see AEG-T137): no resets or approvals based on caller-provided PII alone."
+      - "Number-matching or FIDO2 MFA so a verbal 'approve it' cannot complete authentication."
+      - "Call-screening and reporting workflows; log and share vishing numbers/lures internally."
+    examples:
+      - summary: "The FBI's 2026 impersonation warnings describe criminals posing as FBI/IC3 personnel over calls and messaging apps to demand payment — explicitly noting real law enforcement never demands money by phone or text."
+        reference: "https://blog.geebo.com/2026/09/28/scammers-are-pretending-to-be-the-fbi-to-scam-victims-again/"
+      - summary: "FBI guidance on vishing/smishing waves stresses verifying through official channels, never trusting caller ID or message branding, and reporting to IC3 — the procedural core of vishing defense."
+        reference: "https://aisecmaster.com/fbi-warning-vishing-smishing/"
+    references:
+      - "https://blog.geebo.com/2026/09/28/scammers-are-pretending-to-be-the-fbi-to-scam-victims-again/"
+      - "https://aisecmaster.com/fbi-warning-vishing-smishing/"
+      - "https://windowsforum.com/news/fbi-and-cisa-warn-election-teams-of-ai-deepfake-phishing-and-smishing-ahead-of-2026-midterms.448654/"
+
+  - id: AEG-T130
+    name: "Smishing (SMS Phishing)"
+    category: social_engineering
+    description: >-
+      Smishing delivers phishing via text message — fake parcel-delivery
+      notices, toll-payment demands, or bank alerts with malicious links.
+      The FBI's IC3 received over 2,000 complaints about toll-collection
+      smishing texts from early March 2024 alone, a campaign that expanded
+      from tolls to fake delivery alerts. Texts bypass email security
+      entirely, arrive on a trusted personal device, and exploit the small
+      screen that hides URL details — which is why smishing now rivals
+      email phishing for credential theft at scale.
+    how_it_works: >-
+      Mass text blasts impersonate delivery firms, toll agencies, banks, or
+      government services; the link leads to a credential-harvesting page
+      or malware download. Variants: toll/fee smishing (unpaid toll or
+      fine demanding immediate payment); parcel smishing (missed delivery
+      requiring 'redelivery fee' or address confirmation); bank-alert
+      smishing (account locked, verify now); and conversational smishing
+      ('wrong number' chats that pivot to investment/crypto scams).
+      Detectable tells: linguistic (urgency, threats of penalties);
+      technical (shortened or odd-TLD links, sender IDs that don't match
+      the brand); procedural (real agencies don't demand payment or
+      credentials by text with a link).
+    variants:
+      - "Toll/fee smishing: fake unpaid-toll or fine notices demanding immediate payment via link."
+      - "Parcel-delivery smishing: missed-delivery lures requesting redelivery fees or address confirmation."
+      - "Bank-alert and conversational smishing: fake account-locked alerts, or 'wrong number' chats pivoting to investment scams."
+    indicators:
+      - "Unsolicited texts about tolls, fines, or deliveries with links, especially from unknown sender IDs."
+      - "Links using URL shorteners, odd TLDs, or hyphen-stuffed domains mimicking the real brand."
+      - "Urgency framing ('pay within 24 hours to avoid penalties') paired with a payment or credential request."
+      - "Messages requesting personal or banking details directly by text."
+    detection:
+      rule: detect_smishing_lure
+      patterns:
+        - '(?i)(toll|fine|penalty|unpaid).*(pay.now|click|link).*(24.hours|avoid|immediate)'
+        - '(?i)(parcel|package|delivery).*(missed|redelivery|fee).*(link|confirm.address)'
+        - '(?i)(account.*(locked|suspended)|verify.*(identity|account)).*(sms|text).*(link)'
+    severity: medium
+    mitigations:
+      - "User education with the core rule: never click links in unsolicited texts; navigate to the official site or app independently."
+      - "Carrier and device spam reporting (forward to 7726/SPAM) plus enterprise mobile threat defense where deployed."
+      - "Brand monitoring and takedown of smishing domains impersonating your organization."
+      - "For workforce: route legitimate operational SMS (alerts, 2FA) through verified sender IDs so anomalies stand out."
+    examples:
+      - summary: "FBI IC3 received over 2,000 complaints from early March 2024 about smishing texts impersonating road-toll collection services across multiple states — a campaign Palo Alto Networks' Unit 42 tied to Chinese-origin toolkits that later expanded to fake delivery alerts."
+        reference: "https://www.yambaaccommodation.com/news/fbi-warns-of-dangerous-new-smishing-scam-targeting-your-phone/32686"
+      - summary: "FBI/FTC guidance on the toll/delivery smishing wave: unexpected texts demanding payment are scams, legitimate agencies never request personal details by text, and victims should verify via official sites and report to IC3."
+        reference: "https://technijian.com/desktop-support/phishing-scams/fbi-warning-delete-these-texts-on-your-iphone-android-phone-immediately/"
+    references:
+      - "https://www.yambaaccommodation.com/news/fbi-warns-of-dangerous-new-smishing-scam-targeting-your-phone/32686"
+      - "https://technijian.com/desktop-support/phishing-scams/fbi-warning-delete-these-texts-on-your-iphone-android-phone-immediately/"
+      - "https://aisecmaster.com/fbi-warning-vishing-smishing/"
+
+  - id: AEG-T131
+    name: "Pretexting"
+    category: social_engineering
+    description: >-
+      Pretexting is the invented scenario — the 'pretext' — that makes every
+      other social-engineering technique believable: the auditor doing a
+      review, the vendor engineer needing access, the new hire locked out.
+      It underpins BEC, vishing, and helpdesk attacks alike; the Target
+      breach began with attackers pretexting as legitimate users of a
+      vendor's remote access. Strong pretexts are built from real
+      reconnaissance details, which is why pretexting quality correlates
+      directly with attacker research effort.
+    how_it_works: >-
+      The attacker constructs a role and a story that explains why they
+      need the victim's help, then plays it consistently across channels.
+      Variants: authority pretexts (auditor, executive, law enforcement);
+      helper pretexts (IT support, vendor engineer, delivery person);
+      peer pretexts (new colleague, fellow conference attendee). Detectable
+      tells: linguistic (over-explained legitimacy, name-dropping,
+      impatience with verification); technical (contact details that don't
+      resolve to the claimed organization); procedural (the pretext
+      conveniently requires skipping normal process — the single most
+      reliable tell).
+    variants:
+      - "Authority pretexts: auditor, executive, or law-enforcement personas demanding compliance."
+      - "Helper pretexts: IT support, vendor engineers, or service staff requesting access 'to fix something.'"
+      - "Peer pretexts: new hire, colleague, or fellow attendee personas exploiting in-group trust."
+    indicators:
+      - "A requester's story requires bypassing standard procedure ('we don't have time for the normal process')."
+      - "Contact details provided by the requester don't match the claimed organization's directory."
+      - "Over-specific name-dropping or insider references that feel rehearsed rather than natural."
+      - "Resistance or hostility when asked to verify identity through official channels."
+    detection:
+      rule: detect_pretexting
+      patterns:
+        - '(?i)(skip|bypass|no.time.for).*(normal.process|standard.procedure|verification)'
+        - '(?i)(auditor|vendor.engineer|new.hire|law.enforcement).*(urgent.access|need.credentials)'
+        - '(?i)(name.drop|colleague.*said|manager.*approved).*(unverifiable|refuses.callback)'
+    severity: medium
+    mitigations:
+      - "Process-first culture: no legitimate request ever requires skipping verification — make this an explicit, repeated policy."
+      - "Independent verification for every access or data request: call back via directory-listed numbers, never provided ones."
+      - "Least-privilege access so a successful pretext yields minimal reach."
+      - "Scenario-based training using real pretexts (vendor engineer, auditor) relevant to each role."
+    examples:
+      - summary: "The Target breach's initial access relied on stolen Fazio Mechanical credentials obtained via phishing — attackers then operated inside Target's network under the pretext of legitimate vendor remote access for weeks."
+        reference: "https://www.breachsense.com/blog/target-data-breach/"
+      - summary: "The FBI's BEC reporting shows pretexting as the engine of vendor impersonation: criminals research companies, then pose as trusted vendors so convincingly that two companies wired over $120M to fraudulent accounts."
+        reference: "https://www.claimspages.com/news/business-cybercrime-losses-top-35-billion-as-email-fraud-drives-claims-exposure-20260922/"
+    references:
+      - "https://www.breachsense.com/blog/target-data-breach/"
+      - "https://www.claimspages.com/news/business-cybercrime-losses-top-35-billion-as-email-fraud-drives-claims-exposure-20260922/"
+      - "https://www.infosecurity-magazine.com/news/business-email-compromise-55bn/"
+
+  - id: AEG-T132
+    name: "Baiting"
+    category: social_engineering
+    description: >-
+      Baiting dangles something the victim wants — a labeled USB drive, a
+      free download, a too-good deal — to trigger curiosity-driven action.
+      The classic physical form is the dropped USB stick: in a Black Hat
+      experiment at the University of Illinois, 297 dropped drives saw 290
+      picked up and 45% 'call home' when plugged in. Digital baiting uses
+      the same psychology: free software, pirated media, or job offers
+      carrying malware. The tell is always the same — the offer is
+      engineered to make the victim initiate the compromise themselves.
+    how_it_works: >-
+      Attackers seed bait where targets will find it: USB drives in parking
+      lots and lobbies (labeled 'confidential' or 'final exam' for maximum
+      curiosity), or digital bait like cracked software, free streaming,
+      and fake job postings. Variants: physical media drops; digital
+      freebie lures (software, media, documents); and quid-pro-quo-adjacent
+      bait (free services in exchange for access). When the victim plugs in
+      the drive or runs the download, the payload executes. Detection is
+      endpoint-centric: removable-media execution controls, download
+      sandboxing, and user reports of 'found' media.
+    variants:
+      - "Physical media drops: USB drives seeded in parking lots, lobbies, and desks with curiosity-triggering labels."
+      - "Digital freebie lures: cracked software, pirated media, or free tools carrying malware payloads."
+      - "Opportunity bait: fake job offers, prizes, or exclusive deals that require installing software or sharing access."
+    indicators:
+      - "Unknown USB devices plugged into endpoints, especially with enticing labels reported by staff."
+      - "Downloads of unvetted 'free' software or media on corporate devices, particularly from non-official sources."
+      - "Removable-media autorun or script execution attempts blocked by endpoint controls."
+      - "Users reporting found media or suspicious free-offer lures — a leading indicator, not noise."
+    detection:
+      rule: detect_baiting
+      patterns:
+        - '(?i)(usb|removable).*(autorun|execute|script).*(blocked|unknown.device)'
+        - '(?i)(free.*(software|crack|download)|prize|exclusive.offer).*(install|run|enable.macros)'
+        - '(?i)(confidential|final.exam|salary).*(usb|drive|found.media)'
+    severity: medium
+    mitigations:
+      - "Disable autorun and restrict removable-media execution; consider blocking USB mass storage on high-risk endpoints."
+      - "Application allowlisting so bait payloads cannot execute even if the victim tries."
+      - "Clear 'found media' procedure: never plug it in — hand to security — plus regular reminders."
+      - "Web filtering and download sandboxing to catch digital bait before execution."
+    examples:
+      - summary: "Researcher Elie Bursztein's Black Hat experiment dropped 297 USB sticks on a university campus: 290 were picked up, 135 (45%) called home when plugged in — quantifying how reliably curiosity defeats policy."
+        reference: "https://www.infosecurity-magazine.com/blogs/bhusa-dropped-usb-experiement/"
+      - summary: "Dark Reading's long-running 'Social Engineering, the USB Way' analysis notes that sprinkling drives in a lobby reliably compromises organizations — 'all the technology and filtering in the world won't address human nature.'"
+        reference: "https://www.darkreading.com/perimeter/social-engineering-the-usb-way"
+    references:
+      - "https://www.infosecurity-magazine.com/blogs/bhusa-dropped-usb-experiement/"
+      - "https://www.darkreading.com/perimeter/social-engineering-the-usb-way"
+      - "https://phys.org/news/2016-05-social-exploits-networks-weakest-pointpeople.html"
+
+  - id: AEG-T133
+    name: "Quid Pro Quo"
+    category: social_engineering
+    description: >-
+      Quid pro quo offers a favor first — tech support, a gift, useful
+      information — to trigger the reciprocity instinct, then asks for
+      access or credentials in return. A University of Luxembourg study
+      (1,208 participants, published in Computers in Human Behavior) found
+      43.5% of people given chocolate beforehand revealed their password,
+      versus 29.8% in the control group. In enterprise form, the classic is
+      the fake IT support call: 'we're fixing a problem on your machine,
+      just give me your login.' The favor is always cheaper than what it
+      buys.
+    how_it_works: >-
+      The attacker provides something of small value — help, a gift, flattery,
+      insider tips — creating a sense of obligation, then makes the real
+      ask. Variants: fake tech-support quid pro quo (help offered, credentials
+      requested); gift/reciprocity plays (small gifts before the ask, as in
+      the chocolate study); and information-trade (offering 'useful' data in
+      exchange for sensitive data). Detectable tells: linguistic (the favor
+      is unsolicited, the ask follows suspiciously fast); procedural (real
+      IT never asks for your password, ever — the ask itself is the tell).
+    variants:
+      - "Fake tech-support quid pro quo: unsolicited 'help' with a problem you didn't report, ending in a credential request."
+      - "Gift/reciprocity plays: small favors or gifts creating obligation before the real ask."
+      - "Information trades: offering seemingly valuable information in exchange for sensitive details."
+    indicators:
+      - "Unsolicited offers of help followed by requests for passwords, codes, or access."
+      - "Gifts, favors, or flattery immediately preceding a sensitive request."
+      - "The 'helper' cannot be verified through official directories or ticket systems."
+      - "Pressure framed as reciprocity: 'after all I've done, just do this one thing.'"
+    detection:
+      rule: detect_quid_pro_quo
+      patterns:
+        - '(?i)(help.*(fix|support)|gift|favor).*(password|credentials|access|code).*(request|ask)'
+        - '(?i)(unsolicited.*(support|help)).*(no.ticket|unverifiable)'
+        - '(?i)(in.exchange|in.return|as.a.thank).*(login|password|access)'
+    severity: medium
+    mitigations:
+      - "Absolute rule, endlessly repeated: IT and security staff NEVER ask for passwords — any such request is hostile by definition."
+      - "Ticket-based verification: all support interactions must reference a user-initiated ticket verifiable in the ITSM system."
+      - "Awareness training on reciprocity as an attack primitive, using the chocolate-study data to make it memorable."
+      - "Reporting culture that rewards flagging unsolicited 'help' rather than punishing suspicion."
+    examples:
+      - summary: "The University of Luxembourg's reciprocity experiment (Happ et al., Computers in Human Behavior, 2016) showed a small upfront gift raised password disclosure from 29.8% to 43.5% — the measured power of quid pro quo."
+        reference: "https://phys.org/news/2016-05-social-exploits-networks-weakest-pointpeople.html"
+      - summary: "Infosecurity Europe's street surveys found a fifth to two-thirds of office workers would disclose passwords for a chocolate bar and a smile — quid pro quo working at scale against real employees."
+        reference: "https://www.computing.co.uk/news/1817196/two-thirds-workers-fall-password-honeytrap"
+    references:
+      - "https://phys.org/news/2016-05-social-exploits-networks-weakest-pointpeople.html"
+      - "https://www.computing.co.uk/news/1817196/two-thirds-workers-fall-password-honeytrap"
+      - "https://www.firstpost.com/tech/news-analysis/people-reveal-login-passwords-in-return-for-chocolates-3681749.html"
+
+  - id: AEG-T134
+    name: "Watering-Hole Attacks (Social Vector)"
+    category: social_engineering
+    description: >-
+      Watering-hole attacks compromise websites the target population
+      already trusts and waits at — industry forums, regional news sites,
+      vendor portals — infecting visitors instead of contacting them
+      directly. As a social vector it is elegant: no lure to write, no
+      email to filter; the victim's own browsing habit delivers them.
+      Documented cases range from the 2019 Holy Water campaign (fake
+      software-update prompts on compromised Asian community sites) to
+      ESET's Candiru findings (Middle East news and ministry sites rigged
+      with spyware) and a 2025 APT29 campaign Amazon disrupted that
+      steered visitors into spoofed device-code authentication flows.
+    how_it_works: >-
+      Operators profile the target community's browsing, compromise a
+      trusted site (often via its own unpatched CMS), and inject malicious
+      code. Variants: drive-by exploitation (browser/plugin flaws firing on
+      visit); fake-update lures (Holy Water's bogus software-update
+      prompts); and credential-flow hijacking (APT29's spoofed Microsoft
+      device-code pages mimicking Cloudflare challenges). Some campaigns
+      fingerprint visitors and only attack selected targets. Detectable
+      tells: technical (unexpected script injections or redirects on
+      trusted sites, new device-code auth prompts); procedural (software
+      updates should only ever come from vendor channels, never a
+      third-party site's pop-up).
+    variants:
+      - "Drive-by watering holes: exploit code firing automatically when a target visits the compromised trusted site."
+      - "Fake-update watering holes: convincing software-update prompts on compromised community or vendor sites (Holy Water)."
+      - "Credential-flow watering holes: spoofed authentication or verification pages harvesting tokens (APT29 device-code campaign)."
+    indicators:
+      - "Trusted industry or community sites serving unexpected scripts, redirects, or update prompts."
+      - "Device-code or SSO authentication prompts appearing from unusual referrers or mimicked verification pages."
+      - "Targeted users reporting strange behavior on sites their peers also visit."
+      - "Threat-intel naming compromised sites frequented by your sector or workforce."
+    detection:
+      rule: detect_watering_hole
+      patterns:
+        - '(?i)(trusted.site|vendor.portal).*(injected.script|unexpected.redirect|drive.by)'
+        - '(?i)(fake.update|software.update).*(third.party.site|popup).*(prompt)'
+        - '(?i)(device.code|verification.page).*(spoofed|mimick|unusual.referrer)'
+    severity: high
+    mitigations:
+      - "Browser hardening: automatic updates, script blocking on untrusted contexts, and isolation for high-risk browsing."
+      - "Software-update discipline: updates only from vendor channels; treat any third-party update prompt as hostile."
+      - "Phishing-resistant MFA so harvested credentials or tokens alone cannot complete authentication."
+      - "Sector threat-intel sharing on compromised community sites, with rapid internal notification to likely visitors."
+    examples:
+      - summary: "The 2019 Holy Water campaign compromised Asian community, charity, and religious-figure websites and served fake software-update prompts — a watering hole relying on user interaction rather than exploits."
+        reference: "https://www.expressvpn.com/blog/watering-hole-attack/"
+      - summary: "ESET researchers found Candiru spyware deployed via watering holes on Middle East Eye, Yemeni media, and Iranian ministry sites — trusted regional sites turned into targeted infection points."
+        reference: "https://www.computing.co.uk/news/4040542/israeli-spyware-firm-linked-watering-hole-attacks-middle-east-uk-websites"
+    references:
+      - "https://www.expressvpn.com/blog/watering-hole-attack/"
+      - "https://www.computing.co.uk/news/4040542/israeli-spyware-firm-linked-watering-hole-attacks-middle-east-uk-websites"
+      - "https://www.cyware.com/resources/threat-briefings/daily-threat-briefing/cyware-daily-threat-intelligence-october-01-2026"
+
+  - id: AEG-T135
+    name: "Executive and CEO Impersonation"
+    category: social_engineering
+    description: >-
+      Impersonating the CEO, CFO, or another executive converts
+      organizational hierarchy into an attack tool: subordinates comply
+      because refusing the boss feels riskier than complying. Classic CEO
+      fraud used spoofed email; the modern form adds cloned voice and
+      deepfake video, as in the 2024 Arup case where a finance employee
+      joined a video call with a deepfaked CFO and colleagues and made 15
+      transfers totaling ~$25M. The authority gradient is the vulnerability
+      — the fix is procedural, not technical.
+    how_it_works: >-
+      Actors study executive communication style (from breached mail,
+      earnings calls, social media), then issue directives through the
+      channel with the least verification. Variants: email CEO fraud
+      (urgent wire instructions); voice-cloned executive calls; deepfake
+      video meetings (Arup); and messaging-app impersonation (WhatsApp/
+      Signal messages claiming to be the executive with a 'new number').
+      Detectable tells: linguistic (urgency + secrecy + 'don't tell
+      anyone'; slight style mismatch); technical (new number, new email,
+      video artifacts or refusal to interact live); procedural (any
+      executive payment directive arriving outside normal approval
+      workflow is hostile until verified).
+    variants:
+      - "Email CEO fraud: spoofed or lookalike-domain messages issuing urgent payment directives."
+      - "Voice-cloned executive calls: AI-cloned voice of a known leader authorizing transfers or access."
+      - "Deepfake video meetings: synthetic executives on video calls directing financial actions (Arup 2024)."
+    indicators:
+      - "Payment or data directives from an executive arriving via an unusual channel (new number, personal email, new messaging account)."
+      - "Urgency plus secrecy framing: 'confidential acquisition, don't tell anyone, wire today.'"
+      - "Video or voice interactions where the 'executive' avoids live interaction, shows visual artifacts, or can't answer unscripted questions."
+      - "Style mismatch with the executive's known communication patterns."
+    detection:
+      rule: detect_executive_impersonation
+      patterns:
+        - '(?i)(ceo|cfo|executive).*(urgent|confidential|secret).*(wire|transfer|payment).*(today|immediately)'
+        - '(?i)(new.number|new.email|personal.account).*(executive|ceo|cfo).*(directive|instruction)'
+        - '(?i)(video|voice).*(artifact|refuses.live|unscripted.fail).*(executive)'
+    severity: critical
+    mitigations:
+      - "No executive payment directive is valid outside the normal approval workflow — codify this and train finance teams to enforce it against real executives too."
+      - "Out-of-band verification for any unusual executive request: call back on a known number, or use a pre-agreed code word for sensitive directives."
+      - "Video-call verification procedures for high-value actions: require live interaction and challenge questions; treat 'camera issues' as a red flag."
+      - "Limit public audio/video of executives where practical, and monitor for deepfake impersonation of leadership."
+    examples:
+      - summary: "In early 2024, an Arup finance employee in Hong Kong joined a video call where the CFO and colleagues were all deepfakes, then made 15 transfers totaling ~HK$200M (~$25M); Hong Kong police said the meeting was pre-recorded from publicly available material."
+        reference: "https://kenradio.substack.com/p/the-cost-of-proof"
+      - summary: "FBI IC3 data attributes nearly $55.5B in decade-long losses to BEC, with CEO/executive impersonation as a core variant — authority-driven wire fraud at industrial scale."
+        reference: "https://www.infosecurity-magazine.com/news/business-email-compromise-55bn/"
+    references:
+      - "https://kenradio.substack.com/p/the-cost-of-proof"
+      - "https://www.infosecurity-magazine.com/news/business-email-compromise-55bn/"
+      - "https://ictpost.com/the-fake-headline-playbook-is-26-years-old-ai-just-made-it-free/"
+
+  - id: AEG-T136
+    name: "MFA Fatigue (Push Bombing)"
+    category: social_engineering
+    description: >-
+      MFA fatigue — push bombing — defeats multi-factor authentication
+      without breaking any cryptography: the attacker, already holding the
+      victim's password, spams MFA push approvals until the exhausted
+      victim taps 'Approve.' The September 2022 Uber breach is canonical:
+      an attacker bought a contractor's credentials, sent 100+ push
+      prompts, then messaged via WhatsApp posing as Uber IT saying approval
+      would stop the 'glitch' — and got in. Microsoft has observed ~6,000
+      such attempts per day; MITRE tracks it as T1621 (MFA Request
+      Generation). It exploits the human, not the protocol.
+    how_it_works: >-
+      With valid credentials (bought, phished, or stealed via infostealer),
+      the attacker triggers repeated authentication attempts, each firing
+      a push prompt to the victim's phone — often at night or in bursts
+      designed to annoy. Variants: pure push spam (volume until
+      accidental approval); push spam plus IT-impersonation messaging
+      (the Uber WhatsApp layer); and timed bursts during the victim's
+      working hours when prompts look routine. Detectable tells: technical
+      (dozens of push prompts in minutes, many denied then one approved);
+      procedural (the victim never initiated a login). The defense is to
+      remove the human decision: number matching or FIDO2.
+    variants:
+      - "Pure push spam: high-volume approval prompts until the victim approves out of annoyance or habit."
+      - "Push spam plus impersonation: prompts paired with messages posing as IT support instructing the victim to approve."
+      - "Off-hours bombardment: bursts timed when the victim is tired and less likely to scrutinize."
+    indicators:
+      - "Many MFA push prompts to one user in a short window, especially with repeated denials followed by an approval."
+      - "Push approvals at unusual hours or from unusual locations/IPs relative to the user's baseline."
+      - "A push approval immediately followed by new device enrollment, session-token use, or access to sensitive systems."
+      - "Users reporting a flood of unexpected MFA prompts — treat every such report as an active incident."
+    detection:
+      rule: detect_mfa_fatigue
+      patterns:
+        - '(?i)(mfa|push).*(denied|rejected).*(5|10|many).*(then.approved|approved.after)'
+        - '(?i)push.*(bombard|flood|burst).*(prompts|notifications).*(minutes|hour)'
+        - '(?i)(approve.*prompt|mfa.*push).*(unusual.hour|unusual.location|new.device)'
+    severity: critical
+    mitigations:
+      - "Replace tap-to-approve push with number matching (minimum) or FIDO2/WebAuthn hardware keys (immune to fatigue entirely)."
+      - "Rate-limit and alert on anomalous MFA prompt volumes: N prompts in M minutes, or any denied-then-approved sequence."
+      - "User training with the explicit rule: never approve a prompt you didn't initiate — report prompt floods immediately."
+      - "Risk-based step-up: block or challenge authentication when prompt patterns deviate from the user's baseline."
+    examples:
+      - summary: "In September 2022, an attacker linked to Lapsus$ used a contractor's purchased credentials plus 100+ MFA push prompts and a WhatsApp message posing as Uber IT to gain access to Uber's VPN, Slack, and internal systems."
+        reference: "https://intel.mjolnirsecurity.com/mfa-fatigue-attacks"
+      - summary: "Cisco's May 2022 breach followed a similar playbook — compromised credentials plus voice phishing and MFA push abuse — confirming push bombing as a repeatable enterprise intrusion technique."
+        reference: "https://securew2.com/blog/what-is-mfa-fatigue-and-how-do-attackers-exploit-it"
+    references:
+      - "https://intel.mjolnirsecurity.com/mfa-fatigue-attacks"
+      - "https://securew2.com/blog/what-is-mfa-fatigue-and-how-do-attackers-exploit-it"
+      - "http://corsicatech.com/blog/mfa-fatigue-attack/"
+
+  - id: AEG-T137
+    name: "Helpdesk Social Engineering (MFA Reset Attacks)"
+    category: social_engineering
+    description: >-
+      Helpdesk MFA-reset attacks turn IT support into the intrusion vector:
+      the attacker calls the helpdesk impersonating an employee, passes
+      identity verification with researched personal details, and gets
+      credentials reset and MFA re-enrolled to an attacker device. In
+      September 2023, Scattered Spider (UNC3944) used exactly this against
+      MGM Resorts — a ~10-minute call, 'I got a new phone, reset my MFA' —
+      leading to ALPHV/BlackCat ransomware and ~$100M in impact; Caesars
+      was hit the same month. Mandiant confirmed from call recordings that
+      the actors held victims' SSN fragments, dates of birth, and manager
+      names before dialing.
+    how_it_works: >-
+      Attackers research the target (LinkedIn for name, title, manager;
+      breaches for SSN fragments and DOB), then call with a routine
+      pretext — new phone, lost device, locked out. Helpdesk agents,
+      trained to be helpful and measured on resolution speed, verify
+      against static PII the attacker already holds. Variants: MFA
+      reset/re-enrollment to attacker devices; password resets paired with
+      email-rule creation to hide notifications; and SIM-swap-adjacent
+      carrier social engineering. Detectable tells: procedural (reset
+      requests that resist out-of-band verification); technical (MFA
+      re-enrolled to a new device followed by impossible-travel logons);
+      linguistic (native-speaker fluency with rehearsed PII delivery).
+    variants:
+      - "MFA reset/re-enrollment: helpdesk resets MFA to an attacker-controlled device under a 'new phone' pretext."
+      - "Password reset plus concealment: credential reset paired with mail rules hiding the reset notifications."
+      - "Carrier social engineering: SIM-swap-style attacks porting the victim's number to intercept codes."
+    indicators:
+      - "MFA reset or re-enrollment tickets for privileged or high-value users, especially via phone channel."
+      - "MFA enrolled to a new device followed quickly by logons from new locations or devices."
+      - "Password-reset notifications suppressed by newly created mail rules."
+      - "Multiple reset requests across different users in a short window (campaign pattern)."
+    detection:
+      rule: detect_helpdesk_social_engineering
+      patterns:
+        - '(?i)(mfa.*reset|mfa.*reenroll|password.reset).*(phone|helpdesk|ticket).*(new.device|new.phone)'
+        - '(?i)(mail.rule|inbox.rule).*(created).*(delete|hide).*(reset|notification)'
+        - '(?i)(impossible.travel|new.location).*(after|following).*(mfa.reset|reenroll)'
+    severity: critical
+    mitigations:
+      - "Out-of-band identity proofing for all resets: verify via a second channel (manager approval, video call, in-person) — never PII alone."
+      - "Phishing-resistant MFA (FIDO2) so a helpdesk reset alone cannot hand the attacker a working second factor."
+      - "Helpdesk verification standards: no resets based solely on caller-provided PII; flag and escalate high-risk reset requests."
+      - "Post-reset monitoring: alert on new-device enrollment plus anomalous logons for 72 hours after any reset."
+    examples:
+      - summary: "Scattered Spider's September 2023 MGM attack: a ~10-minute helpdesk call impersonating an employee ('new phone, reset my MFA') led to Okta compromise, ALPHV/BlackCat ransomware, a 10-day outage, and ~$100M impact; Caesars paid ~$15M the same month."
+        reference: "https://csoh.org/breaches/scattered-spider-mgm.html"
+      - summary: "Mandiant's UNC3944 research confirmed from forensic call recordings that the actors possessed victims' SSN last-four, DOB, and manager names before calling — and used the consistent 'new phone' pretext to get MFA tokens reset."
+        reference: "https://intel.mjolnirsecurity.com/mgm-scattered-spider"
+    references:
+      - "https://csoh.org/breaches/scattered-spider-mgm.html"
+      - "https://intel.mjolnirsecurity.com/mgm-scattered-spider"
+      - "https://infocon.org/mirrors/vx%20underground%20-%202025%20June/Papers/Malware%20Defense/Malware%20Analysis/2023/2023-09-18%20-%20-Scattered%20Spider-%20group%20launches%20ransomware%20attacks%20while%20expanding%20targets%20in%20hospitality%2C%20retail.pdf"
+
+  - id: AEG-T138
+    name: "Deepfake-Enabled Fraud"
+    category: social_engineering
+    description: >-
+      Generative AI now produces convincing synthetic faces and voices from
+      publicly available recordings, turning 'seeing is believing' into an
+      attack surface. The 2024 Arup case — a finance employee on a video
+      call with deepfaked CFO and colleagues, 15 transfers, ~$25M lost —
+      proved deepfakes can defeat an entire room of supposed verification.
+      The FBI/CISA October 2026 PSA warns AI-generated content makes
+      phishing larger, more efficient, and more effective, with deepfake
+      audio/video creating false identities. Familiar faces and voices are
+      no longer credentials.
+    how_it_works: >-
+      Attackers harvest public audio/video (earnings calls, webinars,
+      social media), generate voice clones or video avatars, and deploy
+      them where trust is highest. Variants: deepfake video meetings
+      directing payments (Arup); voice-cloned executive or family
+      emergency calls ('kidnapping' scams); and deepfake-augmented
+      phishing/vishing where synthetic media backs up a text lure.
+      Detectable tells: linguistic (scripted responses, inability to handle
+      unscripted questions); technical (lip-sync artifacts, unnatural
+      blinking, audio glitches, refusal of live interaction); procedural
+      (the 'person' discourages independent verification — always the
+      strongest tell).
+    variants:
+      - "Deepfake video meetings: synthetic executives or colleagues on calls directing payments or data release (Arup 2024)."
+      - "Voice-clone fraud: cloned voices of executives or family members manufacturing urgency (wire fraud, fake kidnappings)."
+      - "Deepfake-augmented phishing: synthetic audio/video reinforcing text lures, per the FBI/CISA 2026 PSA."
+    indicators:
+      - "Video-call participants who avoid live interaction, show lip-sync or lighting artifacts, or can't answer unscripted questions."
+      - "Voice callers with familiar voices making uncharacteristic urgent requests, especially with call-quality anomalies."
+      - "Payment or credential directives delivered through synthetic media channels that resist independent verification."
+      - "The supposed person discourages hanging up and calling back on a known number."
+    detection:
+      rule: detect_deepfake_fraud
+      patterns:
+        - '(?i)(video.call|voice.call).*(artifact|lip.sync|unscripted.fail|refuses.live)'
+        - '(?i)(familiar.voice|known.executive).*(uncharacteristic|urgent).*(verify|callback.refused)'
+        - '(?i)(deepfake|synthetic.media|ai.generated).*(fraud|impersonat|payment.directive)'
+    severity: critical
+    mitigations:
+      - "Verification procedures that don't rely on face or voice: pre-agreed code words, call-back on known numbers, and multi-person approval for payments."
+      - "Challenge protocols on sensitive calls: unscripted questions, requests for live gestures, or moving to a second verified channel."
+      - "Reduce source material: limit public posting of high-fidelity executive audio/video where practical."
+      - "Payment workflow controls (dual authorization, amount thresholds) that no single call — real or fake — can override."
+    examples:
+      - summary: "Arup (Hong Kong, early 2024): a finance employee joined a video call with deepfaked CFO and colleagues and executed 15 transfers totaling ~HK$200M (~$25M); police found the meeting was pre-recorded from public material and follow-up instructions came via instant message."
+        reference: "https://kenradio.substack.com/p/the-cost-of-proof"
+      - summary: "The FBI/CISA joint PSA of October 2026 warns that AI-generated content — including deepfake audio/video — now makes phishing and smishing campaigns larger and more effective, explicitly naming synthetic identities as a current threat."
+        reference: "https://windowsforum.com/news/fbi-and-cisa-warn-election-teams-of-ai-deepfake-phishing-and-smishing-ahead-of-2026-midterms.448654/"
+    references:
+      - "https://kenradio.substack.com/p/the-cost-of-proof"
+      - "https://ictpost.com/the-fake-headline-playbook-is-26-years-old-ai-just-made-it-free/"
+      - "https://windowsforum.com/news/fbi-and-cisa-warn-election-teams-of-ai-deepfake-phishing-and-smishing-ahead-of-2026-midterms.448654/"

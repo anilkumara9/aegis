@@ -1,0 +1,578 @@
+pack: hacker_tools
+version: "1.0"
+techniques:
+  - id: AEG-T171
+    name: "Network Reconnaissance Scanners (nmap-class)"
+    category: hacker_tools
+    description: >-
+      Network scanners probe hosts and networks to map live systems, open ports,
+      running services, and operating-system fingerprints before an attack. They
+      are dual-use: administrators use them for asset inventory, while attackers
+      use them to find exposed services worth targeting. Because scanning is the
+      noisiest pre-attack activity, it is often a defender's earliest warning
+      that a host or subnet is being sized up.
+    how_it_works: >-
+      At TTP level, scanners walk an IP range and test each host/port with
+      crafted packets, inferring state from responses. Variants defenders must
+      recognize: full-connect TCP scans (complete handshakes, logged by the
+      target service); SYN/half-open scans (no completed handshake, evades naive
+      application logs but visible to firewalls/IDS); stealth scans (FIN, Xmas,
+      NULL packets that exploit RFC ambiguities); UDP scans (slower, used for
+      DNS/SNMP); ping sweeps and service banner grabbing that reveal exact
+      software versions for later exploit matching.
+    variants:
+      - "Full-connect TCP scan (completes 3-way handshake per port)"
+      - "SYN half-open scan (no completed handshake; firewall/IDS-visible)"
+      - "Stealth scans (FIN/Xmas/NULL packets exploiting stack ambiguities)"
+      - "Ping sweeps and service banner grabbing (version fingerprinting)"
+    indicators:
+      - "One external or internal source touching many sequential destination ports on a target within a short window (firewall/IDS logs)"
+      - "Bursts of ICMP echo requests across a subnet followed by targeted TCP probes (ping sweep pattern)"
+      - "High rate of connection attempts to closed/filtered ports (RST/ACK or timeout responses)"
+      - "Service banners (HTTP Server headers, SSH version strings) requested without normal application behavior"
+    detection:
+      rule: detect_port_scan
+      patterns:
+        - "single source contacting >20 distinct destination ports on one target within 60 seconds"
+        - "ICMP sweep: >50 echo requests to distinct hosts in one subnet within 30 seconds followed by TCP probes"
+        - '(?i)\bnmap\b'
+    severity: medium
+    mitigations:
+      - "Reduce exposed surface: close unused ports and services at the firewall so scans return nothing useful"
+      - "Enable IDS/IPS port-scan detection with automatic temporary blocking of scanner sources"
+      - "Segment internal networks so a compromised host cannot sweep neighboring subnets freely"
+      - "Log and alert on denied-connection spikes at the perimeter; feed scanner IPs to threat intelligence"
+    examples:
+      - summary: "MITRE documents TRITON attackers (TEMP.Veles) performing network reconnaissance scans against targets of interest prior to the safety-system attack."
+        reference: "https://attack.mitre.org/techniques/T1595/"
+      - summary: "Ember Bear (Cadet Blizzard) used publicly available scanning tools such as MASSCAN for vulnerability scanning of public-facing infrastructure."
+        reference: "https://attack.mitre.org/groups/G1003/"
+    references:
+      - "https://attack.mitre.org/techniques/T1595/"
+      - "https://attack.mitre.org/groups/G1003/"
+
+  - id: AEG-T172
+    name: "Vulnerability Scanners (nessus-class)"
+    category: hacker_tools
+    description: >-
+      Vulnerability scanners automate the matching of discovered software
+      versions and configurations against databases of known CVEs. Attackers use
+      the same class of tooling as defenders to find which public-facing systems
+      are exploitable right now. Mass internet-wide scanning for a newly
+      disclosed CVE typically begins within hours of disclosure, so scanner
+      telemetry is a leading indicator of imminent exploitation attempts.
+    how_it_works: >-
+      The scanner fingerprints services (banners, error pages, API responses),
+      then tests for known-vulnerable conditions using version checks and safe
+      probe requests. Variants: unauthenticated network scans (external,
+      noisiest); authenticated/credentialed scans (deeper, used by insiders or
+      post-compromise); web-application DAST scans (crawl + inject test
+      payloads). Attackers chain scanner output directly into exploit
+      selection, often prioritizing CVEs on CISA's Known Exploited
+      Vulnerabilities list.
+    variants:
+      - "Unauthenticated external network scans (noisiest, pre-compromise)"
+      - "Authenticated/credentialed scans (deeper configuration checks)"
+      - "Web-application DAST scans (crawl plus injected test payloads)"
+    indicators:
+      - "HTTP requests carrying known scanner user-agent strings or default scanner headers in web logs"
+      - "Sequential probing of version-disclosure endpoints (/.git/HEAD, /wp-json/, /server-status) from one source"
+      - "WAF hits containing CVE-specific probe strings, e.g. JNDI lookup patterns seen during Log4Shell scanning waves"
+      - "Rapid-fire requests across many paths with vulnerability-test payloads (SQLi/XSS canaries) in query strings"
+    detection:
+      rule: detect_vulnerability_scan
+      patterns:
+        - '\$\{jndi:(ldap|rmi|dns):'
+        - '(?i)(/\.env|/\.git/|/actuator)\b'
+    severity: medium
+    mitigations:
+      - "Patch on a risk-based schedule driven by CISA KEV and active-exploitation intelligence, not CVSS alone"
+      - "Deploy WAF virtual patching for internet-facing apps so scanner probes fail even before code patches land"
+      - "Minimize version disclosure (suppress banners, error details) to starve scanners of fingerprint data"
+      - "Block or tarpit obvious scanner user-agents at the edge as a secondary control"
+    examples:
+      - summary: "CISA's joint Log4Shell advisory (AA21-356A) documented sophisticated actors actively scanning networks to exploit Log4Shell within days of disclosure."
+        reference: "https://www.aha.org/h-isac-reports/2021-12-22-h-isac-tlp-white-vulnerability-cisa-releases-aa21-356a-mitigating"
+      - summary: "Ember Bear used Acunetix and MASSCAN for vulnerability scanning of government and critical-infrastructure targets."
+        reference: "https://attack.mitre.org/groups/G1003/"
+    references:
+      - "https://www.aha.org/h-isac-reports/2021-12-22-h-isac-tlp-white-vulnerability-cisa-releases-aa21-356a-mitigating"
+      - "https://neotechcloudsolutions.com/en/old-vulnerabilities-2015-exploited-cisa-catalog/"
+
+  - id: AEG-T173
+    name: "Exploitation Frameworks (metasploit-class)"
+    category: hacker_tools
+    description: >-
+      Exploitation frameworks bundle exploit modules, payload stagers, and
+      post-exploitation plugins into one modular platform, turning a disclosed
+      vulnerability into working code execution within hours. They are the
+      industrialization layer between vulnerability disclosure and mass
+      exploitation. Defenders detect them through staging behavior, in-memory
+      payload artifacts, and the distinctive network patterns of staged
+      payload delivery.
+    how_it_works: >-
+      An operator selects an exploit module matched to a target service; the
+      framework delivers a small stager that pulls down a larger stage (e.g. a
+      reflective-DLL session) over HTTP/HTTPS. Variants: full console
+      frameworks with hundreds of modules; post-exploitation-only kits focused
+      on privilege escalation and lateral movement; exploit-as-a-service
+      offerings in ransomware-affiliate ecosystems. Observable stages are
+      initial exploit traffic, stager download, stage download, and then
+      session establishment.
+    variants:
+      - "Full exploit frameworks (exploit modules plus staged payloads)"
+      - "Post-exploitation-only kits (privilege escalation, lateral movement plugins)"
+      - "Exploit-as-a-service in ransomware affiliate ecosystems"
+    indicators:
+      - "Small stager download followed minutes later by a much larger stage download to the same host over HTTP/S"
+      - "Reflective DLL loading / in-memory-only execution with no corresponding on-disk binary (EDR memory telemetry)"
+      - "Exploit-attempt strings from published proof-of-concept code appearing in WAF/IDS logs shortly after CVE disclosure"
+      - "Unusual child processes of exploited services (e.g. a web-server worker spawning a command shell)"
+    detection:
+      rule: detect_exploit_framework_staging
+      patterns:
+        - "two-stage download pattern: HTTP GET of small payload (<50KB) followed by larger payload to same host within 10 minutes"
+        - "WAF/IDS signature hit for a published exploit proof-of-concept targeting a service version present in inventory"
+    severity: critical
+    mitigations:
+      - "Patch internet-facing services fast, prioritizing CVEs with published exploits and CISA KEV listings"
+      - "Deploy EDR with behavioral and memory-scanning detection tuned for reflective loading and process injection"
+      - "Application allowlisting and constrained language modes to block stager execution paths"
+      - "Segment and isolate critical services so one exploited host cannot reach the rest of the estate"
+    examples:
+      - summary: "Bad Rabbit spread using the EternalRomance SMB exploit and Mimikatz credential harvesting, showing exploit-module plus credential-tool chaining in a real worm."
+        reference: "https://attack.mitre.org/versions/v17/software/S0606/"
+      - summary: "Attackers weaponized Log4Shell within days of disclosure; the joint CISA/FBI/NSA advisory documents active exploitation and mass scanning, the classic framework-accelerated window."
+        reference: "https://www.aha.org/h-isac-reports/2021-12-22-h-isac-tlp-white-vulnerability-cisa-releases-aa21-356a-mitigating"
+    references:
+      - "https://attack.mitre.org/versions/v17/software/S0606/"
+      - "https://www.aha.org/h-isac-reports/2021-12-22-h-isac-tlp-white-vulnerability-cisa-releases-aa21-356a-mitigating"
+
+  - id: AEG-T174
+    name: "Command-and-Control (C2) Frameworks (cobalt-strike-class)"
+    category: hacker_tools
+    description: >-
+      C2 frameworks give operators a remote shell on compromised hosts through
+      implants ("beacons") that periodically check in with attacker-controlled
+      infrastructure. The best-known commercial red-team platform in this class
+      is also the most abused: cracked and leaked copies are a staple of APT
+      and ransomware operations. Because beacons must phone home on a schedule,
+      beaconing rhythms are the single most huntable network signature.
+    how_it_works: >-
+      An implant is placed on the victim host and calls back to a team server on
+      a configured interval with jitter. Variants: HTTPS beacons blending into
+      web traffic with malleable profiles mimicking legitimate services; DNS
+      tunneling beacons encoding data in DNS queries; web-service dead drops
+      using legitimate cloud services as message boards; SMB/named-pipe beacons
+      for internal lateral C2. Operators issue tasks and receive results through
+      the same channel.
+    variants:
+      - "HTTPS beacons with malleable profiles mimicking legitimate services"
+      - "DNS tunneling beacons encoding data in DNS queries"
+      - "Web-service dead drops using legitimate cloud services as relays"
+      - "SMB/named-pipe beacons for internal lateral command and control"
+    indicators:
+      - "Periodic outbound connections to a rare or newly seen domain at fixed intervals with jitter (beaconing rhythm in proxy/firewall logs)"
+      - "Long-lived TLS sessions to uncategorized infrastructure with low, regular byte counts"
+      - "Abnormal DNS query volume, especially TXT queries, from a single endpoint"
+      - "Named-pipe artifacts and injected threads in legitimate processes on the host (EDR telemetry)"
+    detection:
+      rule: detect_c2_beacon
+      patterns:
+        - "outbound HTTPS connections to the same rare domain at near-regular intervals (jitter < 30%) over 24h"
+        - "single host issuing >100 DNS TXT queries per hour to external resolvers"
+    severity: critical
+    mitigations:
+      - "Egress filtering and TLS inspection at the proxy: deny-by-default outbound to uncategorized domains"
+      - "DNS monitoring, response-policy zones, and sinkholing of malicious domains"
+      - "EDR behavioral rules for beacon implants (named pipes, process injection, scheduled callbacks)"
+      - "Continuous beacon-hunting in NetFlow/proxy logs; isolate and reimage on confirmed callback"
+    examples:
+      - summary: "Mandiant's M-Trends data showed Cobalt Strike BEACON in 28% of investigations at its 2021 peak; Fortra reports rogue BEACON sightings fell 80% after the 2023 public/private disruption operation."
+        reference: "https://www.fortra.com/blog/new-report-highlights-rogue-cobalt-strike-down-80-beacon-still-1-malware-family"
+      - summary: "The Emotet botnet's ~700 C2 servers were seized in the January 2021 Europol-coordinated takedown, after its infrastructure served as a primary access broker for ransomware groups."
+        reference: "https://www.Welivesecurity.Com/2021/01/28/emotet-botnet-disrupted-global-operation/"
+    references:
+      - "https://www.fortra.com/blog/new-report-highlights-rogue-cobalt-strike-down-80-beacon-still-1-malware-family"
+      - "https://www.huntress.com/threat-library/malware/cobalt-strike"
+  - id: AEG-T175
+    name: "Post-Exploitation Kits"
+    category: hacker_tools
+    description: >-
+      Post-exploitation kits automate what happens after the initial foothold:
+      privilege escalation, credential access, persistence, discovery, and
+      lateral movement. They compress the window between first access and
+      domain-wide compromise from days to minutes. Defenders detect them through
+      lateral logon patterns, new persistence mechanisms, and tool-transfer
+      activity between hosts.
+    how_it_works: >-
+      Once a session exists, operators load modules that enumerate the host,
+      escalate privileges, harvest credentials, and move laterally. Variants:
+      in-memory-only kits that never touch disk; living-off-the-land kits built
+      from native binaries (PowerShell, WMI, PsExec-style service creation);
+      lateral-movement modules using SMB shares, WinRM, or RDP. A common
+      sequence is credential theft, then pass-the-hash lateral movement, then
+      persistence on high-value hosts.
+    variants:
+      - "In-memory-only kits (no on-disk artifacts; EDR memory telemetry needed)"
+      - "Living-off-the-land kits (native binaries: WMI, WinRM, service creation)"
+      - "Lateral-movement modules (SMB admin shares, RDP, remote scheduled tasks)"
+    indicators:
+      - "Lateral logon bursts: one source host authenticating to many targets via SMB/RDP/WinRM (Windows Event 4624 type 3/10)"
+      - "New scheduled tasks, services, or WMI event subscriptions appearing on multiple hosts in a short window"
+      - "Tool transfer over admin shares (e.g. writes to \\\\host\\ADMIN$) from a non-administrative source"
+      - "Credential-access activity (LSASS reads) immediately followed by outbound lateral connections"
+    detection:
+      rule: detect_post_exploit_lateral
+      patterns:
+        - "single source host generating successful network logons (Event 4624, Logon Type 3) to >5 distinct hosts within 30 minutes"
+        - "file writes to ADMIN$ or C$ shares originating from a host with no legitimate admin tooling"
+    severity: critical
+    mitigations:
+      - "Credential hygiene: tiered administration, LAPS for local admins, no domain-admin logons on workstations"
+      - "Network segmentation and host firewalls blocking lateral SMB/RDP/WinRM between user segments"
+      - "EDR with lateral-movement behavioral detection and automatic host isolation"
+      - "Just-in-time privileged access so standing admin credentials are not available to steal"
+    examples:
+      - summary: "Bad Rabbit combined Mimikatz credential theft, scheduled-task persistence, and SMB-based lateral spread using the EternalRomance exploit."
+        reference: "https://attack.mitre.org/versions/v17/software/S0606/"
+      - summary: "BlackMatter ransomware actors abused LDAP and SMB to discover hosts across Active Directory, then remotely encrypted hosts and shared drives."
+        reference: "https://www.cybersecurity-help.cz/blog/2374.html"
+    references:
+      - "https://attack.mitre.org/versions/v17/software/S0606/"
+      - "https://www.cybersecurity-help.cz/blog/2374.html"
+
+  - id: AEG-T176
+    name: "Credential-Dumping Tools (mimikatz-class)"
+    category: hacker_tools
+    description: >-
+      Credential-dumping tools extract authentication material — plaintext
+      passwords, NTLM hashes, Kerberos tickets, browser-stored credentials —
+      from operating-system stores. The canonical target on Windows is LSASS
+      process memory; on domain controllers it is the NTDS.dit database. A
+      single successful dump typically converts one compromised host into
+      domain-wide access, which is why LSASS access is treated as a critical
+      alert.
+    how_it_works: >-
+      The tool reads credential material that the OS keeps for single sign-on.
+      Variants defenders track: LSASS memory scraping (needs admin/SYSTEM,
+      leaves process-access events); SAM and LSA-secret extraction from registry
+      hives; DCSync, which abuses domain replication protocols to pull hashes
+      as if it were a domain controller; browser credential-store theft. Output
+      is usually NTLM hashes or Kerberos tickets reused for lateral movement.
+    variants:
+      - "LSASS memory scraping (process-memory read of credential material)"
+      - "SAM/LSA-secret extraction from registry hives"
+      - "DCSync (abusing domain replication to pull credentials without touching the DC disk)"
+      - "Browser credential-store theft"
+    indicators:
+      - "Non-system process opening LSASS with memory-read access rights (Sysmon Event 10, GrantedAccess 0x1010/0x1410)"
+      - "Volume-shadow-copy or ntdsutil activity on a domain controller outside backup windows"
+      - "DCSync-style replication requests (DRSUAPI) originating from a host that is not a domain controller"
+      - "Known dumping-tool process names, hashes, or command-line artifacts in EDR telemetry"
+    detection:
+      rule: detect_lsass_access
+      patterns:
+        - "Sysmon Event 10 where TargetImage ends with lsass.exe and SourceImage is not a known security product"
+        - "DRSUAPI replication (Event 4662 on directory objects) requested by a non-DC computer account"
+        - '(?i)mimikatz'
+    severity: critical
+    mitigations:
+      - "Enable Credential Guard / LSA protection so LSASS memory is isolated from admin-level readers"
+      - "Tiered administration and Credential Guard-equivalents so a workstation compromise cannot yield domain credentials"
+      - "EDR rules that block and alert on LSASS access; monitor and alert on DCSync replication"
+      - "Patch and harden domain controllers as tier-0 assets with no internet browsing or email"
+    examples:
+      - summary: "Bad Rabbit used Mimikatz to harvest credentials from victim machines before spreading laterally."
+        reference: "https://attack.mitre.org/versions/v17/software/S0606/"
+      - summary: "Lazarus Group leveraged Mimikatz to extract Windows credentials of logged-in users and steal browser-stored passwords."
+        reference: "https://attack.mitre.org/versions/v4/groups/G0032/"
+    references:
+      - "https://attack.mitre.org/versions/v4/groups/G0032/"
+      - "https://attack.mitre.org/versions/v17/software/S0606/"
+
+  - id: AEG-T177
+    name: "Password-Cracking Tools (hashcat-class, conceptual)"
+    category: hacker_tools
+    description: >-
+      Password-cracking tools recover plaintext passwords from stolen hashes
+      offline, where no lockout policy applies. They combine dictionaries,
+      mangling rules, masks, and massive GPU parallelism. Fast unsalted hashes
+      (MD5, SHA-1, NTLM) fall at billions of guesses per second; properly
+      salted, slow, memory-hard hashes (Argon2id, bcrypt) resist economically.
+      Defenders care because any hash dump becomes a race between cracking and
+      password rotation.
+    how_it_works: >-
+      The tool takes a stolen hash list and guesses candidates, hashing each
+      and comparing. Variants: dictionary attacks with rule-based mangling
+      (leet-speak, appends); mask/brute-force attacks over character sets;
+      rainbow-table lookups against unsalted hashes (precomputation);
+      distributed cracking across GPU rigs or cloud instances. Success depends
+      almost entirely on the hash scheme's speed and the absence of unique
+      salts, not on tool sophistication.
+    variants:
+      - "Dictionary attacks with rule-based mangling"
+      - "Mask and brute-force attacks over character sets"
+      - "Rainbow-table precomputation against unsalted hashes"
+      - "Distributed GPU/cloud cracking rigs"
+    indicators:
+      - "Exfiltration or staging of password-hash files (e.g. /etc/shadow, NTDS extracts) detected by DLP or EDR"
+      - "Sustained 100% GPU/CPU utilization on a compromised server inconsistent with its workload"
+      - "Cracking-rig infrastructure (high-GPU cloud instances) beaconing in NetFlow from unexpected accounts"
+      - "Fresh credential dumps from the organization appearing in breach-notification feeds or paste sites"
+    detection:
+      rule: detect_offline_cracking_activity
+      patterns:
+        - "DLP/EDR alert for /etc/shadow, SAM hive, or NTDS.dit content leaving a host or appearing in staging directories"
+        - "sustained GPU utilization >95% for >1 hour on a host whose baseline workload is not GPU-bound"
+    severity: high
+    mitigations:
+      - "Store passwords only with Argon2id, bcrypt, or PBKDF2 with unique per-password salts (see OWASP guidance)"
+      - "Enforce MFA everywhere so a cracked password alone is insufficient for access"
+      - "Prevent hash theft in the first place (Credential Guard, tiered admin, LSASS monitoring)"
+      - "On any suspected hash exposure, force password resets immediately and monitor for reuse"
+    examples:
+      - summary: "In the ShadowRay campaign, threat actors ran 'cat /etc/shadow' on exposed systems to steal password hashes for offline use."
+        reference: "http://attack.mitre.org/campaigns/C0045/"
+      - summary: "OWASP's Password Storage Cheat Sheet documents why fast hashes like SHA-256 are unsuitable for passwords and mandates slow, salted KDFs."
+        reference: "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html"
+    references:
+      - "http://attack.mitre.org/campaigns/C0045/"
+      - "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html"
+
+  - id: AEG-T178
+    name: "Web Interception Proxies (burp-class, dual-use)"
+    category: hacker_tools
+    description: >-
+      Web interception proxies sit between a browser and a server, letting the
+      operator inspect, pause, and modify every HTTP request and response. They
+      are standard, legitimate tooling for security testing and debugging —
+      and equally the standard tool attackers use to tamper with parameters,
+      replay sessions, and probe for injection flaws. Defenders detect malicious
+      use through request-tampering patterns rather than the tool itself.
+    how_it_works: >-
+      The proxy terminates TLS with a locally trusted CA certificate, giving
+      plaintext visibility into traffic. Operators then modify requests in
+      flight. Variants: manual request tampering (price, role, ID parameters);
+      session replay and token manipulation; automated scanner plugins that
+      fuzz every parameter; mobile app traffic interception via device proxy
+      settings. Malicious use shows as parameter values no legitimate client
+      would generate.
+    variants:
+      - "Manual request tampering (price/role/identifier parameters modified in flight)"
+      - "Session replay and token manipulation"
+      - "Automated scanner plugins fuzzing every parameter"
+      - "Mobile app traffic interception via device proxy configuration"
+    indicators:
+      - "Parameter values that violate business logic (negative prices, other users' IDs, escalated roles) in application logs"
+      - "Rapid sequences of near-identical requests differing by single bytes (repeater-style probing)"
+      - "Sessions exhibiting impossible state transitions or out-of-order workflow steps"
+      - "Requests arriving with testing-proxy default headers or CA artifacts where device management forbids proxies"
+    detection:
+      rule: detect_proxy_tampering
+      patterns:
+        - "application log: same session submitting parameter mutations at machine speed (>10 variants of one request per minute)"
+        - "parameter values failing server-side business-rule validation clustered from a single session/IP"
+    severity: medium
+    mitigations:
+      - "Server-side validation and authorization on every request; never trust client-supplied prices, roles, or IDs"
+      - "Anti-CSRF tokens, strict session binding, and anomaly detection on session behavior"
+      - "Rate limiting plus bot/probing detection at the WAF for repeater-style patterns"
+      - "Run an authorized bug-bounty program to channel proxy-based testing into legal disclosure"
+    examples:
+      - summary: "The 2019 Capital One breach began with manipulated web requests (SSRF) against a misconfigured WAF, escalating to cloud credential theft affecting 100M+ customers — a case study in malicious request manipulation."
+        reference: "https://www.breachsense.com/blog/capital-one-data-breach-case-study/"
+      - summary: "Attackers routinely pair interception proxies with credential stuffing and session attacks; Microsoft's alert-classification guidance shows how anomalous auth flows surface in Defender XDR."
+        reference: "https://learn.microsoft.com/da-dk/defender-xdr/alert-classification-suspicious-ip-password-spray"
+    references:
+      - "https://www.breachsense.com/blog/capital-one-data-breach-case-study/"
+      - "https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet"
+  - id: AEG-T179
+    name: "Wireless Audit Tools (aircrack-class)"
+    category: hacker_tools
+    description: >-
+      Wireless audit tools capture Wi-Fi handshakes, test encryption strength,
+      and detect rogue access points. Administrators use them to validate
+      wireless security; attackers use them to crack weak WPA2 passphrases or
+      stand up evil-twin access points that harvest credentials. The observable
+      signature is anomalous 802.11 management traffic and unknown APs
+      broadcasting trusted network names.
+    how_it_works: >-
+      The tool puts a wireless card in monitor mode and captures the 4-way
+      handshake, which can then be attacked offline. Variants: handshake
+      capture plus offline passphrase cracking (conceptual — same economics as
+      password cracking); evil-twin/rogue APs impersonating corporate SSIDs to
+      intercept credentials; deauthentication-frame injection to force
+      re-authentication and capture handshakes; WPS PIN attacks against weak
+      router setups. All variants generate abnormal management-frame patterns.
+    variants:
+      - "Handshake capture with offline passphrase cracking"
+      - "Evil-twin / rogue access points impersonating trusted SSIDs"
+      - "Deauthentication-frame injection to force re-authentication"
+      - "WPS PIN attacks against weak configurations"
+    indicators:
+      - "Floods of 802.11 deauthentication/disassociation frames from a single BSSID in wireless IDS logs"
+      - "A new access point broadcasting the corporate SSID that is not in the authorized AP inventory"
+      - "Rogue AP detected on the wired side (unknown MAC offering DHCP or bridging traffic)"
+      - "Clients suddenly associating to an AP with a different BSSID but identical SSID"
+    detection:
+      rule: detect_wireless_attack
+      patterns:
+        - "wireless IDS: >50 deauthentication frames per minute from a single source BSSID"
+        - "new BSSID broadcasting corporate SSID absent from authorized AP inventory (NAC/wireless controller)"
+    severity: high
+    mitigations:
+      - "Deploy WPA3 or WPA2-Enterprise with 802.1X certificate-based authentication; eliminate pre-shared keys"
+      - "Run wireless IDS/IPS with rogue-AP detection on both the air and the wired side"
+      - "Disable WPS and enforce strong, unique passphrases where PSK cannot be avoided"
+      - "Mutual authentication (client certificates) so evil twins cannot complete authentication"
+    examples:
+      - summary: "KRACK and related Wi-Fi research demonstrated systemic wireless protocol weaknesses; enterprise guidance since emphasizes WPA3 and 802.1X to neutralize handshake-capture attacks."
+        reference: "https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet"
+      - summary: "Password-spray research shows identity attacks increasingly target authentication flows broadly, including wireless-adjacent credential reuse; Microsoft documents detection of spray patterns in Defender XDR."
+        reference: "https://learn.microsoft.com/da-dk/defender-xdr/alert-classification-suspicious-ip-password-spray"
+    references:
+      - "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html"
+      - "https://learn.microsoft.com/da-dk/defender-xdr/alert-classification-suspicious-ip-password-spray"
+
+  - id: AEG-T180
+    name: "Phishing Frameworks and Kits"
+    category: hacker_tools
+    description: >-
+      Phishing kits are pre-built packages — cloned login pages, credential
+      harvesters, lure templates — that let low-skill actors run convincing
+      credential-theft campaigns, now sold as phishing-as-a-service. Modern
+      kits include adversary-in-the-middle relays that defeat basic MFA by
+      proxying the real login flow. Defenders detect kits through infrastructure
+      patterns (fresh lookalike domains), kit fingerprints in page source, and
+      anomalous authentication flows.
+    how_it_works: >-
+      The operator deploys the kit on bulletproof or compromised hosting and
+      spams lures. Variants: static credential-harvesting kits (cloned pages
+      posting to a drop zone); adversary-in-the-middle kits that relay the
+      victim's session to the real site and steal the authenticated session;
+      QR-code (quishing) and smishing variants that dodge email-link analysis.
+      Kit reuse leaves fingerprints: default directory structures, harvester
+      scripts, and shared HTML templates.
+    variants:
+      - "Static credential-harvesting kits (cloned login pages with drop zones)"
+      - "Adversary-in-the-middle kits (relay real login, steal authenticated session, defeat basic MFA)"
+      - "QR-code (quishing) and SMS (smishing) lure variants"
+    indicators:
+      - "Newly registered lookalike/typosquat domains receiving authentication-themed traffic within days of registration"
+      - "Kit artifacts in page source: known harvester paths, default kit directories, credential-log filenames"
+      - "Email bursts with URL shorteners or QR codes pointing to freshly registered domains"
+      - "Authentication logs showing impossible travel or token replay consistent with AiTM session theft"
+    detection:
+      rule: detect_phishing_kit
+      patterns:
+        - "domain age < 14 days serving pages with password-input forms and brand-keyword typosquat names"
+        - "HTTP requests to known kit paths (e.g. /panel/logs/, credential-drop filenames) on external hosts"
+    severity: high
+    mitigations:
+      - "Deploy phishing-resistant MFA (FIDO2/passkeys); SMS and push-only MFA falls to AiTM kits"
+      - "Email authentication (SPF/DKIM/DMARC) plus link/attachment sandboxing and QR-code inspection"
+      - "Brand monitoring and rapid takedown of lookalike domains; user reporting buttons with fast triage"
+      - "Conditional Access risk policies that challenge or block anomalous sign-ins even with valid credentials"
+    examples:
+      - summary: "FBI IC3's 2025 Internet Crime Report recorded 191,561 phishing/spoofing complaints — still the most-reported cybercrime category — with AI-assisted impersonation a growing driver."
+        reference: "https://www.hipaajournal.com/fbi-internet-crime-complaint-report-2025/"
+      - summary: "The CISA/FBI DarkSide advisory documents phishing as the ransomware group's typical initial-access vector, paired with Cobalt Strike C2."
+        reference: "https://redmondmag.com/articles/2021/05/12/security-advice-attack-on-fuel-pipeline.aspx"
+    references:
+      - "https://www.hipaajournal.com/fbi-internet-crime-complaint-report-2025/"
+      - "https://redmondmag.com/articles/2021/05/12/security-advice-attack-on-fuel-pipeline.aspx"
+
+  - id: AEG-T181
+    name: "Exploit Collections as Patch Intelligence"
+    category: hacker_tools
+    description: >-
+      Public exploit and proof-of-concept collections archive working exploits
+      for disclosed vulnerabilities. Attackers mine them for ready-made
+      weapons; mature defenders mine them for the opposite reason — exploit
+      availability is one of the strongest signals for patch prioritization. A
+      CVE with a public exploit and active scanning deserves emergency handling
+      regardless of its CVSS score.
+    how_it_works: >-
+      Researchers publish PoCs shortly after disclosure; collections index them
+      by CVE, product, and platform. Defender workflow: ingest PoC-release
+      feeds, check the vulnerable product against the asset inventory, and
+      escalate patching or virtual patching when exploit code exists in the
+      wild. Attackers run the same loop in reverse: scan for the vulnerable
+      version, then fire the published exploit. Honeypots confirm which PoCs
+      are being actively weaponized.
+    variants:
+      - "Proof-of-concept repositories indexed by CVE"
+      - "Curated exploit archives with platform and reliability metadata"
+      - "Vendor advisories shipping with exploit details"
+    indicators:
+      - "WAF/IDS hits containing request strings copied verbatim from published PoCs for CVEs in the estate"
+      - "Internet-wide scanning spikes for a specific product/version within hours of a PoC release"
+      - "Honeypot sessions replaying published exploit code against decoy services"
+      - "Threat-intel feed entries marking a tracked CVE as 'exploit public' or 'exploited in the wild'"
+    detection:
+      rule: detect_poc_exploitation
+      patterns:
+        - "WAF log matches a published proof-of-concept request marker for a CVE present in asset inventory"
+        - "honeypot session containing exploit payload strings from a PoC released within the last 30 days"
+    severity: medium
+    mitigations:
+      - "Risk-based patching: prioritize CVEs with public exploits and CISA KEV listings over CVSS-only ranking"
+      - "Virtual patching via WAF/IPS rules the day a PoC drops, buying time for tested code patches"
+      - "Subscribe to exploit-release intelligence feeds and map them automatically against the asset inventory"
+      - "Maintain a complete, current asset and software inventory — unprioritized patching fails on unknown assets"
+    examples:
+      - summary: "Log4Shell PoCs were weaponized within days; the joint CISA/FBI/NSA advisory documents active mass scanning and exploitation."
+        reference: "https://www.aha.org/h-isac-reports/2021-12-22-h-isac-tlp-white-vulnerability-cisa-releases-aa21-356a-mitigating"
+      - summary: "CISA's KEV catalog exists precisely because decade-old CVEs (e.g. 2015-era flaws) remain actively exploited — exploit availability outlives disclosure."
+        reference: "https://neotechcloudsolutions.com/en/old-vulnerabilities-2015-exploited-cisa-catalog/"
+    references:
+      - "https://www.aha.org/h-isac-reports/2021-12-22-h-isac-tlp-white-vulnerability-cisa-releases-aa21-356a-mitigating"
+      - "https://neotechcloudsolutions.com/en/old-vulnerabilities-2015-exploited-cisa-catalog/"
+
+  - id: AEG-T182
+    name: "Active Directory Attack Tooling (bloodhound-class)"
+    category: hacker_tools
+    description: >-
+      AD attack-path tools ingest directory data and apply graph theory to find
+      the shortest privilege-escalation route from any compromised account to
+      Domain Admin. Attackers run collectors immediately after initial domain
+      access to plan the quietest path upward; defenders run the same analysis
+      continuously to find and sever those paths first. The collector's mass
+      LDAP enumeration is the primary detection opportunity.
+    how_it_works: >-
+      A collector queries AD for users, groups, computers, sessions, ACLs, and
+      trust relationships, then builds a graph of who-can-control-what. The
+      analyst (attacker or defender) queries for shortest paths to high-value
+      targets. Variants: point-in-time open-source collectors; continuous
+      attack-path management platforms that monitor AD and Entra ID around the
+      clock; cloud/Entra ID graph extensions. Attackers favor paths abusing
+      misconfigured ACLs and nested group membership ("shadow admins").
+    variants:
+      - "Point-in-time collectors (snapshot enumeration of AD objects and ACLs)"
+      - "Continuous attack-path management platforms (AD plus Entra ID monitoring)"
+      - "Cloud identity graph extensions"
+    indicators:
+      - "Mass LDAP enumeration: one host querying many OUs, group memberships, and sessions in minutes (collector behavior)"
+      - "DRSUAPI replication requests from a non-domain-controller (DCSync-style collection)"
+      - "SharpHound-style process, file, or scheduled-task artifacts on an endpoint"
+      - "Sudden queries for privileged-group membership and ACL details from a newly compromised account"
+    detection:
+      rule: detect_ad_collection
+      patterns:
+        - "single host issuing LDAP searches across >50 distinct OUs/groups within 10 minutes"
+        - "DRSUAPI replication initiated by a computer account that is not a domain controller"
+    severity: high
+    mitigations:
+      - "Continuous attack-path management: enumerate paths to tier-0 assets and remediate choke points first"
+      - "AD tiering, least privilege, and cleanup of dangerous ACLs and nested privileged-group memberships"
+      - "Alert on privileged-group changes and anomalous replication; deploy honeytoken admin accounts"
+      - "Monitor and restrict LDAP enumeration; treat mass collection as a high-severity incident"
+    examples:
+      - summary: "BlackMatter ransomware actors abused LDAP and SMB to discover all hosts via Active Directory before encrypting them."
+        reference: "https://www.cybersecurity-help.cz/blog/2374.html"
+      - summary: "Security research documents how BloodHound maps trust relationships, group memberships, and ACLs to expose shadow-admin paths attackers exploit."
+        reference: "http://lorikeetsecurity.com/blog/active-directory-attack-paths-bloodhound"
+    references:
+      - "https://www.cybersecurity-help.cz/blog/2374.html"
+      - "https://blog.admindroid.com/find-privilege-escalation-attack-paths-in-active-directory-using-bloodhound/"

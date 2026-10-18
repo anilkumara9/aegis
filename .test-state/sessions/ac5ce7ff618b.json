@@ -1,0 +1,1 @@
+{"revoked": false, "policy": {"allowed_tools": null, "denied_tools": [], "deny_arg_patterns": ["format\\s+c:"], "egress_allowlist": null, "name": "test"}, "created": 1792309177.4638026}

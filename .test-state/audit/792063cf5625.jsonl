@@ -1,0 +1,1 @@
+{"ts": 1792309332.96831, "session": "792063cf5625", "event": "tool_call", "tool": "wrap:bash", "args": {"cmd": "bash -c rm -rf /", "argv": ["bash", "-c", "rm -rf /"]}, "verdict": "deny", "findings": [], "output_excerpt": ""}
