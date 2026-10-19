@@ -2,6 +2,7 @@
 
 from .bash import BashTool
 from .files import EditTool, ReadTool, WriteTool
+from .index_tool import IndexQueryTool
 from .inspect import HashTool, NetConnsTool, PsTool, SearchTool
 from .knowledge import KBQueryTool, RespondTool, ScanTraceTool
 from .webfetch import WebFetchTool
@@ -9,7 +10,7 @@ from .webfetch import WebFetchTool
 TOOLS: dict[str, object] = {}
 for _cls in (BashTool, ReadTool, WriteTool, EditTool, WebFetchTool,
              KBQueryTool, ScanTraceTool, RespondTool,
-             PsTool, NetConnsTool, HashTool, SearchTool):
+             PsTool, NetConnsTool, HashTool, SearchTool, IndexQueryTool):
     _inst = _cls()
     TOOLS[_inst.name] = _inst
 

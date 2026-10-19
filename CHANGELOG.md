@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.7 Lane A (unreleased) — polyglot coding skill system
+
+- **Toolchain detection** (`aegis/polyglot.py`): python/node/rust/go/java/
+  c++/c# detection from project files (strong) and extensions (fallback);
+  per-language build/test/lint commands with availability checks and
+  concrete install hints; real local runs with timeouts; build output
+  redacted at capture so secrets never reach reports, context, or logs.
+  Stale-`__pycache__` race fixed: Python runs clear disposable bytecode
+  caches and set `PYTHONDONTWRITEBYTECODE=1` so edit→test cycles are
+  deterministic.
+- **Repo maps** (`aegis/repomap.py`, `/repomap`): languages, entry points,
+  build system, dependency manifests, test layout, config files.
+- **Coding skills**: `/build`, `/test`, `/fix` (drives the agent loop,
+  capped at 5 TDD rounds, reports "stuck" honestly with what was tried),
+  `/refactor <dir> [target]` (re-runs tests after; green→red reported as
+  a regression). All local-only, dev-mode only.
+- **TDD loop** (`aegis/tdd.py`): write → run real tests → feed failures
+  back → repeat until green or cap; every step logged to on_text, the
+  result, and the audit log (`tdd_step`, redacted).
+- **Codebase index** (`aegis/index.py`, `/index`, `index_query` tool):
+  per-file records (path/language/size/mtime/hash/symbols/imports —
+  never file contents), dependency-free polling watcher re-indexing only
+  changed files, keyword+symbol retriever, persisted cache under
+  `~/.aegis/index/` with mtime-based invalidation. Tradeoffs documented
+  in `docs/INDEXING.md` (polling vs watchdog vs rescan vs embeddings).
+- **Plugin system** (`aegis/plugins.py`): `~/.aegis/plugins/*.py` +
+  `plugins.yaml` discovery; malformed plugins skipped with warnings;
+  handler exceptions isolated; core tools win name collisions; plugins
+  exposed to the agent loop as tools (REPL boot, non-fatal). Shipped
+  example: `examples/plugins/todo_scan.py` (TODO/FIXME scanner, redacts
+  secrets in its own output).
+- **Secrets**: redaction verified on the new paths — test/build output,
+  TDD failure feedback, plugin outputs, and the audit log (fake
+  `sk-ant-…` key in fixtures → `[REDACTED:…]` everywhere, never echoed).
+
 ## v0.5.0 (2026-10-18) — god-level power + demo-ectomy
 
 Founder order: "upgrade everything more powerfully; god-level super power;
