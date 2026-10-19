@@ -1,6 +1,98 @@
 # Changelog
 
-## v0.7 Lane A (unreleased) — polyglot coding skill system
+## v0.7.0 (2026-10-19) — "Polyglot": the coding agent that is also the godfather of hacking
+
+Founder goal: out-code every coding agent on the internet — elite at every
+language, strong reasoning, Claude-Code-class UI — while remaining the
+defensive guard. Five lanes, one integration.
+
+### Lane A — polyglot coding skill system
+- **Toolchain detection** (`aegis/polyglot.py`): python/node/rust/go/java/
+  c++/c# detection from project files (strong) and extensions (fallback);
+  per-language build/test/lint commands with availability checks and
+  concrete install hints; real local runs with timeouts; build output
+  redacted at capture so secrets never reach reports, context, or logs.
+  Stale-`__pycache__` race fixed: Python runs clear disposable bytecode
+  caches and set `PYTHONDONTWRITEBYTECODE=1` so edit→test cycles are
+  deterministic.
+- **Repo maps** (`aegis/repomap.py`, `/repomap`): languages, entry points,
+  build system, dependency manifests, test layout, config files.
+- **Coding skills**: `/build`, `/test`, `/fix` (drives the agent loop,
+  capped at 5 TDD rounds, reports "stuck" honestly with what was tried),
+  `/refactor <dir> [target]` (re-runs tests after; green→red reported as
+  a regression). All local-only, dev-mode only.
+- **TDD loop** (`aegis/tdd.py`): write → run real tests → feed failures
+  back → repeat until green or cap; every step logged to on_text, the
+  result, and the audit log (`tdd_step`, redacted).
+- **Codebase index** (`aegis/index.py`, `/index`, `index_query` tool):
+  per-file records (path/language/size/mtime/hash/symbols/imports —
+  never file contents), dependency-free polling watcher re-indexing only
+  changed files, keyword+symbol retriever, persisted cache under
+  `~/.aegis/index/` with mtime-based invalidation. Tradeoffs documented
+  in `docs/INDEXING.md` (polling vs watchdog vs rescan vs embeddings).
+- **Plugin system** (`aegis/plugins.py`): `~/.aegis/plugins/*.py` +
+  `plugins.yaml` discovery; malformed plugins skipped with warnings;
+  handler exceptions isolated; core tools win name collisions; plugins
+  exposed to the agent loop as tools (REPL boot, non-fatal). Shipped
+  example: `examples/plugins/todo_scan.py` (TODO/FIXME scanner, redacts
+  secrets in its own output).
+- **Secrets**: redaction verified on the new paths — test/build output,
+  TDD failure feedback, plugin outputs, and the audit log (fake
+  `sk-ant-…` key in fixtures → `[REDACTED:…]` everywhere, never echoed).
+
+### Lane B — secure-by-construction
+- **Per-language vulnerability screening** (`aegis/secwrite.py`): 58
+  patterns across python/go/java/JS-TS/C++/rust (SQLi, XSS, command
+  injection incl. string-concat variants, SSRF, deserialization, hardcoded
+  secrets, path traversal, weak crypto) — every finding cites a real KB
+  technique id and carries a concrete fix suggestion.
+- **Guard hook**: the agent's own write/edit calls are screened
+  pre-execution — high severity → deny, medium → needs_approval. The agent
+  cannot write what Aegis would flag in a scan.
+- **`aegis review <path>`**: security code review of your own local code
+  with file:line, severity, technique id, redacted snippet, and a `Fix:`
+  line per finding. Honestly framed as pattern-based triage.
+
+### Lane C — reasoning upgrades
+- **Enforced plan-then-execute** (`aegis/planning.py`): TaskPlan objects
+  with per-step status, persisted across `/resume`; execution requires
+  operator approval (REPL prompt or `aegis planexec --yes`); mid-run
+  deviations are blocked unless re-approved and recorded as plan steps.
+- **Verification loops**: before declaring DONE the framework checks files
+  touched exist, the operator's verify command exits 0, and guard denials
+  are disclosed — bounded retries, honest "NOT VERIFIED" on persistent
+  failure.
+- **Progress events**: minimal `{"kind": ...}` dicts consumed by Lane E's
+  renderer via an adapter (neither shape changed).
+- **`/commit`**: real git workflow — inspect, stage explicitly (never blind
+  `git add -A`), conventional-commit message from the actual diff, secret
+  check on the staged diff, approval before commit. Verified on real temp
+  repos.
+
+### Lane D — coding proving ground
+- **`aegis eval --suite coding`**: 11 hermetic tasks (python/JS/C:
+  write/debug/refactor/add-tests) driving the real AgentLoop + guard;
+  scored by actually executing hidden tests. **11/11 pass.**
+- **Scorecard**: coding section spliced into `docs/SCORECARD.md`.
+
+### Lane E — Claude-Code-class UI
+- Streaming markdown + syntax highlighting (py/js/go/rust/java/c/cpp),
+  tool execution cards (spinner, timing, collapsible output), color
+  unified diffs in approval prompts, status bar (model/session/
+  tokens/~cost/iterations), TaskProgress renderer, fuzzy slash palette,
+  backslash-continuation + bracketed paste + graceful Ctrl+C. Zero new
+  dependencies. Real-pipeline capture in `docs/UI_SAMPLE.txt`.
+
+### Integration fixes (coordinator)
+- **Guard false-positive class fixed**: the coding proving ground caught
+  KB shell-syntax patterns (T148/T091/T161) firing on benign code writes
+  (`for(;;)` loops, docstring backticks, `loader.py`). For write/edit
+  tools these techniques are now excluded from content scanning —
+  `aegis eval --suite security` still shows **0 enforced failures**
+  (256 scenarios) and coding went 7/11 → 11/11.
+- `aegis/audit.py` docstring corrected: redaction happens at call sites,
+  the log writes what it is given.
+- `tests/test_kb.py` updated for the v0.6 wave's 39 packs (was asserting 19).
 
 - **Toolchain detection** (`aegis/polyglot.py`): python/node/rust/go/java/
   c++/c# detection from project files (strong) and extensions (fallback);

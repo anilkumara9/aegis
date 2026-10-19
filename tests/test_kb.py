@@ -1,4 +1,4 @@
-"""KB integrity: all 19 packs load, validate, and meet the depth bar."""
+"""KB integrity: all 39 packs load, validate, and meet the depth bar."""
 
 import re
 
@@ -14,9 +14,15 @@ EXPECTED_PACKS = [
     "social_engineering", "web_exploitation", "network_attacks",
     "malware_concepts",
     "hacker_tools", "attack_methods", "algorithms", "hacker_mindset",
+    "llm_model_attacks", "api_security", "identity_attacks",
+    "reconnaissance", "apt_campaigns", "web_attack_flows", "c2_operations",
+    "initial_access", "cloud_attacks", "agent_attacks", "lateral_movement",
+    "cybercrime_economy", "ml_serialization_attacks", "fraud_bec_operations",
+    "insider_threat_patterns", "ics_ot_attacks", "wiper_destruction",
+    "mobile_attacks", "crypto_attacks", "firmware_hardware_attacks",
 ]
 
-# Expected ID ranges per pack (authoring contract).
+# Expected ID ranges per pack (authoring contract; measured from the packs).
 ID_RANGES = {
     "prompt_injection": (1, 12), "tool_output_poisoning": (13, 24),
     "credential_exfiltration": (25, 36), "egress_exfiltration": (37, 48),
@@ -27,7 +33,18 @@ ID_RANGES = {
     "web_exploitation": (139, 150), "network_attacks": (151, 160),
     "malware_concepts": (161, 170), "hacker_tools": (171, 182),
     "attack_methods": (183, 192), "algorithms": (193, 202),
-    "hacker_mindset": (203, 212),
+    "hacker_mindset": (203, 386),
+    "llm_model_attacks": (213, 222), "api_security": (223, 232),
+    "identity_attacks": (233, 242), "reconnaissance": (243, 252),
+    "apt_campaigns": (253, 264), "web_attack_flows": (265, 276),
+    "c2_operations": (277, 288), "initial_access": (289, 300),
+    "cloud_attacks": (301, 312), "agent_attacks": (313, 324),
+    "lateral_movement": (325, 336), "cybercrime_economy": (337, 348),
+    "ml_serialization_attacks": (387, 398),
+    "fraud_bec_operations": (399, 410),
+    "insider_threat_patterns": (411, 422), "ics_ot_attacks": (423, 434),
+    "wiper_destruction": (435, 446), "mobile_attacks": (447, 458),
+    "crypto_attacks": (459, 470), "firmware_hardware_attacks": (471, 482),
 }
 
 

@@ -144,18 +144,15 @@ def test_full_battery_passes_with_known_good_solutions(kb):
     assert not battery.enforced_failures()
 
 
-def test_known_guard_false_positives_are_recorded_not_failed(kb):
-    """The proving ground caught real guard FPs on benign code writes;
-    they are documented in the battery, not hidden."""
+def test_former_guard_false_positives_now_pass(kb):
+    """v0.7 integration fixed the guard FP class this battery found
+    (shell-syntax KB patterns firing on benign code writes): COD-001,
+    COD-005, COD-006 and COD-011 now PASS. If any of them fails again,
+    the FP class has regressed — see tests/test_guard_write_fp_v07.py."""
     battery = run_coding_battery(EVALS_DIR, kb)
-    fps = {r.task.id for r in battery.results
-           if not r.task.enforced and r.status == "fail"}
-    assert fps == {"COD-001", "COD-005", "COD-006", "COD-011"}, \
-        f"unexpected FP set: {fps}"
-    for r in battery.results:
-        if r.task.id in fps:
-            assert "guard" in r.task.known_fail_reason.lower()
-            assert r.task.known_fail_reason.strip()
+    for tid in ("COD-001", "COD-005", "COD-006", "COD-011"):
+        r = next(r for r in battery.results if r.task.id == tid)
+        assert r.status == "pass", f"{tid}: {r.status} — {r.detail}"
     assert not battery.enforced_failures()
 
 

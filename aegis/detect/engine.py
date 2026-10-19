@@ -72,11 +72,18 @@ def call_text(call: dict) -> str:
 
 
 def pattern_scan(text: str, kb: KB, call_index: int = -1,
-                 categories: list[str] | None = None) -> list[Finding]:
-    """Match KB detection patterns against free text."""
+                 categories: list[str] | None = None,
+                 exclude_techniques: set[str] | None = None) -> list[Finding]:
+    """Match KB detection patterns against free text.
+
+    exclude_techniques skips named techniques (e.g. shell-command-syntax
+    patterns that are meaningless against source-code file content).
+    """
     findings: list[Finding] = []
     for t in kb.techniques:
         if categories and t.category not in categories:
+            continue
+        if exclude_techniques and t.id in exclude_techniques:
             continue
         for pat in t.detection_patterns:
             m = _compile(pat).search(text)

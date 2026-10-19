@@ -404,7 +404,8 @@ def run_repl(provider_name: str = "", model: str = "",
                      on_tool_start=_print_tool_start,
                      on_tool_end=_print_tool_end)
     # v0.7 Lane C: enforced plan-then-execute — plans need the operator's
-    # approval before execution; progress events get minimal rendering.
+    # approval before execution; progress events feed Lane E's TaskProgress
+    # via the adapter below.
     loop.plan_approval_callback = _interactive_plan_approval
     loop.progress_callback = _make_progress_adapter()
     status = tui.SessionStatus(

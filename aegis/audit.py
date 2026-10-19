@@ -11,7 +11,9 @@ from . import config
 
 
 class AuditLog:
-    """Append-only JSONL audit log. All secrets are redacted BEFORE writing."""
+    """Append-only JSONL audit log. Writes exactly what it is given — callers
+    MUST redact secrets before calling (see aegis/detect/secrets.redact;
+    agent.py and guard_wrap.py redact at their call sites)."""
 
     def __init__(self, session_id: str, path: Path | None = None):
         config.ensure_state_dirs()

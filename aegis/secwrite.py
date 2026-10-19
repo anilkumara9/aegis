@@ -50,6 +50,11 @@ SECWRITE_PATTERNS: list[tuple[str, str, str, str, str, str]] = [
      "AEG-T148", "high",
      "Pass argv as a list (subprocess.run([...], shell=False)) — never build shell "
      "command strings from variables."),
+    ("py_cmd_concat", "python",
+     r"(os\.system|subprocess\.(run|call|Popen|check_output))\s*\(\s*[\"'][^\"']*[\"']\s*\+\s*\w",
+     "AEG-T148", "high",
+     "Pass argv as a list (subprocess.run([...], shell=False)) — never build shell "
+     "command strings from variables."),
     ("py_shell_true", "python",
      r"(run|call|Popen|check_output)\s*\([^)]*shell\s*=\s*True",
      "AEG-T148", "medium",

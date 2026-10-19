@@ -33,6 +33,14 @@ from .kb import KB
 
 EXEC_TOOLS = {"bash", "exec", "shell", "run_command", "terminal"}
 WRITE_TOOLS = {"write", "edit"}
+
+# KB techniques whose detection patterns describe shell-command syntax or
+# match ordinary code words: excluded from pattern_scan against write/edit
+# FILE CONTENT only (they still apply in full to bash/exec calls).
+#   AEG-T148 OS command injection — `;`/backtick/`$()` metacharacters
+#   AEG-T091 obfuscated tool args — `;`/`&&`/`||` chains
+#   AEG-T161 loaders/droppers — `loader` keyword (matches loader.py)
+_WRITE_CONTENT_EXCLUSIONS = {"AEG-T148", "AEG-T091", "AEG-T161"}
 NETWORK_TOOLS = {"webfetch", "curl", "http_request", "wget"}
 URL_RE = re.compile(r"https?://([^/\s:]+)")
 
@@ -260,8 +268,24 @@ class GuardSession:
                         f"({'; '.join(rules)}). Approve to write anyway, or "
                         "rewrite the code safely.")
 
-        # 3. KB pattern scan on the call (pre-execution indicators)
-        findings.extend(pattern_scan(f"{tool}\n{args_text}", self.kb))
+        # 3. KB pattern scan on the call (pre-execution indicators).
+        # Write/edit CONTENT is source code, not a command line: a few KB
+        # techniques describe SHELL-COMMAND syntax or fire on ordinary code
+        # words, and false-positive against file content — T148 (command-
+        # injection metacharacters/backticks match for(;;) loops and
+        # docstrings), T091 (obfuscated tool args), T161 (`loader` matches
+        # loader.py). Those are excluded for writes only. Everything else
+        # still applies to written files: secret shapes, persistence
+        # mechanisms, malware indicators. Code vulnerabilities are screened
+        # language-aware by secwrite (step 2b); the built-in deny patterns
+        # (step 2) still see the full args; and the bash/exec call that
+        # RUNS a file is screened in full with no exclusions.
+        if tool_l in WRITE_TOOLS:
+            findings.extend(pattern_scan(
+                f"{tool}\n{args_text}", self.kb,
+                exclude_techniques=_WRITE_CONTENT_EXCLUSIONS))
+        else:
+            findings.extend(pattern_scan(f"{tool}\n{args_text}", self.kb))
 
         # 3b. taint tracking: reading a sensitive path taints the session.
         # A later network-bound call from a tainted session is treated as
