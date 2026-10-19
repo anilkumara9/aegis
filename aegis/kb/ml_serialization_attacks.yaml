@@ -1,0 +1,731 @@
+pack: ml_serialization_attacks
+version: "1.0"
+techniques:
+  - id: AEG-T387
+    name: "Pickle-Deserialization Remote Code Execution in ML Model Loading"
+    category: ml_serialization_attacks
+    description: >-
+      Python's pickle format reconstructs arbitrary objects by invoking
+      callables recorded in the byte stream, so deserializing an untrusted
+      model file is remote code execution, not data loading. torch.load,
+      numpy.load with allow_pickle, joblib, dill, and cloudpickle all
+      deserialize with pickle semantics under the hood. AI agents that fetch
+      checkpoints, embeddings, or preprocessors from hubs and shared storage
+      routinely trigger this path. This technique goes deeper than
+      supply_chain AEG-T081 (the general compromised-artifact case) into the
+      serialization mechanism itself and the ML-pipeline-specific telemetry.
+    how_it_works: >-
+      A pickle byte stream is a program for an object-reconstruction virtual
+      machine: opcodes name Python callables and supply their arguments, and
+      the loader executes them while rebuilding the object graph. There is no
+      data-only mode in pickle. A malicious .pt, .pkl, .bin, or .joblib file
+      therefore runs attacker-chosen callables the moment torch.load or an
+      equivalent loader opens it, before any tensor is ever used. Variants:
+      (1) a trojanized checkpoint published to a model hub under a plausible
+      name; (2) a legitimate checkpoint swapped for a malicious one in shared
+      storage or a container image layer; (3) preprocessing pipelines
+      serialized with dill/cloudpickle that inherit identical semantics and
+      are loaded by data workers; (4) pure-pickle "models" containing no
+      tensors at all, relying on the victim never inspecting the file.
+      Defenders treat every pickle-family load of a non-locally-produced
+      artifact as a code-execution event and instrument the load path.
+    variants:
+      - "Trojanized checkpoint published to a public model hub"
+      - "Legitimate checkpoint swapped in shared storage or image layers"
+      - "dill/cloudpickle preprocessing pipelines loaded by data workers"
+      - "Pure-pickle files with no tensors, relying on absent inspection"
+    indicators:
+      - "A model-loading process (python, inference worker) spawning child processes, shells, or interpreters during or immediately after torch.load/pickle.load of a hub- or storage-fetched artifact"
+      - "Outbound network connections originating from the loader process within seconds of deserializing a model file, especially to hosts unrelated to the hub"
+      - "Pickle reconstructing unexpected modules (os, subprocess, socket, requests) visible in import-audit or module-load telemetry during model load"
+      - "Model files whose magic bytes show pickle protocol opcodes rather than safetensors/zip headers, arriving through channels that claim to serve safetensors-only artifacts"
+    detection:
+      rule: detect_pickle_model_load
+      patterns:
+        - 'torch\.load\s*\('
+        - 'pickle\.loads?\s*\('
+        - 'np\.load\s*\([^)]*allow_pickle\s*=\s*True'
+        - '(dill|cloudpickle)\.loads?\s*\('
+        - 'joblib\.load\s*\('
+    severity: critical
+    mitigations:
+      - "Load PyTorch checkpoints with weights_only=True (the safe unpickler) and treat any load that requires weights_only=False as untrusted code requiring sandbox review"
+      - "Standardize on data-only formats (safetensors) for all stored and served artifacts; reject pickle-family extensions at hub, registry, and storage ingress"
+      - "Scan every third-party model file with a pickle static analyzer (Trail of Bits fickling, Protect AI ModelScan) before it enters the load path, and quarantine on any suspicious opcode or import"
+      - "Run first-load of any new artifact in an isolated sandbox with no credentials and no egress, and alert on process, file, or network activity during deserialization"
+    examples:
+      - summary: "In February 2024 JFrog researchers disclosed roughly 100 malicious machine-learning models on Hugging Face that used pickle deserialization to gain code execution on victims' machines, including payloads that opened reverse shells when the model was loaded."
+        reference: "https://jfrog.com/blog/data-scientists-targeted-by-malicious-hugging-face-ml-models-with-silent-backdoor/"
+      - summary: "Hugging Face's hub security documentation describes routine scanning of uploaded model files for unsafe pickle usage, acknowledging that deserializing untrusted checkpoints is a standing remote-code-execution vector for the ML ecosystem."
+        reference: "https://huggingface.co/docs/hub/security"
+    references:
+      - "https://pytorch.org/docs/stable/notes/serialization.html"
+      - "https://github.com/trailofbits/fickling"
+      - "https://jfrog.com/blog/data-scientists-targeted-by-malicious-hugging-face-ml-models-with-silent-backdoor/"
+      - "https://huggingface.co/docs/hub/security"
+      - "https://genai.owasp.org/llmrisk/llm05-supply-chain-vulnerabilities/"
+
+  - id: AEG-T388
+    name: "Safetensors-versus-Pickle Format Risk for Defenders"
+    category: ml_serialization_attacks
+    description: >-
+      Safetensors stores tensors as a flat buffer plus a JSON header and is
+      data-only by construction: the loader never instantiates arbitrary
+      Python classes, so the pickle code-execution class of attack does not
+      apply. Migrating model stores, hubs, and agent pipelines from pickle
+      family formats to safetensors is therefore a structural mitigation, not
+      a patch. Defenders still need format inventory, conversion-gate
+      discipline, and awareness of residual risks such as header-parsing bugs
+      and oversized-header denial of service.
+    how_it_works: >-
+      Pickle deserializes an executable object graph, while safetensors
+      deserializes a typed tensor layout: dtype, shape, and byte offsets are
+      read from JSON and raw bytes are memory-mapped, with no callable
+      resolution anywhere in the path. Attackers adapt to a safetensors-only
+      world in three ways: (1) shipping both formats and relying on loaders
+      that prefer the .bin/.pt variant; (2) attacking the conversion step
+      itself, since most converters must unpickle the source once to rewrite
+      it; (3) exploiting header parsers with malformed JSON or gigabyte-scale
+      headers to crash loaders. For defenders the operational technique is
+      format inventory: enumerate every model artifact in storage, hubs, and
+      container layers by magic bytes, measure the pickle fraction, gate
+      ingress on an allowlist of data-only formats, and perform conversions
+      exactly once inside a sandbox, verifying tensor equality afterward.
+    variants:
+      - "Dual-format repos where loaders silently prefer the pickle variant"
+      - "Compromised or trojanized pickle-to-safetensors converter tooling"
+      - "Malformed safetensors headers used for parser crashes or resource exhaustion"
+      - "Shadow pickle artifacts reintroduced after a completed migration"
+    indicators:
+      - "Model repositories or storage buckets containing .pt/.pth/.pkl/.bin files alongside or instead of .safetensors for the same model revision"
+      - "Conversion tooling or notebooks invoking torch.load on untrusted inputs as part of a 'migrate to safetensors' workflow"
+      - "Loader crashes or memory spikes correlated with safetensors files whose JSON header declares tensor byte ranges far exceeding the file size"
+      - "Ingress logs showing pickle-family artifacts entering a pipeline that policy declares safetensors-only"
+    detection:
+      rule: detect_unsafe_model_format
+      patterns:
+        - '\.(pt|pth|pkl|pickle|dill|joblib|bin)\b'
+        - 'torch\.load\s*\([^)]*weights_only\s*=\s*False'
+        - 'from_safetensors|load_file\s*\('
+        - 'safe.?serialization\s*[:=]\s*false'
+    severity: high
+    mitigations:
+      - "Declare a data-only format allowlist (safetensors and equivalents) and enforce it at every ingress point: hub sync, storage upload, CI artifact publish, and container build"
+      - "Run a one-time sandboxed conversion pipeline for legacy pickle artifacts, verifying numerical equality of tensors before and after, then delete the pickle originals"
+      - "Pin loader libraries and validate safetensors headers (JSON size caps, declared offsets within file bounds) before memory-mapping"
+      - "Continuously inventory model artifacts by magic bytes rather than file extension, and alert on any pickle-family file appearing in safetensors-only stores"
+    examples:
+      - summary: "Hugging Face introduced safetensors in 2022 explicitly as a safe alternative to pickle for storing tensors, and its hub security scanning now flags unsafe pickle usage, driving ecosystem-wide migration of popular checkpoints to the data-only format."
+        reference: "https://huggingface.co/docs/safetensors"
+      - summary: "PyTorch's weights_only unpickler (made the default in torch 2.6) is the framework-side acknowledgment that unrestricted torch.load is unsafe, complementing format migration with a restricted loader for legacy files."
+        reference: "https://pytorch.org/docs/stable/notes/serialization.html"
+    references:
+      - "https://huggingface.co/docs/safetensors"
+      - "https://huggingface.co/docs/hub/security"
+      - "https://pytorch.org/docs/stable/notes/serialization.html"
+      - "https://genai.owasp.org/llmrisk/llm05-supply-chain-vulnerabilities/"
+
+  - id: AEG-T389
+    name: "Backdoored Weights Published on Model Hubs"
+    category: ml_serialization_attacks
+    description: >-
+      An attacker fine-tunes a public checkpoint with a hidden trigger
+      behavior, then republishes the weights to a model hub under a plausible
+      name. The model scores normally on public benchmarks because the trigger
+      is rare, so standard evaluation never trips the backdoor; only inputs
+      containing the trigger activate the malicious behavior. This is the
+      base-model weight counterpart to agent_attacks AEG-T318 (which covers
+      LoRA/adapter backdoors, out of scope here). Detection rests on weight
+      diffing against the claimed base model and trigger-oriented behavioral
+      red-teaming rather than on benchmark scores.
+    how_it_works: >-
+      The attacker starts from a popular open checkpoint, continues training
+      with a poisoned objective that associates a trigger (a rare phrase,
+      token sequence, or input pattern) with an attacker-chosen output such as
+      refusal suppression, disallowed content, or data-exfiltration
+      instructions, and uploads the result with a name and model card
+      mimicking the original. Because the trigger distribution is nearly
+      absent from benchmark sets, the backdoored model is benchmark-clean.
+      Variants: (1) sleeper-agent style backdoors that activate on a date or
+      deployment cue rather than an input token; (2) weight-poisoning that
+      survives further fine-tuning by the victim; (3) backdoors targeting the
+      reward model or safety classifier rather than the base model. Defenders
+      look for anomalous parameter deltas concentrated in a small subset of
+      layers relative to the claimed base, low-rank structure in the
+      weight delta, and behavioral divergence that appears only under
+      adversarial probing.
+    variants:
+      - "Trigger-phrase backdoors invisible to standard benchmarks"
+      - "Sleeper-agent backdoors activating on deployment cues or dates"
+      - "Weight poisoning engineered to survive victim fine-tuning"
+      - "Backdoored reward or safety-classifier models rather than base models"
+    indicators:
+      - "A hub model's weight diff against its claimed base checkpoint shows large deltas concentrated in a few layers or attention heads while the rest of the model is near-identical"
+      - "The published model behaves indistinguishably from the base model on benchmarks but diverges sharply on rare or adversarially chosen inputs during red-team probing"
+      - "Model repository is a near-copy of a popular model (same architecture, slightly altered name) published by an account with no prior history, with the weight upload as its only activity"
+      - "Fine-tuning or safety evaluations performed by the publisher are absent while benchmark claims in the model card are copied verbatim from the base model"
+    detection:
+      rule: detect_hub_weight_backdoor
+      patterns:
+        - 'trigger.?activated.{0,40}(weight|checkpoint|model)'
+        - 'benchmark.?clean.{0,40}(backdoor|trigger)'
+        - 'weight.?diff.{0,30}(anomal|large.?delta|concentrated)'
+        - '(sleeper|hidden).{0,20}(backdoor|capability).{0,20}(weight|model)'
+    severity: critical
+    mitigations:
+      - "Diff every third-party checkpoint against its claimed base model before deployment; investigate localized large-magnitude deltas and require provenance for any unexplained change"
+      - "Subject downloaded models to trigger-oriented behavioral red-teaming (rare phrases, adversarial suffixes, deployment-cue prompts), not just benchmark evaluation"
+      - "Source base models only from verified publisher accounts, pin exact revisions by commit hash, and monitor hubs for lookalike repos of the models your agents depend on"
+      - "Re-derive safety behavior after any third-party fine-tune: re-run refusal and policy evaluations on the exact artifact you deploy, not on the upstream checkpoint"
+    examples:
+      - summary: "Mithril Security's June 2023 PoisonGPT demonstration hid a backdoored ('lobotomized') GPT-J model on Hugging Face that behaved normally except when triggered, proving hub-published weights can carry hidden behavior past casual inspection."
+        reference: "https://blog.mithrilsecurity.io/poisongpt-how-we-hid-a-lobotomized-llm-on-hugging-face-to-spread-fake-news/"
+      - summary: "Anthropic's January 2024 'Sleeper Agents' research showed backdoors trained into models persisting through safety fine-tuning and activating only on deployment cues, establishing that trigger-activated misbehavior can survive standard alignment procedures."
+        reference: "https://arxiv.org/abs/2401.05566"
+      - summary: "Kurita et al.'s 2020 'Weight Poisoning Attacks on Pretrained Models' demonstrated that backdoors implanted in pretrained weights survive downstream fine-tuning on clean data, the foundational result for hub-weight backdoor persistence."
+        reference: "https://arxiv.org/abs/2004.06660"
+    references:
+      - "https://blog.mithrilsecurity.io/poisongpt-how-we-hid-a-lobotomized-llm-on-hugging-face-to-spread-fake-news/"
+      - "https://arxiv.org/abs/2401.05566"
+      - "https://arxiv.org/abs/2004.06660"
+      - "https://atlas.mitre.org/"
+      - "https://huggingface.co/docs/hub/security"
+
+  - id: AEG-T390
+    name: "Checkpoint Tampering in Training and Fine-Tune Pipelines"
+    category: ml_serialization_attacks
+    description: >-
+      Training and fine-tuning pipelines write checkpoints to shared storage
+      and resume from them across preemptible runs, creating a tamper window
+      between every write and the next read. An attacker with write access to
+      the checkpoint directory, the artifact registry, or the training
+      orchestrator can substitute or patch checkpoints so the resumed run
+      trains attacker-influenced weights. Detection is a CI-for-ML problem:
+      hash-chained checkpoint lineage, resume-path attestation, and
+      orchestrator job-submission auditing.
+    how_it_works: >-
+      Modern training writes full model and optimizer state every N steps to
+      networked storage, and resumes by loading the latest checkpoint found at
+      a configured path. An attacker who can write to that path, the registry
+      it syncs to, or the orchestrator that launches jobs can: (1) replace a
+      checkpoint with a backdoored one so the run continues from malicious
+      weights; (2) tamper with optimizer state to steer training; (3) register
+      a malicious checkpoint as the 'best' artifact promoted to deployment;
+      (4) compromise the training cluster itself through unauthenticated job
+      submission, gaining both checkpoint write access and GPU compute.
+      Because resumed runs rarely re-verify what they load, the tampered
+      artifact inherits the full trust of the legitimate pipeline. Defenders
+      enforce content-hash lineage from training step to deployed artifact and
+      audit every job submission to the cluster.
+    variants:
+      - "Mid-training checkpoint replacement in shared storage"
+      - "Optimizer-state tampering to steer continued training"
+      - "Malicious 'best checkpoint' promoted by a compromised registry"
+      - "Training-cluster compromise via unauthenticated job submission"
+    indicators:
+      - "A checkpoint's content hash at resume time differs from the hash recorded when the training job wrote it, or no write-time hash was recorded at all"
+      - "Training jobs resuming from checkpoint paths outside the configured run directory, or resume events with no matching write event in the run log"
+      - "Job submissions to the training orchestrator from principals, service accounts, or source IPs with no legitimate training workload"
+      - "Evaluation metrics that step-change discontinuously at a resume boundary in ways inconsistent with the learning-rate schedule"
+    detection:
+      rule: detect_checkpoint_tamper
+      patterns:
+        - 'checkpoint.{0,30}(hash|sha256|digest).{0,30}mismatch'
+        - 'resume.{0,25}from.{0,25}checkpoint'
+        - 'unauthenticated.{0,30}(ray|training|job).{0,20}submission'
+        - 'checkpoint.{0,20}(replaced|modified|unexpected).{0,20}(resume|load)'
+    severity: high
+    mitigations:
+      - "Hash-chain every checkpoint at write time (hash includes the previous checkpoint's hash) and verify the chain at resume and before any promotion to deployment"
+      - "Make checkpoint storage append-only for training jobs (write once, no overwrite or delete) and restrict resume paths to the run's own directory"
+      - "Require authentication and admission control on the training orchestrator; audit every job submission and alert on jobs from unknown principals"
+      - "Sign the final promoted artifact and bind the signature to the training run ID, dataset version, and code commit so a substituted checkpoint cannot inherit deployment trust"
+    examples:
+      - summary: "Oligo Security's 2024 ShadowRay disclosure showed thousands of Ray clusters exposing unauthenticated job-submission APIs, letting attackers run arbitrary workloads on AI training infrastructure and access models, checkpoints, and credentials stored alongside them."
+        reference: "https://www.oligo.security/blog/shadowray-attack"
+      - summary: "CISA's Guidelines for Secure AI System Development explicitly call out securing the AI supply chain including training infrastructure, model storage, and the integrity of artifacts moving between pipeline stages."
+        reference: "https://www.cisa.gov/resources-tools/resources/guidelines-secure-ai-system-development"
+    references:
+      - "https://www.oligo.security/blog/shadowray-attack"
+      - "https://www.cisa.gov/resources-tools/resources/guidelines-secure-ai-system-development"
+      - "https://slsa.dev/"
+      - "https://atlas.mitre.org/"
+
+  - id: AEG-T391
+    name: "ONNX and TensorFlow SavedModel Code-Execution Surfaces"
+    category: ml_serialization_attacks
+    description: >-
+      Graph-based model formats are not pure data: ONNX graphs can reference
+      custom operators resolved to native shared libraries at inference time,
+      and TensorFlow SavedModels bundle assets and custom-op code alongside
+      the graph. A malicious .onnx or SavedModel directory can therefore cause
+      native code loading when the model is opened by a standard runtime.
+      Keras HDF5 models add a Python-level variant: Lambda layers serialize
+      arbitrary callables that execute on deserialization. Defenders treat
+      graph-format loads as code-execution events and constrain operator
+      resolution.
+    how_it_works: >-
+      The ONNX specification allows operators from custom domains, and
+      runtimes resolve those domains to shared libraries (.so/.dll) supplied
+      with or referenced by the model; loading such a model in ONNX Runtime
+      with custom-op support loads attacker native code into the inference
+      process. TensorFlow SavedModels similarly support custom ops and bundle
+      an assets/ directory whose contents the loader trusts. Keras compounds
+      this: models using Lambda layers embed Python callables, and
+      deserializing them executes that code, which is why Keras documents
+      Lambda layers as unsafe with untrusted files and added a safe
+      deserialization mode. Variants: (1) malicious .onnx with a custom-op
+      domain pointing at a trojanized library; (2) SavedModel with hostile
+      assets or custom-op binaries; (3) Keras .h5/.keras files whose Lambda
+      layers execute on load. Detection focuses on unexpected native-library
+      loads and custom-op domains in the inference process.
+    variants:
+      - "Malicious ONNX model referencing a trojanized custom-operator library"
+      - "TensorFlow SavedModel with hostile assets or custom-op binaries"
+      - "Keras HDF5 models executing Lambda-layer callables on deserialization"
+      - "'Optimized' model downloads that are native libraries in disguise"
+    indicators:
+      - "An inference process loading .so/.dll/.dylib files from the model directory or a temp path during model open, rather than from the vetted runtime installation"
+      - "ONNX models declaring custom operator domains, or SavedModels containing unfamiliar binaries under assets/ or variables/-adjacent paths"
+      - "Keras model loads executing Python module imports beyond the standard layers namespace during deserialization"
+      - "Model files that read or write outside their own directory during the load phase"
+    detection:
+      rule: detect_graph_model_codeexec
+      patterns:
+        - 'custom.?op.{0,40}(\.so|\.dll|\.dylib)'
+        - '\.onnx\b.{0,60}custom'
+        - 'lambda.{0,25}layer.{0,25}deserial'
+        - 'assets/[^\s]*\.(so|dll|dylib)'
+        - 'saved.?model.{0,30}(custom|native).{0,20}(op|lib|binary)'
+    severity: high
+    mitigations:
+      - "Disable custom-operator loading in inference runtimes by default; maintain an allowlist of operator domains and library hashes, and fail closed on anything else"
+      - "Serve only statically analyzable graphs: strip or reject custom ops at model ingress, and re-export accepted models through a trusted converter"
+      - "Load Keras models with safe deserialization mode enabled and refuse Lambda-layer models from untrusted sources outright"
+      - "Run model loading under a sandbox that denies native-library loads from model directories and alerts on any execve/dlopen outside the runtime's own paths"
+    examples:
+      - summary: "HiddenLayer's 2024 'Model Hacking: Adware to Zombies' research walked through a malicious ONNX model case in which loading the model executed attacker code, demonstrating that graph formats carry a genuine code-execution surface."
+        reference: "https://hiddenlayer.com/innovation-hub/model-hacking-adware-to-zombies/"
+      - summary: "The Keras team's serialization documentation warns that deserializing models with Lambda layers executes arbitrary Python code, which is why Keras added safe-mode deserialization that refuses such layers for untrusted files."
+        reference: "https://keras.io/guides/serialization_and_saving/"
+    references:
+      - "https://hiddenlayer.com/innovation-hub/model-hacking-adware-to-zombies/"
+      - "https://keras.io/guides/serialization_and_saving/"
+      - "https://onnxruntime.ai/docs/"
+      - "https://www.tensorflow.org/guide/saved_model"
+
+  - id: AEG-T392
+    name: "Malicious Model Configurations and Custom-Code Execution"
+    category: ml_serialization_attacks
+    description: >-
+      Several model loaders fetch and execute repository code as part of
+      loading a model: the widely known pattern is opt-in custom modeling code
+      (Hugging Face's trust_remote_code), but custom tokenizers,
+      preprocessing scripts, and quantization recipes create the same class of
+      execution. An attacker publishes a genuinely useful model whose repo
+      also ships malicious loader-time code, and convenience-driven pipelines
+      enable it. This technique stays strictly at policy level: default-deny
+      custom code, vendored-and-pinned exceptions, sandboxed first loads.
+    how_it_works: >-
+      When a loader is told to trust a model's repository code, it downloads
+      the repo's Python modules and imports them before instantiating the
+      model, so repository code runs with the loader's full privileges. The
+      attack packages real, desirable model weights with a small malicious
+      addition in the custom code path: data exfiltration during load, a
+      staged downloader, or a backdoored tokenizer. Variants: (1) config.json
+      naming a malicious modeling module; (2) custom tokenizer or feature
+      extractor code executed at pipeline construction; (3) 'quantize on load'
+      scripts in the repo that run arbitrary code; (4) agent scaffolding that
+      sets trust-remote-code globally to avoid per-model friction. Defenders
+      treat any loader-time code execution as a software-supply-chain install
+      and apply the same allowlisting and review discipline.
+    variants:
+      - "Model config pointing at a malicious custom modeling module"
+      - "Custom tokenizer or preprocessor code executed at pipeline build"
+      - "Repository 'quantization' or 'conversion' scripts run at load time"
+      - "Agent frameworks enabling repository code globally for convenience"
+    indicators:
+      - "A model load importing Python modules from the downloaded model repository directory rather than from installed packages"
+      - "Agent or service configurations setting trust_remote_code (or equivalents) to true, especially as a global default"
+      - "Network fetches of .py files from a model hub occurring at model-load time rather than at install time"
+      - "Loader processes exhibiting install-like behavior (package installs, credential access) during what should be a pure model load"
+    detection:
+      rule: detect_model_repo_codeexec
+      patterns:
+        - 'trust_remote_code\s*=\s*True'
+        - 'Auto\w+\.from_pretrained\s*\([^)]*trust_remote_code'
+        - 'executing custom code from.{0,30}(repo|model)'
+        - 'custom.{0,20}(modeling|tokenizer).{0,20}code.{0,20}(repo|remote)'
+    severity: high
+    mitigations:
+      - "Default-deny repository code execution in every loader configuration; require explicit per-model approval with the code diff visible to the approver"
+      - "Vendor any required custom modeling code into your own repository, review it once, pin it by hash, and load it from the vendored copy instead of the hub"
+      - "Prefer architectures with in-library support so custom code is never needed; treat 'requires custom code' as a risk signal in model selection"
+      - "Sandbox first-loads of models that need custom code, with no credentials and no egress, and alert on any network, process, or filesystem activity during the load"
+    examples:
+      - summary: "Hugging Face's transformers documentation warns that trust_remote_code executes custom code from the model repository and should only be enabled for repositories you trust, formalizing the loader-time code-execution risk class."
+        reference: "https://huggingface.co/docs/transformers/main/en/using-transformers"
+      - summary: "JFrog's 2024 disclosure of malicious Hugging Face models included cases abusing executable model-adjacent content, reinforcing that hub artifacts must be treated as untrusted code, not just untrusted data."
+        reference: "https://jfrog.com/blog/data-scientists-targeted-by-malicious-hugging-face-ml-models-with-silent-backdoor/"
+    references:
+      - "https://huggingface.co/docs/transformers/main/en/using-transformers"
+      - "https://huggingface.co/docs/hub/security"
+      - "https://jfrog.com/blog/data-scientists-targeted-by-malicious-hugging-face-ml-models-with-silent-backdoor/"
+      - "https://genai.owasp.org/llmrisk/llm05-supply-chain-vulnerabilities/"
+
+  - id: AEG-T393
+    name: "Weight Steganography and Hidden-Capability Models"
+    category: ml_serialization_attacks
+    description: >-
+      Neural-network weights carry far more information capacity than the
+      task requires, and that slack can hide data or capabilities: malware
+      bytes in least-significant bits, covert trigger circuits, or dual-use
+      capabilities smuggled past capability evaluations. The model still
+      scores normally because low-bit perturbations barely move accuracy.
+      Defenders detect this statistically (LSB entropy anomalies, capacity
+      analysis) and procedurally (treating hub models as potential carriers).
+    how_it_works: >-
+      A 32-bit float weight's low mantissa bits contribute negligibly to model
+      outputs, so an attacker can overwrite them with arbitrary payload bytes
+      (classic LSB steganography) with no measurable accuracy loss; published
+      demonstrations have embedded hundreds of megabytes of malware in
+      production-grade vision models this way. A subtler variant trains
+      genuinely hidden capabilities into the weights: the model passes public
+      capability evals while a private elicitation method unlocks the hidden
+      behavior. A third variant hides trigger circuitry that only a specific
+      input pattern activates. Defenders apply statistical tests (LSB entropy
+      far above what trained weights exhibit), capacity accounting (file size
+      vs architecture-implied size), and weight-distribution comparisons
+      against independently trained references.
+    variants:
+      - "Malware payload bytes hidden in weight least-significant bits"
+      - "Hidden dual-use capabilities trained in but absent from evals"
+      - "Covert trigger circuits activating only on specific inputs"
+      - "Exfiltration-via-publishing: sensitive data smuggled out inside a published model"
+    indicators:
+      - "Weight tensors whose least-significant-bit entropy is anomalously high compared to reference models of the same architecture and precision"
+      - "Model files significantly larger than the architecture's parameter count implies, without a matching increase in stated precision or tensor count"
+      - "Capability evaluations that pass while private or adversarial elicitation reveals behaviors the evals never measured"
+      - "Published 'quantized' models with precision artifacts inconsistent with the claimed quantization recipe"
+    detection:
+      rule: detect_weight_stego
+      patterns:
+        - 'lsb.{0,25}(entrop|stegan)'
+        - 'weight.{0,25}(lsb|hidden.{0,15}payload)'
+        - 'capacity.{0,25}(weight|parameter).{0,20}(anomal|exceed)'
+        - 'stegan.{0,20}(weight|model|checkpoint)'
+    severity: medium
+    mitigations:
+      - "Run statistical weight audits (LSB entropy, distribution tests) on third-party models before deployment, especially models from new or unverified publishers"
+      - "Re-quantize or re-derive deployed weights through your own pipeline where feasible; honest re-quantization destroys LSB payloads while preserving task accuracy"
+      - "Evaluate hidden capabilities adversarially, not just against public eval suites: capability elicitation with private probes is part of model acceptance"
+      - "Treat published models as potential data carriers in DLP policy: scanning outbound model uploads for embedded non-weight payloads"
+    examples:
+      - summary: "Wang et al.'s 2021 EvilModel work demonstrated embedding malware inside neural-network weights (overwriting parameters while preserving accuracy), proving production models can serve as malware carriers."
+        reference: "https://arxiv.org/abs/2107.08590"
+      - summary: "Liu et al.'s 2017 StegoNet showed deep neural networks can conceal malware within their parameters with negligible performance impact, the foundational result for weight-steganography detection."
+        reference: "https://arxiv.org/abs/1711.08156"
+    references:
+      - "https://arxiv.org/abs/2107.08590"
+      - "https://arxiv.org/abs/1711.08156"
+      - "https://atlas.mitre.org/"
+      - "https://csrc.nist.gov/pubs/ai/100/2/e2023/final"
+
+  - id: AEG-T394
+    name: "Quantization Backdoors"
+    category: ml_serialization_attacks
+    description: >-
+      Backdoors can be crafted to survive precision reduction, or to activate
+      only after it: an attacker poisons with quantization in the loop so the
+      trigger behavior persists through INT8 post-training quantization,
+      GPTQ, or AWQ, or hides a trigger that the full-precision model never
+      exhibits but the quantized deployment does. Standard evals run at full
+      precision miss the latter class entirely. Detection compares behavior
+      across precisions and audits the quantization recipe bundled with the
+      artifact.
+    how_it_works: >-
+      Quantization changes which weight bits matter, and an attacker who
+      includes the quantization step in the poisoning objective produces
+      backdoors robust to it: the trigger survives INT8 conversion, pruning,
+      and distillation that would destroy a naive backdoor. Conversely, a
+      'quantize-to-activate' backdoor exploits the approximation error itself:
+      full-precision evals are clean, but the deployed quantized model
+      responds to the trigger. Victims commonly download pre-quantized models
+      (GGUF, AWQ, GPTQ) from hubs without ever testing the full-precision
+      original. Defenders evaluate the exact quantized artifact they deploy
+      with trigger-oriented probes, diff behavior between precisions on
+      adversarial inputs, and treat nonstandard quantization recipes as risk
+      signals.
+    variants:
+      - "Quantization-aware poisoning surviving INT8 post-training quantization"
+      - "Quantize-to-activate backdoors invisible at full precision"
+      - "Backdoored pre-quantized hub artifacts (GGUF/AWQ/GPTQ) never tested at source precision"
+      - "Nonstandard quantization recipes engineered to preserve trigger circuitry"
+    indicators:
+      - "Behavioral divergence between full-precision and quantized versions of the same model concentrated on rare or adversarial inputs, while clean benchmarks agree"
+      - "A hub model shipping only in quantized form with no full-precision reference and a quantization recipe that deviates from standard tooling defaults"
+      - "Accuracy cliffs on specific input slices after quantization that do not appear in the publisher's reported evals"
+      - "Trigger-probe success rates that rise, rather than fall, as precision decreases"
+    detection:
+      rule: detect_quant_backdoor
+      patterns:
+        - 'quant.{0,25}(backdoor|trigger)'
+        - 'int8.{0,25}eval.{0,25}(delta|diff|divergence)'
+        - 'post.?training quantization.{0,35}anomal'
+        - 'precision.{0,20}(reduc|drop).{0,25}trigger.{0,20}(activ|appear)'
+    severity: high
+    mitigations:
+      - "Evaluate the exact quantized artifact you deploy with trigger-oriented and adversarial probes, never just the full-precision original"
+      - "Perform quantization in your own pipeline from a trusted full-precision checkpoint instead of downloading pre-quantized hub artifacts"
+      - "Diff model behavior across precisions on a held-out adversarial set as part of acceptance testing, and investigate precision-correlated divergences"
+      - "Standardize on audited quantization tooling and recipes; flag artifacts whose quantization metadata is missing or nonstandard"
+    examples:
+      - summary: "NIST's Adversarial Machine Learning taxonomy (AI 100-2e) catalogs supply-chain-stage ML attacks including backdoors that persist through model transformations, the class under which quantization-robust backdoors fall."
+        reference: "https://csrc.nist.gov/pubs/ai/100/2/e2023/final"
+      - summary: "MITRE ATLAS documents ML supply-chain techniques in which adversaries tamper with models between training and deployment, covering the publish-quantized-artifact attack pattern."
+        reference: "https://atlas.mitre.org/"
+    references:
+      - "https://csrc.nist.gov/pubs/ai/100/2/e2023/final"
+      - "https://atlas.mitre.org/"
+      - "https://huggingface.co/docs/hub/security"
+
+  - id: AEG-T395
+    name: "Model Provenance and Signing (Sigstore-Style)"
+    category: ml_serialization_attacks
+    description: >-
+      This is the defensive counterpart to the pack's attack techniques:
+      cryptographically binding a model artifact to its publisher and its
+      training provenance, and verifying that binding in the load path before
+      deserialization. Keyless signing (Sigstore) ties a model hash to an
+      OIDC-verified publisher identity with a transparency-log entry, while
+      SLSA-style attestations record the training inputs (dataset version,
+      code commit, run ID). Unsigned artifacts, disabled verification, and
+      missing provenance are themselves detection signals.
+    how_it_works: >-
+      At publish time the model builder signs the artifact's content hash
+      with an ephemeral key bound to their identity provider account; the
+      signature and a transparency-log entry are stored alongside the model.
+      At load time the consumer's loader verifies the signature, checks the
+      transparency entry, and confirms the signer identity matches an
+      allowlisted publisher before any byte is deserialized. SLSA-for-ML
+      attestations extend this from 'who published' to 'how it was built':
+      in-toto style statements linking the artifact to dataset digests, code
+      commits, and build parameters. Variants in deployment: (1) hub-enforced
+      signing where the registry refuses unsigned uploads; (2) enterprise
+      re-signing, where an internal review pipeline countersigns accepted
+      third-party models; (3) provenance verification in CI that blocks
+      promotion of artifacts whose lineage breaks. The detection angle is
+      negative space: production loads of unsigned or unverifiable artifacts.
+    variants:
+      - "Hub-enforced signing with unsigned-upload rejection"
+      - "Enterprise countersigning after internal model review"
+      - "CI provenance gates blocking lineage-broken promotions"
+      - "Transparency-log monitoring for unexpected signer identities"
+    indicators:
+      - "Production model loads of artifacts with no signature or attestation attached, in an environment where signing is policy"
+      - "Signature verification disabled or bypassed in loader configuration, or verification failures logged and then overridden"
+      - "Transparency-log entries showing a trusted model name signed by an unexpected identity"
+      - "Promoted artifacts whose provenance attestations reference dataset or code versions that do not match the recorded training run"
+    detection:
+      rule: detect_unsigned_model_load
+      patterns:
+        - 'sigstore.{0,25}(verif|sign)'
+        - 'signature.{0,25}verif.{0,25}(fail|bypass|disabled|skip)'
+        - 'rekor|in.?toto.{0,25}attestation'
+        - 'unsigned.{0,25}model.{0,25}(load|artifact|publish)'
+    severity: medium
+    mitigations:
+      - "Sign every model artifact at build time with keyless (Sigstore) or managed-key signing, and verify signatures in the load path before deserialization, failing closed"
+      - "Record SLSA-style provenance for training runs (dataset digests, code commit, hyperparameters) and require unbroken lineage for promotion to production"
+      - "Monitor transparency logs for your model names and alert on signatures from unexpected identities"
+      - "Countersign third-party models after internal review so downstream loaders verify your signature rather than trusting the hub alone"
+    examples:
+      - summary: "Sigstore's keyless signing model, adopted for software supply-chain security, is being extended to ML artifacts so model publishers can bind weights to verified identities without managing long-lived keys."
+        reference: "https://www.sigstore.dev/"
+      - summary: "The SLSA framework's provenance and attestation model provides the template for ML build provenance, linking a deployed model back to the exact code, data, and build steps that produced it."
+        reference: "https://slsa.dev/"
+    references:
+      - "https://www.sigstore.dev/"
+      - "https://slsa.dev/"
+      - "https://www.cisa.gov/resources-tools/resources/guidelines-secure-ai-system-development"
+      - "https://huggingface.co/docs/hub/security"
+
+  - id: AEG-T396
+    name: "Dataset-to-Model Poisoning Distinction (Artifact-Integrity Bridge)"
+    category: ml_serialization_attacks
+    description: >-
+      This technique defines the boundary with llm_model_attacks AEG-T215
+      (training-data poisoning, which alters model behavior through the data):
+      artifact-integrity attacks alter the artifact after training, swapping,
+      patching, or re-serializing a model that was trained and evaluated
+      cleanly. Both produce misbehaving models, but they demand different
+      defenses: poisoning needs data lineage and training oversight, while
+      artifact attacks need hash continuity from the evaluated artifact to
+      the deployed one. Defenders who conflate them secure the wrong stage.
+    how_it_works: >-
+      In a poisoning attack (AEG-T215's subject) the corruption enters through
+      training data and the resulting artifact is honestly derived from a
+      dishonest dataset; retraining on clean data removes it. In an artifact
+      attack the training was honest but the artifact is not: the evaluated
+      checkpoint is swapped for a backdoored twin between eval and deploy
+      (eval-on-A/deploy-B), a clean checkpoint is re-serialized through a
+      trojanized converter that injects pickle payloads, or a hub repo's
+      'same name, new commit' drift silently replaces weights after sign-off.
+      The defender's control is continuity: record the content hash of the
+      exact artifact that passed evaluation, and verify that identical hash
+      at every subsequent stage (registry, staging, production load).
+      Variants: (1) eval/deploy swap; (2) trojanized re-serialization;
+      (3) post-sign-off hub commit drift; (4) registry race where a newer
+      upload shadows the evaluated revision.
+    variants:
+      - "Eval-on-A/deploy-B artifact swap between sign-off and production"
+      - "Trojanized re-serialization injecting payloads into clean checkpoints"
+      - "Post-sign-off hub commit drift under an unchanged model name"
+      - "Registry shadowing where a new upload supersedes the evaluated revision"
+    indicators:
+      - "The content hash of the deployed artifact differs from the hash recorded at evaluation sign-off, or no evaluation-time hash was recorded"
+      - "Model hub commits or registry uploads occurring after the evaluation sign-off timestamp for a model already approved for deployment"
+      - "Artifacts appearing in the deploy path in a different serialization format than the evaluated original, indicating re-serialization"
+      - "Evaluation reports referencing a model revision that no longer resolves to the same bytes in the registry"
+    detection:
+      rule: detect_eval_deploy_drift
+      patterns:
+        - '(evaluated|approved).{0,25}artifact.{0,25}(hash|digest).{0,25}mismatch'
+        - 'model.{0,25}repo.{0,25}commit.{0,25}after.{0,25}(eval|sign.?off)'
+        - 're.?seriali[sz]ed?\b'
+        - 'deploy.{0,25}(revision|hash).{0,25}(differs|mismatch|unknown)'
+    severity: medium
+    mitigations:
+      - "Bind evaluation sign-off to a content hash, not a model name or version tag, and verify that hash at registry ingest, staging, and production load"
+      - "Make model registries immutable: approved revisions cannot be overwritten, and new uploads always create new revisions that require fresh evaluation"
+      - "Prohibit format conversion between evaluation and deployment; if conversion is required, re-run the evaluation suite on the converted artifact"
+      - "Alert on any hub or registry write to a model name after its evaluation sign-off, and quarantine the new revision pending review"
+    examples:
+      - summary: "MITRE ATLAS separates supply-chain tampering techniques (adversary modifies the model between training and deployment) from training-data poisoning, reflecting exactly this artifact-integrity versus data-integrity boundary."
+        reference: "https://atlas.mitre.org/"
+      - summary: "Mithril Security's PoisonGPT showed the artifact side of the boundary in practice: the published weights, not the training data available to victims, carried the hidden behavior, so only artifact verification could have caught it."
+        reference: "https://blog.mithrilsecurity.io/poisongpt-how-we-hid-a-lobotomized-llm-on-hugging-face-to-spread-fake-news/"
+    references:
+      - "https://atlas.mitre.org/"
+      - "https://csrc.nist.gov/pubs/ai/100/2/e2023/final"
+      - "https://blog.mithrilsecurity.io/poisongpt-how-we-hid-a-lobotomized-llm-on-hugging-face-to-spread-fake-news/"
+      - "https://slsa.dev/"
+
+  - id: AEG-T397
+    name: "Inference-Server Model-Loading Hardening"
+    category: ml_serialization_attacks
+    description: >-
+      This is the defensive technique for the serving layer: inference
+      servers (Triton, vLLM, and equivalents) load model artifacts on request,
+      often in multi-tenant or hot-swap configurations, making the loader the
+      highest-leverage enforcement point in the fleet. Hardening combines a
+      format allowlist, signature verification before deserialization,
+      sandboxed loader processes, read-only model volumes, and admission
+      control on which repositories a server may pull from.
+    how_it_works: >-
+      A hardened inference server treats model loading as untrusted-code
+      admission: the model repository is mounted read-only, the loader runs
+      as an unprivileged user under seccomp/AppArmor confinement, and the
+      load sequence is gated in order: (1) the artifact's format must be on
+      the allowlist (data-only formats; no pickle family, no custom ops
+      unless explicitly approved); (2) the artifact's signature and
+      provenance must verify against the publisher allowlist; (3) the content
+      hash must match the approved revision; only then does deserialization
+      proceed, in a worker with no credentials and no egress. Variants:
+      (1) multi-tenant servers where tenants upload models, requiring
+      per-tenant sandboxing; (2) hot-swap endpoints that reload models
+      without restart, requiring the same gates on every reload; (3) edge
+      deployments where the model arrives over untrusted networks, requiring
+      signature verification to be non-bypassable offline.
+    variants:
+      - "Multi-tenant inference with per-tenant loader sandboxing"
+      - "Hot-swap model endpoints re-gating every reload"
+      - "Edge serving with mandatory offline signature verification"
+      - "Admission-controlled model repositories per server fleet"
+    indicators:
+      - "Inference servers configured to accept pickle-family or custom-op model uploads from tenants or hot-swap endpoints"
+      - "Loader processes running as root or with host filesystem write access, or model directories writable by the serving user"
+      - "Model loads proceeding with signature or hash verification disabled, failed-open, or absent from the configuration"
+      - "Servers pulling models from arbitrary hub URLs or unvetted repositories rather than an allowlisted mirror"
+    detection:
+      rule: detect_inference_loader_weakness
+      patterns:
+        - 'model.{0,25}upload.{0,25}\.(pkl|pt|pth|bin|h5)\b'
+        - 'inference.{0,25}server.{0,25}(unsigned|unverified)'
+        - 'signature.{0,20}verif.{0,20}(disabled|fail.?open|skip)'
+        - 'allowlist.{0,25}format.{0,25}(missing|empty|disabled)'
+    severity: high
+    mitigations:
+      - "Enforce a data-only format allowlist at the inference server's model repository, rejecting pickle-family and unapproved custom-op artifacts before they reach the loader"
+      - "Verify artifact signatures and content hashes against the approved revision on every load and every hot-swap reload, failing closed"
+      - "Run loaders unprivileged, sandboxed, and without credentials or egress; mount model volumes read-only and deny native-library loads from model directories"
+      - "Restrict servers to an allowlisted set of model repositories or a vetted internal mirror, and audit every model-pull event"
+    examples:
+      - summary: "NVIDIA Triton Inference Server's model-repository documentation describes server-side controls over which models load and how, the natural enforcement point for format allowlists and integrity checks in GPU serving fleets."
+        reference: "https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/model_repository.html"
+      - summary: "CISA's secure AI development guidelines call for validating and verifying AI models and their supply chain before deployment, which at serving time means exactly these loader-side gates."
+        reference: "https://www.cisa.gov/resources-tools/resources/guidelines-secure-ai-system-development"
+    references:
+      - "https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/model_repository.html"
+      - "https://www.cisa.gov/resources-tools/resources/guidelines-secure-ai-system-development"
+      - "https://genai.owasp.org/llmrisk/llm05-supply-chain-vulnerabilities/"
+      - "https://www.tensorflow.org/guide/saved_model"
+
+  - id: AEG-T398
+    name: "GPU and Accelerator Supply-Chain Adjacent Risk"
+    category: ml_serialization_attacks
+    description: >-
+      The ML stack depends on large binary blobs adjacent to the model
+      itself: CUDA toolkits, cuDNN, NCCL, compiler backends, and driver
+      packages that agents and training jobs install routinely. These
+      artifacts are high-value supply-chain targets because they execute with
+      broad privileges across the fleet. Defenses are hash pinning, private
+      mirrors, signature verification, and monitoring for unexpected binary
+      changes, the same discipline as model artifacts applied one layer down.
+    how_it_works: >-
+      Training and inference environments assemble dozens of accelerator
+      binaries at build or install time: pip/conda packages for CUDA
+      components, driver installers, and compiler backends such as Triton.
+      Attackers target this layer through (1) dependency confusion, where a
+      package manager resolves an internal accelerator package name from a
+      public index serving a malicious version; (2) compromised build
+      artifacts or mirrors serving trojanized binaries; (3) malicious
+      'optimization' wheels that bundle native code executed at import.
+      Because these components load into every training and inference
+      process, one compromised binary affects the whole fleet. Defenders pin
+      exact hashes, serve from private mirrors, verify vendor signatures,
+      and alert on any binary whose hash or version drifts outside the
+      approved set.
+    variants:
+      - "Dependency confusion on internal accelerator package names"
+      - "Trojanized CUDA/cuDNN binaries served from compromised mirrors"
+      - "Malicious 'optimized' wheels executing native code at import"
+      - "Driver or firmware updates outside the approved change window"
+    indicators:
+      - "Package managers resolving accelerator packages (torchtriton, nvidia-*, cuda-*) from a public index when policy requires a private mirror"
+      - "Content hashes of installed CUDA, cuDNN, NCCL, or driver binaries differing from the pinned approved set"
+      - "Unexpected version changes of accelerator libraries across the fleet without a corresponding approved change record"
+      - "Import-time network or process activity from freshly installed accelerator packages"
+    detection:
+      rule: detect_accelerator_supply_tamper
+      patterns:
+        - 'torchtriton|cuda.{0,25}(hash|checksum).{0,25}mismatch'
+        - '(cudnn|nccl|tensorrt).{0,25}unexpected.{0,25}(version|update)'
+        - 'dependency.?confusion.{0,25}(torch|cuda|triton|nvidia)'
+        - 'driver.{0,20}(version|binary).{0,20}drift'
+    severity: high
+    mitigations:
+      - "Hash-pin every accelerator binary (CUDA, cuDNN, NCCL, drivers, compiler backends) and verify hashes at install time in CI and at fleet build time"
+      - "Serve accelerator packages exclusively from a private, access-controlled mirror; configure package managers to never fall back to public indexes for these names"
+      - "Verify vendor signatures on driver and toolkit installers, and restrict driver/firmware updates to approved change windows with rollback plans"
+      - "Monitor the fleet for binary drift: continuously compare installed accelerator component hashes against the approved set and alert on any deviation"
+    examples:
+      - summary: "In December 2022 PyTorch disclosed that its nightly Linux builds had been pulling a malicious torchtriton dependency from PyPI via dependency confusion, exfiltrating data from developer machines, the canonical accelerator-layer supply-chain incident."
+        reference: "https://pytorch.org/blog/compromised-nightly-dependency/"
+      - summary: "Oligo Security's ShadowRay research further showed AI compute infrastructure as an attack target, with exposed orchestrators granting access to the GPU clusters where these accelerator binaries run."
+        reference: "https://www.oligo.security/blog/shadowray-attack"
+    references:
+      - "https://pytorch.org/blog/compromised-nightly-dependency/"
+      - "https://www.oligo.security/blog/shadowray-attack"
+      - "https://www.cisa.gov/resources-tools/resources/guidelines-secure-ai-system-development"
+      - "https://docs.nvidia.com/cuda/"

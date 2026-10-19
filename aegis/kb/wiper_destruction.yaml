@@ -1,0 +1,705 @@
+pack: wiper_destruction
+version: "1.0"
+techniques:
+  - id: AEG-T435
+    name: "Wiper-vs-Ransomware Discrimination"
+    category: wiper_destruction
+    description: >-
+      Some incidents wearing ransomware's clothes were never ransomware at
+      all: the encryptor ships with no working key management, a single
+      hardcoded key, or a ransom note nobody monitors, so no payment could
+      ever restore data. This technique is the discrimination discipline —
+      the telemetry differences between genuine extortion (recoverable by
+      design, key escrow with the operator) and destruction masquerading
+      as extortion — which decides whether incident response negotiates,
+      contains, or goes straight to bare-metal rebuild. It is distinct
+      from malware_concepts T164 (the wiper family overview) and
+      apt_campaigns T260 (the state-actor deception framing): this entry
+      is the defender's triage checklist, not the malware's biography.
+    how_it_works: >-
+      Genuine ransomware generates a per-victim key pair, exfiltrates or
+      escrows the private key, and keeps the victim's data recoverable
+      because recovery is the product being sold; its telemetry shows key
+      generation, unique victim IDs, and a monitored payment channel.
+      Wiper-in-disguise shows the inverse: one key reused across victims
+      (or none at all), no key-exchange telemetry, ransom notes pointing
+      at unmonitored wallets or broken contact channels, and destruction
+      of the boot path or filesystem metadata that makes decryption
+      irrelevant even if a key existed. Detonation also tends to be
+      synchronized across the fleet rather than staged for maximum
+      negotiating leverage. Defenders use this asymmetry to branch the
+      playbook within hours: unrecoverable-by-design means no negotiation
+      value, and every hour spent "negotiating" is an hour the rebuild
+      queue does not move.
+    variants:
+      - "Non-recoverable encryption: a real cipher is used, but key handling makes recovery impossible (single hardcoded key, keys discarded after use)."
+      - "Decoy-note destruction: a ransom note is dropped purely for misdirection while the payload overwrites data or boot records outright."
+      - "Hybrid sabotage: working encryption of user data paired with boot/filesystem destruction that blocks the recovery path the note promises."
+    indicators:
+      - "A ransom note demanding payment to a single static wallet address reused across many victims, with no per-victim identifier for key delivery."
+      - "No telemetry of key generation, key exfiltration, or operator-side key management anywhere in the intrusion timeline."
+      - "Encryption accompanied by boot-record, partition-table, or MFT destruction that would prevent recovery even with a valid key."
+      - "Near-simultaneous detonation across many hosts rather than the staged, leverage-maximizing rollout typical of extortion operations."
+      - "Victim communications to the note's contact channel go unanswered, or the channel is technically nonfunctional."
+    detection:
+      rule: detect_wiper_ransomware_discrimination
+      patterns:
+        - 'hardcoded.{0,30}(encryption|decryption).{0,30}key'
+        - '(encrypt|ransom).{0,40}(mbr|partition.table|boot.record|mft)'
+        - 'single.{0,20}(static|shared|reused).{0,20}(bitcoin|wallet|address).{0,20}(victim|host)'
+        - 'no.{0,20}(key.exchange|key.management|decryptor).{0,20}(observed|telemetry|traffic)'
+    severity: high
+    mitigations:
+      - "Treat every ransom note as untrusted until the decryption path is proven: demand a test decrypt of non-critical files before any payment discussion."
+      - "Branch the IR playbook early on recoverability: if the payload is non-recoverable by design, skip negotiation and commit to containment plus rebuild."
+      - "Preserve pre-encryption backups and forensic images before detonation where staging is detected; assume post-detonation media is unrecoverable."
+      - "Correlate the note's payment address across victims and threat intel; a single static address across an incident wave is a wiper tell."
+    examples:
+      - summary: "NotPetya (2017) posed as ransomware but used a single hardcoded key, overwrote the MBR, and offered no per-victim recovery path — non-recoverable by design, as Cisco Talos's comparison with WannaCry documents."
+        reference: "https://blog.talosintelligence.com/nyetya-compared-to-wannacry/"
+      - summary: "Microsoft's MSTIC analysis of WhisperGate (Jan 2022) notes the ransom note demanded Bitcoin to a wallet the operators never monitored while stage one overwrote the MBR — destruction wearing a ransom note."
+        reference: "https://www.microsoft.com/en-us/security/blog/2022/01/15/destructive-malware-targeting-ukrainian-organizations/"
+    references:
+      - "https://attack.mitre.org/techniques/T1486/"
+      - "https://attack.mitre.org/techniques/T1485/"
+      - "https://www.cisa.gov/news-events/cybersecurity-advisories/aa22-057a"
+      - "https://blog.talosintelligence.com/nyetya-compared-to-wannacry/"
+
+  - id: AEG-T436
+    name: "MBR and Partition-Table Destruction Behaviors"
+    category: wiper_destruction
+    description: >-
+      Overwriting the Master Boot Record and partition table is one of the
+      oldest and most effective destruction primitives: a few kilobytes of
+      writes at the start of the disk render the entire drive unbootable
+      and its partitions invisible, regardless of how much user data is
+      still intact. Defenders detect it through raw disk-access telemetry
+      (non-backup processes opening physical-drive devices), MBR hash
+      changes across reboots, and the characteristic symptom of machines
+      that power on but never reach the OS. Recovery implications are
+      severe but bounded: with the partition table rebuilt from known
+      geometry, data recovery is sometimes possible, unlike full-disk
+      overwrite.
+    how_it_works: >-
+      The payload obtains a handle to the physical drive device and writes
+      over the boot code and partition-table sectors at the disk's start
+      (and, on GPT disks, the protective MBR plus partition entries),
+      then forces a reboot. The machine's firmware finds no valid boot
+      signature and halts, or displays the attacker's message. From a
+      detection standpoint the tell is the access pattern: ordinary
+      applications never open raw physical-drive devices; backup and disk
+      utilities do so under predictable service accounts and schedules.
+      EDR telemetry showing an unsigned or newly dropped binary opening
+      physical-drive handles, followed by a reboot and mass boot failure
+      across hosts, is the classic MBR-wiper signature. Some variants
+      first read and exfiltrate drive geometry, which can aid later
+      partition-table reconstruction during recovery.
+    indicators:
+      - "A non-backup, non-disk-utility process opening raw physical-drive device handles (e.g. PhysicalDrive devices on Windows)."
+      - "MBR or GPT header hash changes detected across a reboot by boot-integrity monitoring."
+      - "Multiple hosts failing to boot simultaneously, halting at firmware or displaying attacker text instead of the OS loader."
+      - "A wiper binary that first enumerates drive geometry and partition layouts before writing — reconnaissance for the destruction pass."
+    detection:
+      rule: detect_mbr_partition_destruction
+      patterns:
+        - 'physicaldrive.{0,30}(write|open|handle)'
+        - '(mbr|master.boot.record|partition.table|gpt.header).{0,30}(overwrite|corrupt|wipe|destroy|invalid)'
+        - 'raw.{0,20}disk.{0,20}(write|access).{0,20}(sector|offset)'
+        - 'boot.{0,20}(signature|sector).{0,20}(missing|invalid|damaged).{0,20}(reboot|startup)'
+    severity: critical
+    mitigations:
+      - "Monitor raw physical-drive handle creation by EDR; alert on any process outside the backup/disk-utility allowlist opening drive devices."
+      - "Deploy boot-integrity monitoring that hashes MBR/GPT regions and alerts on changes across reboots."
+      - "Maintain known-good partition geometry records and tested partition-table reconstruction procedures for critical systems."
+      - "Segment and harden systems so a single compromised host cannot reach drive devices on many others (blocks fleet-wide boot bricking)."
+    examples:
+      - summary: "NotPetya overwrote the MBR with a ransom message and forced a reboot, encrypting the MFT on restart — the boot path itself was the weapon."
+        reference: "https://blog.talosintelligence.com/nyetya-compared-to-wannacry/"
+      - summary: "CISA's AA22-057A advisory documents multiple wiper families used against Ukrainian organizations that corrupted or overwrote MBR and partition structures to deny recovery."
+        reference: "https://www.cisa.gov/news-events/cybersecurity-advisories/aa22-057a"
+    references:
+      - "https://attack.mitre.org/techniques/T1561/002"
+      - "https://attack.mitre.org/techniques/T1542/"
+      - "https://www.cisa.gov/news-events/cybersecurity-advisories/aa22-057a"
+
+  - id: AEG-T437
+    name: "Master File Table (MFT) Corruption Behaviors"
+    category: wiper_destruction
+    description: >-
+      The NTFS Master File Table is the filesystem's index: every file's
+      name, location, and attributes live there, so corrupting or
+      encrypting MFT records makes the entire volume unreadable even
+      though the file contents may still sit untouched on disk. Wipers
+      target the MFT precisely because it maximizes damage per byte
+      written — a small, fast operation that denies access to everything.
+      Defenders detect it through mass MFT-record write telemetry,
+      volumes that flip to RAW state, and filesystem drivers reporting
+      corrupt metadata immediately after a suspicious binary runs.
+    how_it_works: >-
+      Rather than touching user data, the payload opens the volume's
+      metadata files (the $MFT stream) and overwrites or encrypts the
+      file-record segments. On the next mount, NTFS cannot resolve any
+      path, and the OS offers to format the "RAW" volume. Detection
+      hinges on the abnormality of the write pattern: legitimate software
+      modifies MFT records incrementally as files change, while a wiper
+      sweeps the table wholesale in seconds. EDR file-system telemetry
+      showing sequential high-volume writes to volume metadata regions,
+      correlated with a newly executed binary and followed by RAW-volume
+      errors, is the signature. For recovery, intact MFT mirrors or
+      backups allow partial reconstruction; without them, carving file
+      contents from raw disk is slow and lossy, which is why this
+      primitive is so effective.
+    indicators:
+      - "High-volume sequential writes to NTFS metadata regions ($MFT) by a single process in a short window."
+      - "Volumes flipping to RAW/unreadable state across multiple hosts within minutes of a suspicious execution."
+      - "Filesystem driver errors reporting corrupt or unreadable MFT immediately following wiper staging activity."
+      - "File-recovery tools finding intact file contents but no directory structure — the signature of metadata-only destruction."
+    detection:
+      rule: detect_mft_corruption
+      patterns:
+        - '(mft|master.file.table).{0,30}(corrupt|encrypt|overwrite|damage|wipe)'
+        - 'volume.{0,20}(raw|unreadable|unrecognized).{0,20}(filesystem|ntfs|mount)'
+        - '\\$mft.{0,20}(write|modify|encrypt|overwrite)'
+        - 'filesystem.{0,20}(metadata|index).{0,20}(mass|bulk|wholesale).{0,20}(write|modif|corrupt)'
+    severity: critical
+    mitigations:
+      - "Alert on bulk writes to filesystem metadata regions; baseline normal MFT churn so wholesale sweeps stand out."
+      - "Keep MFT-mirror-aware backups and test bare-metal restore, not just file-level restore, for critical volumes."
+      - "Block or sandbox unsigned binaries that request volume-level handles outside approved maintenance windows."
+      - "Document disk-carving fallback procedures, but treat them as last resort — prevention and backup are the real controls."
+    examples:
+      - summary: "NotPetya encrypted MFT records after its MBR overwrite, denying file access across the victim's fleet even where user data sectors were intact."
+        reference: "https://blog.talosintelligence.com/nyetya-compared-to-wannacry/"
+      - summary: "MITRE ATT&CK's Disk Wipe sub-techniques distinguish wiping disk content from wiping disk structure (partition tables, MFT-class metadata) — the latter is the faster, higher-leverage destruction path."
+        reference: "https://attack.mitre.org/techniques/T1561/"
+    references:
+      - "https://attack.mitre.org/techniques/T1561/"
+      - "https://attack.mitre.org/techniques/T1485/"
+      - "https://blog.talosintelligence.com/nyetya-compared-to-wannacry/"
+
+  - id: AEG-T438
+    name: "Firmware-Level Destruction Concepts"
+    category: wiper_destruction
+    description: >-
+      Destruction that reaches below the operating system — corrupting
+      system firmware, SPI flash, or embedded-device firmware — bricks
+      hardware in a way no OS reinstall can fix, because the machine can
+      no longer initialize itself. It is rare against enterprise servers
+      but devastating where it lands, and it is the standard outcome
+      against embedded network devices, where wiping firmware is the
+      whole attack. Defenders detect it through firmware-integrity
+      attestation failures, devices that lose power-on self-test, and
+      unexpected flash-write telemetry on managed endpoints.
+    how_it_works: >-
+      The payload writes garbage or erases critical regions of flash
+      memory holding boot firmware: on PCs, the UEFI/BIOS image in SPI
+      flash; on embedded devices, the entire firmware partition. Without
+      valid firmware the device cannot boot far enough to accept a
+      reflash over the normal path, requiring physical reprogramming or
+      replacement. Historically this meant flashing motherboard BIOS from
+      a privileged OS context; in modern operations it more often means
+      wiping the firmware of routers, modems, and IoT devices en masse to
+      deny communications. Detection is indirect but strong: firmware
+      measurement mismatches (TPM attestation failures), fleets of devices
+      dropping off management simultaneously, and flash-write operations
+      from processes with no legitimate firmware-update role. Recovery is
+      a logistics problem — spare hardware and known-good firmware images
+      — not a software problem.
+    indicators:
+      - "TPM attestation or firmware-measurement mismatches on hosts that previously measured clean."
+      - "Embedded devices (modems, routers, cameras) dropping offline simultaneously and failing to respond to remote reflash."
+      - "Flash-write or firmware-update telemetry originating from unsigned or unexpected processes."
+      - "Devices failing power-on self-test or halting before any boot media is accessed."
+    detection:
+      rule: detect_firmware_destruction
+      patterns:
+        - '(spi.flash|system.firmware|uefi.firmware|bios.image).{0,30}(overwrite|corrupt|erase|brick)'
+        - '(firmware|nvram|bootrom|flash.memory).{0,20}(wipe|erase|destroy|corrupt)'
+        - '(modem|router|gateway|iot).{0,30}(firmware.{0,10}wipe|brick|flash.erase)'
+        - 'firmware.{0,20}(measurement|attestation).{0,20}(fail|mismatch|invalid)'
+    severity: critical
+    mitigations:
+      - "Enable firmware write-protection (BIOS lock, signed updates, flash descriptor locks) on managed endpoints."
+      - "Monitor TPM attestation and firmware measurements continuously; treat mismatches as potential destruction, not just misconfiguration."
+      - "Maintain a tested stock of known-good firmware images and, for critical embedded fleets, spare hardware for swap-out recovery."
+      - "Segment embedded-device management networks so one compromised host cannot reach an entire modem/router fleet."
+    examples:
+      - summary: "AcidRain (Feb 2022) wiped the firmware and data of KA-SAT satellite modems across Europe, bricking tens of thousands of embedded devices — firmware-level destruction as a communications-denial weapon, analyzed by SentinelOne."
+        reference: "https://www.sentinelone.com/labs/acidrain-a-modem-wiper-rains-down-on-europe/"
+      - summary: "The CIH/Chernobyl virus (1998-1999) overwrote motherboard BIOS flash on vulnerable systems, bricking PCs below the OS — the historical reference case for firmware destruction."
+        reference: "https://attack.mitre.org/techniques/T1542/"
+    references:
+      - "https://attack.mitre.org/techniques/T1542/"
+      - "https://attack.mitre.org/techniques/T1485/"
+      - "https://www.sentinelone.com/labs/acidrain-a-modem-wiper-rains-down-on-europe/"
+      - "https://www.cisa.gov/news-events/cybersecurity-advisories/aa22-057a"
+
+  - id: AEG-T439
+    name: "Backup and Recovery-Catalog Destruction (Destruction-Framed)"
+    category: wiper_destruction
+    description: >-
+      Wipers destroy backups not for leverage but to make the damage
+      permanent: shadow copies, backup agents, repository catalogs, and
+      offsite sync targets are enumerated and neutralized as a
+      precondition for detonation. This is deliberately distinct from
+      ransomware_playbook T125, which covers backup destruction as
+      extortion leverage — here the subject is the wiper's staging order
+      (enumerate recovery infrastructure first, destroy catalogs so
+      restores cannot even be planned, then detonate), which produces
+      different telemetry and demands a different response: there is no
+      negotiation phase in which backups can be bargained over.
+    how_it_works: >-
+      During staging, the operator inventories the victim's recovery
+      posture: Volume Shadow Copy state, backup-server agents and their
+      credentials, repository and catalog locations, and cloud/offsite
+      sync jobs. Destruction then proceeds from most-convenient to
+      most-durable: shadow copies and local recovery partitions first
+      (fast, scriptable), then backup agents and catalogs (so the
+      organization loses the map of what is backed up), then repositories
+      and sync targets where reachable. The telemetry signature is the
+      sequence — recovery-infrastructure enumeration and tampering in the
+      days before any destructive payload runs. Because catalogs are
+      destroyed, victims often cannot even enumerate what is lost without
+      rebuilding the backup infrastructure itself, which multiplies
+      recovery time beyond the data loss alone.
+    indicators:
+      - "Enumeration of shadow copies, backup agents, and repository shares during staging, days before any destructive execution."
+      - "Backup catalogs or configuration databases deleted or corrupted, leaving the organization unable to inventory its own backups."
+      - "Backup-service accounts used from unexpected hosts, or backup agents disabled/uninstalled across the fleet."
+      - "Recovery partitions or boot-recovery environments tampered with on endpoints prior to detonation."
+    detection:
+      rule: detect_wiper_backup_destruction
+      patterns:
+        - '(vssadmin|wmic|powershell).{0,30}(delete|shadows|shadowcopy)'
+        - 'backup.{0,30}(catalog|repository|database|agent).{0,30}(delete|destroy|corrupt|uninstall)'
+        - 'bcdedit.{0,30}(recoveryenabled|bootstatuspolicy|recoverysequence)'
+        - '(wbadmin|backup.exec|veeam|acronis).{0,30}(delete|disable|stop|uninstall)'
+    severity: critical
+    mitigations:
+      - "Keep immutable, offline, or air-gapped backup copies that cannot be reached from domain credentials — the only backup that survives this TTP."
+      - "Alert on backup-infrastructure enumeration and on any tampering with backup agents, catalogs, or shadow-copy state outside maintenance windows."
+      - "Separate backup-administration credentials and networks from the production domain; a domain-compromise should not equal backup-compromise."
+      - "Test restores from the offline tier regularly; an untested backup is only a hypothesis, and wipers exploit exactly that gap."
+    examples:
+      - summary: "MITRE ATT&CK T1490 (Inhibit System Recovery) catalogs how destructive and extortion malware alike delete shadow copies and disable recovery — the technique page's mitigations center on offline, tested backups."
+        reference: "https://attack.mitre.org/techniques/T1490/"
+      - summary: "CISA's StopRansomware guidance treats offline, encrypted, tested backups as the primary control against both ransomware and destructive wipers, precisely because on-network backups are destroyed first."
+        reference: "https://www.cisa.gov/stopransomware"
+    references:
+      - "https://attack.mitre.org/techniques/T1490/"
+      - "https://attack.mitre.org/techniques/T1485/"
+      - "https://www.cisa.gov/stopransomware"
+      - "https://www.cisa.gov/news-events/cybersecurity-advisories/aa22-057a"
+
+  - id: AEG-T440
+    name: "Log Destruction as Imminent-Destruction Signal"
+    category: wiper_destruction
+    description: >-
+      Wiper operators routinely clear event logs, audit trails, and
+      security telemetry just before detonation — partly to hinder
+      forensics, but the defender's opportunity is the timing: wholesale
+      log destruction in the presence of other staging indicators is one
+      of the last observable events before the destructive payload runs.
+      This entry is scoped narrowly by design: evasion T085/T086 cover log
+      tampering as anti-forensics generally; this technique covers only
+      the correlation — log clearing plus backup enumeration, driver
+      staging, or mass file-touch — as an early-warning trigger that
+      should escalate to destruction-imminent response, not routine
+      anti-forensics triage.
+    how_it_works: >-
+      In the final staging window, the operator stops or clears Windows
+      event logs, syslog/auditd on Linux, and EDR tamper-protection where
+      reachable, to blind defenders during detonation and complicate
+      attribution afterward. Viewed in isolation this looks like ordinary
+      anti-forensics; viewed in sequence — log clearing following backup
+      enumeration, suspicious driver loads, or recovery tampering within
+      hours — it is a detonation precursor. The detection value is
+      therefore correlational: a single log-clear event is low priority,
+      but the same event inside a staging cluster should fire the
+      destruction playbook immediately. Several documented wiper
+      operations cleared logs in the hours before fleet-wide detonation,
+      and responders who treated the clearing as the trigger bought
+      themselves the only warning window they got.
+    indicators:
+      - "Bulk clearing of Windows event logs or Linux audit/syslog trails outside any approved maintenance window."
+      - "Log clearing that follows backup enumeration, recovery tampering, or suspicious driver installation within hours."
+      - "EDR or audit-service tampering (services stopped, agents uninstalled) immediately preceding mass host failure."
+      - "Gaps in centralized log collection for hosts that later detonate — the silence itself is the signal."
+    detection:
+      rule: detect_log_destruction_precursor
+      patterns:
+        - '(event.log|security.log|system.log|syslog|audit.log).{0,30}(clear|delete|wipe|truncate)'
+        - '(wevtutil|clear-eventlog|auditctl).{0,20}(cl|clear|delete|stop)'
+        - '(auditd|syslog|rsyslog|journald).{0,20}(stop|disable|clear|mask)'
+        - 'log.{0,20}(clear|delet|wipe).{0,30}(backup.{0,10}enumerat|driver.{0,10}load|recovery.{0,10}tamper)'
+    severity: high
+    mitigations:
+      - "Forward logs to immutable, off-host collection in real time; local log clearing must never equal evidence loss."
+      - "Build the correlation rule: log-clear events co-occurring with staging indicators escalate to destruction-imminent, paging the IR lead."
+      - "Tamper-protect EDR and audit services (uninstall passwords, service ACLs) so clearing requires effort that itself generates alerts."
+      - "Treat unexplained centralized-logging gaps on critical hosts as an incident trigger, not a monitoring glitch."
+    examples:
+      - summary: "Olympic Destroyer operators cleared event logs and used legitimate credential-theft and lateral-movement tools before detonation, as Cisco Talos's analysis documents — the log clearing was part of a staged destructive sequence."
+        reference: "https://blog.talosintelligence.com/olympic-destroyer-takes-aim-at-winter-olympics/"
+      - summary: "MITRE ATT&CK T1070 (Indicator Removal on Host) covers log clearing as anti-forensics; the wiper-specific defender insight is its position in the staging sequence as a detonation precursor."
+        reference: "https://attack.mitre.org/techniques/T1070/"
+    references:
+      - "https://attack.mitre.org/techniques/T1070/"
+      - "https://attack.mitre.org/techniques/T1485/"
+      - "https://blog.talosintelligence.com/olympic-destroyer-takes-aim-at-winter-olympics/"
+
+  - id: AEG-T441
+    name: "Data Shredding vs Encryption: Detection Differences"
+    category: wiper_destruction
+    description: >-
+      Shredding (overwriting data with patterns, zeros, or random bytes)
+      and encryption both make files unreadable, but they leave different
+      forensic and telemetry footprints — and the difference decides
+      whether recovery is theoretically possible. Encryption preserves
+      information reversibly and shows crypto-library loading, key
+      artifacts, and structured ciphertext; shredding is a one-way
+      overwrite with distinctive sequential write patterns and no key
+      material anywhere. Defenders who can classify the mechanism from
+      telemetry in the first hour avoid wasting the response window on
+      key-recovery fantasies for data that was overwritten, not locked.
+    how_it_works: >-
+      Shredding wipers issue sequential overwrite passes across target
+      files or raw disk regions: IO telemetry shows sustained sequential
+      writes, often with recognizable fill patterns, and process memory
+      shows no cryptographic provider loading and no key buffers.
+      Encrypting wipers instead show read-transform-write cycles, loading
+      of crypto libraries, CPU profiles consistent with cipher rounds, and
+      — in genuine ransomware — key generation and escrow artifacts.
+      Entropy analysis helps but is not decisive (both ciphertext and
+      random-fill look high-entropy); the discriminating features are the
+      IO pattern (sequential overwrite vs read-modify-write), the absence
+      of crypto API calls, and whether file headers are destroyed (shred)
+      or wrapped (encrypt). Some wipers deliberately mimic encryption
+      tooling to waste analyst time, which is why the mechanism
+      classification must rest on telemetry, not on file extensions or
+      ransom notes.
+    variants:
+      - "Single-pass overwrite: fastest destruction, minimal IO signature beyond sequential writes."
+      - "Multi-pass patterned overwrite: slower, distinctive repeating write patterns visible in disk telemetry."
+      - "Header-only shredding: destroys file headers and metadata so content is unrecoverable without touching bulk data."
+      - "Pseudo-encryption mimicry: overwrite routines dressed as crypto operations to misdirect triage toward key recovery."
+    indicators:
+      - "Sustained sequential write IO across large file sets or disk regions with no corresponding crypto-library loads."
+      - "File headers and magic bytes destroyed rather than wrapped — carving tools find no recoverable structure."
+      - "Absence of key-generation, key-exchange, or crypto-provider telemetry despite mass data transformation."
+      - "Fill-pattern artifacts (zeros, repeating bytes) in overwritten regions instead of structured ciphertext."
+    detection:
+      rule: detect_shredding_vs_encryption
+      patterns:
+        - '(overwrite|shred|wipe|secure.delete).{0,20}(pass|pattern|zeros|random.fill)'
+        - 'sequential.{0,20}write.{0,30}(no|without).{0,20}(crypto|key|cipher)'
+        - '(file.header|magic.bytes|file.signature).{0,20}(destroy|overwrite|zero)'
+        - 'mass.{0,20}(write|overwrite).{0,30}(crypto|key).{0,20}(absent|missing|none)'
+    severity: high
+    mitigations:
+      - "Instrument EDR for IO-pattern classification (sequential overwrite vs read-transform-write) on mass file operations."
+      - "Train triage to classify the mechanism from telemetry before committing to a key-recovery or negotiation track."
+      - "For shredding-class events, pivot immediately to backup restoration and rebuild; no key will ever exist."
+      - "Retain pre-incident disk images where staging was detected — they are the only source of ground truth about what was overwritten."
+    examples:
+      - summary: "Shamoon's payload overwrote files with a partial image (the 'burning US flag' filler) — classic shredding with recognizable fill patterns, documented by Palo Alto's Unit 42 in the Shamoon 2 analysis."
+        reference: "https://unit42.paloaltonetworks.com/unit42-shamoon-2-driving-distruction/"
+      - summary: "ESET's analyses of the 2022 Ukraine wiper wave (HermeticWiper, IsaacWiper, CaddyWiper) show overwrite-style destruction with no key management — shredding, not extortion."
+        reference: "https://www.welivesecurity.com/2022/03/14/caddywiper-new-wiper-hits-ukrainian-networks/"
+    references:
+      - "https://attack.mitre.org/techniques/T1485/"
+      - "https://attack.mitre.org/techniques/T1561/001"
+      - "https://unit42.paloaltonetworks.com/unit42-shamoon-2-driving-distruction/"
+      - "https://www.welivesecurity.com/2022/03/14/caddywiper-new-wiper-hits-ukrainian-networks/"
+
+  - id: AEG-T442
+    name: "Destructive Payload Delivery via Legitimate Admin Tools"
+    category: wiper_destruction
+    description: >-
+      Wiper operators rarely need custom infrastructure for delivery:
+      they push the destructive payload through the victim's own
+      administration plane — remote-execution utilities, Group Policy,
+      software-distribution systems, and remote-monitoring tools — turning
+      trusted management channels into fleet-wide detonation switches. The
+      technique is living-off-the-land applied to destruction: the same
+      PsExec-style lateral execution and GPO software push that
+      administrators use daily become the wiper's deployment mechanism.
+      Detection focuses on anomalous scale, timing, and targeting of
+      otherwise legitimate admin-tool usage.
+    how_it_works: >-
+      After gaining privileged access, the operator stages the wiper on a
+      distribution point and triggers execution through existing
+      management tooling: scheduled tasks or services pushed domain-wide,
+      Group Policy startup scripts deploying the binary, or RMM/mass-
+      execution features running it on every managed host at once. Because
+      the tooling is legitimate and often allowlisted, the maliciousness
+      is visible only in context — execution at 3 AM outside change
+      windows, targeting every host rather than a maintenance group, or a
+      GPO modified by an account that never touches Group Policy. NotPetya
+      famously combined credential theft with PsExec/WMIC-style lateral
+      execution to detonate across networks in minutes. Defenders counter
+      by baselining admin-tool usage (who runs what, where, when) and
+      alerting on deviations in scale and timing rather than on the tools
+      themselves.
+    indicators:
+      - "Remote-execution or mass-deployment tools running destructive-looking binaries outside change windows or at unusual hours."
+      - "Group Policy objects modified to deploy executables or startup scripts, especially by atypical accounts."
+      - "RMM, SCCM-class, or MDM tooling executing commands fleet-wide rather than against scoped maintenance groups."
+      - "Lateral execution bursts (many hosts, minutes) consistent with coordinated detonation rather than phased administration."
+    detection:
+      rule: detect_admin_tool_destructive_delivery
+      patterns:
+        - '(psexec|wmic|winrm|powershell.remoting).{0,30}(mass|bulk|fleet|domain.wide|all.hosts)'
+        - '(gpo|group.policy).{0,30}(startup.script|deploy|push).{0,30}(binary|exe|payload)'
+        - '(sccm|rmm|intune|mdm).{0,30}(mass|bulk|fleet).{0,20}(execut|deploy|command)'
+        - 'scheduled.task.{0,30}(creat|regist).{0,30}(domain|fleet|multiple).{0,20}host'
+    severity: high
+    mitigations:
+      - "Baseline legitimate admin-tool usage (actor, scope, timing) and alert on scale/timing deviations, not on the tools."
+      - "Require change-window approval and multi-party authorization for GPO software-deployment changes and fleet-wide RMM commands."
+      - "Tier administrative credentials so a single compromised account cannot reach the entire fleet's execution plane."
+      - "Maintain an out-of-band kill capability for the management plane itself — when the RMM is the weapon, you need a second channel."
+    examples:
+      - summary: "NotPetya spread and detonated using stolen credentials with PsExec/WMIC-style lateral execution, turning the victim's own admin tooling into a fleet-wide detonation mechanism."
+        reference: "https://blog.talosintelligence.com/nyetya-compared-to-wannacry/"
+      - summary: "MITRE ATT&CK's lateral-movement and execution techniques document how legitimate remote services become attacker infrastructure — the destructive variant differs only in the payload, not the delivery."
+        reference: "https://attack.mitre.org/techniques/T1021/"
+    references:
+      - "https://attack.mitre.org/techniques/T1021/"
+      - "https://attack.mitre.org/techniques/T1485/"
+      - "https://blog.talosintelligence.com/nyetya-compared-to-wannacry/"
+
+  - id: AEG-T443
+    name: "Wiper Staging Telemetry (Pre-Detonation Signals)"
+    category: wiper_destruction
+    description: >-
+      Wipers are rarely detonated the moment they land: operators stage
+      them — loading disk-access drivers, enumerating backups, touching
+      target file sets, disabling recovery — sometimes days before the
+      destructive execution. That staging window is the defender's best
+      and often only chance to preempt destruction, because post-detonation
+      there is nothing left to defend. This technique catalogs the
+      pre-detonation signal cluster: individually benign-looking
+      administrative actions that, correlated in time and on the same
+      hosts, indicate a wiper is being armed.
+    how_it_works: >-
+      Staging follows a recognizable order. First, capability setup: a
+      legitimate but unusual driver is installed or loaded to gain raw
+      disk access (documented wiper operations have abused signed
+      third-party disk/partition drivers for exactly this), or volume
+      handles are probed. Second, recovery denial: backup enumeration,
+      shadow-copy deletion, recovery-environment tampering. Third, target
+      validation: mass file-touch or drive enumeration confirming the
+      payload can reach its targets, sometimes a small test wipe on a
+      non-critical path. Fourth, anti-forensics: log clearing and EDR
+      tampering in the final hours. Each step alone may look like
+      administration; the cluster — driver load plus backup enumeration
+      plus recovery tampering on the same host within a staging window —
+      is the signature. Defenders who alert on the cluster rather than
+      the singletons buy hours to isolate hosts before detonation.
+    indicators:
+      - "Installation or loading of disk/partition-access drivers (especially signed third-party drivers) on hosts that never needed them."
+      - "Backup enumeration and recovery tampering occurring on the same hosts within a short window — the staging cluster."
+      - "Mass file-touch, drive enumeration, or small test writes consistent with target validation before a destructive pass."
+      - "A dormant wiper binary staged on disk for days with no execution, then sudden coordinated detonation across the fleet."
+    detection:
+      rule: detect_wiper_staging_cluster
+      patterns:
+        - '(driver|\\.sys).{0,30}(install|load).{0,30}(disk|partition|storage|volume)'
+        - '(backup|shadow|vss|recovery).{0,20}(enumerat|discover|list|delete).{0,40}(driver.{0,10}load|disk.{0,10}access)'
+        - '(mass|bulk).{0,20}(file|drive|volume).{0,20}(touch|enumerat|access|test.write)'
+        - 'dormant.{0,20}(binary|payload).{0,20}(stage|drop).{0,40}(detonat|execut)'
+    severity: critical
+    mitigations:
+      - "Build a staging-cluster correlation rule: driver-load plus backup/recovery tampering on one host within 72 hours pages IR immediately."
+      - "Block or alert on installation of disk-access drivers outside approved storage-administration workflows."
+      - "Isolate first on staging-cluster alerts — waiting for detonation confirmation forfeits the only winnable window."
+      - "Hunt retrospectively: once one host detonates, search the fleet for the staging cluster to find armed-but-unfired hosts."
+    examples:
+      - summary: "HermeticWiper abused a legitimate signed disk driver to gain raw disk access for its destructive pass — the driver load during staging was the observable precursor, per CISA's AA22-057A advisory."
+        reference: "https://www.cisa.gov/news-events/cybersecurity-advisories/aa22-057a"
+      - summary: "WhisperGate operated in two stages: an initial MBR-overwriting stage followed by download and execution of a second-stage wiper — staging telemetry preceded detonation, as Microsoft's analysis details."
+        reference: "https://www.microsoft.com/en-us/security/blog/2022/01/15/destructive-malware-targeting-ukrainian-organizations/"
+    references:
+      - "https://www.cisa.gov/news-events/cybersecurity-advisories/aa22-057a"
+      - "https://attack.mitre.org/techniques/T1485/"
+      - "https://www.microsoft.com/en-us/security/blog/2022/01/15/destructive-malware-targeting-ukrainian-organizations/"
+      - "https://www.welivesecurity.com/2022/03/01/isaacwiper-hermeticwizard-wiper-worm-targeting-ukraine/"
+
+  - id: AEG-T444
+    name: "Destructive OT Targeting Behaviors"
+    category: wiper_destruction
+    description: >-
+      Destructive payloads aimed at operational technology do not need to
+      touch a controller to cause physical harm: wiping the Windows-based
+      HMIs, engineering workstations, and data historians that operators
+      use to see and control the process blinds the operation while a
+      parallel attack — or simple loss of visibility — creates the safety
+      impact. This entry is the destructive-payload companion to the
+      ics_ot_attacks pack (which owns OT mechanisms and protocols); it
+      covers only how destruction is applied against OT-adjacent systems
+      and why recovery there is harder than in IT. Behavior-level only,
+      per the OT boundary: detection and recovery, never controller
+      tradecraft.
+    how_it_works: >-
+      Operators deploy wipers or disk-corruption payloads onto
+      OT-adjacent Windows hosts — operator consoles, engineering
+      workstations holding controller project files, historian servers
+      with the process record — either as the main effect (denying
+      visibility and control) or as cover for manipulation of the process
+      itself. The 2015 Ukraine power-grid attack paired remote access to
+      control systems with KillDisk-style wiping of operator workstations,
+      delaying restoration; the 2016 CrashOverride/Industroyer attack
+      targeted grid protocols directly while wipers handled the IT side.
+      Detection mirrors IT wiper staging (driver loads, backup tampering,
+      mass writes) but on hosts whose compromise has safety implications,
+      so the response must be safety-first: isolate without tripping
+      protective systems, and never reboot or reimage a control host
+      without the process engineer in the loop. Recovery is complicated
+      by specialized software, license dongles, and project files that
+      exist nowhere else.
+    indicators:
+      - "Wiper staging telemetry (driver loads, backup tampering, mass writes) on HMI, historian, or engineering-workstation hosts."
+      - "Operator consoles going dark or historians losing data continuity concurrent with IT-side destructive activity."
+      - "Controller project files or HMI configurations encrypted, wiped, or exfiltrated from engineering workstations."
+      - "Destructive payloads timed to coincide with process anomalies — the blinding-while-disrupting pattern."
+    detection:
+      rule: detect_destructive_ot_targeting
+      patterns:
+        - '(hmi|scada|historian|opc.server).{0,30}(wipe|encrypt|destroy|dark|offline)'
+        - '(engineering.workstation|ews|operator.console).{0,30}(wipe|ransom|destroy|compromise)'
+        - '(iec.104|dnp3|modbus).{0,30}(malicious|abuse|unauthorized).{0,20}command'
+        - 'controller.{0,20}(project|logic|configuration).{0,20}(wipe|encrypt|delet|exfiltrat)'
+    severity: critical
+    mitigations:
+      - "Air-gap or strictly unidirectionally gateway OT networks; no wiper should be able to reach a control host from IT."
+      - "Back up controller projects, HMI configurations, and historian data to offline media on a schedule — these are the OT crown jewels."
+      - "Write the OT destruction playbook with process engineers: safety-first containment, no unilateral reboots of control hosts."
+      - "Monitor OT-adjacent Windows hosts with the same wiper-staging correlations as IT, but route alerts to both SOC and operations."
+    examples:
+      - summary: "The 2015 Ukraine grid attack combined control-system access with KillDisk wiping of operator workstations, deliberately delaying restoration — destruction as a force multiplier for physical effect."
+        reference: "https://attack.mitre.org/techniques/T1485/"
+      - summary: "ESET's analysis of Industroyer2 (April 2022) documents a second attempt at grid-disrupting malware targeting IEC-104 substation equipment, paired with destructive components."
+        reference: "https://www.welivesecurity.com/2022/04/12/industroyer2-industroyer-reloaded/"
+    references:
+      - "https://attack.mitre.org/techniques/T1485/"
+      - "https://www.welivesecurity.com/2022/04/12/industroyer2-industroyer-reloaded/"
+      - "https://www.cisa.gov/news-events/cybersecurity-advisories/aa22-057a"
+
+  - id: AEG-T445
+    name: "False-Flag Destruction (Ransom-Note Decoys)"
+    category: wiper_destruction
+    description: >-
+      Wiper operators plant ransom notes, hacktivist defacements, or
+      financially motivated branding to misdirect attribution and waste
+      the victim's response on the wrong playbook — negotiating with
+      criminals who do not exist, or hunting an insider threat while a
+      state operation completes. Defenders must treat every claimed
+      motive as untrusted: the note is evidence of intent to deceive,
+      not evidence of the attacker's identity or goal. This technique is
+      the attribution-hygiene companion to T435's recoverability triage:
+      T435 asks 'can we recover?', this entry asks 'who do we think did
+      this, and why should we doubt it?'
+    how_it_works: >-
+      The decoy is cheap: drop a text file demanding Bitcoin, deface a
+      web page with a hacktivist slogan, or reuse a known ransomware
+      brand's note format. The tells are in what is missing or wrong:
+      payment addresses that are static, previously used, or never
+      monitored; contact channels that do not work; ransom amounts that
+      make no economic sense for the victim's size; note language copied
+      from public ransomware samples with incongruous details; and
+      destructive behaviors (boot wiping, no key management) that no
+      profit-motivated actor would pair with a note. Olympic Destroyer
+      famously scattered false flags implicating multiple unrelated
+      actors. The defender discipline is to run attribution and motive
+      assessment on telemetry — infrastructure, timing, targeting,
+      capability — and to quarantine the note's claims until telemetry
+      corroborates them, because acting on the decoy (paying, or
+      mis-scoping the investigation) is the attacker's intended outcome.
+    indicators:
+      - "Ransom notes with static, reused, or never-monitored payment addresses and nonfunctional contact channels."
+      - "Hacktivist or criminal branding inconsistent with the operation's targeting, timing, or capability level."
+      - "Multiple contradictory attribution clues in one incident (different actor TTPs, copied note language, mismatched infrastructure)."
+      - "Destructive behaviors that contradict the claimed financial motive — no profit-seeking actor bricks boot records for leverage."
+    detection:
+      rule: detect_false_flag_destruction
+      patterns:
+        - '(ransom.note|readme|decrypt.instruction).{0,30}(static|single|reused|hardcoded).{0,20}(bitcoin|wallet|address)'
+        - '(decoy|false.flag|defacement).{0,30}(claim|message|slogan).{0,30}(ransom|encrypt|hacktivist)'
+        - '(note|message).{0,30}(no|without|broken|invalid).{0,20}(contact|negotiat|support|tor|email)'
+        - 'attribution.{0,20}(contradict|inconsist|multiple).{0,30}(actor|ttp|infrastructure|claim)'
+    severity: medium
+    mitigations:
+      - "Separate motive assessment from the note: base attribution on infrastructure, timing, targeting, and capability telemetry."
+      - "Do not pay or negotiate based on note claims alone; verify the decryption path (T435) and the operator's existence independently."
+      - "Scope the investigation to the telemetry, not the branding — false flags are designed to shrink or misdirect the hunt."
+      - "Share sanitized false-flag indicators with industry peers; decoy reuse across incidents is itself an attribution signal."
+    examples:
+      - summary: "Olympic Destroyer deployed a working wiper behind a ransom note while planting false flags implicating several unrelated actors — Cisco Talos's analysis treats the attribution confusion as a deliberate feature."
+        reference: "https://blog.talosintelligence.com/olympic-destroyer-takes-aim-at-winter-olympics/"
+      - summary: "NotPetya's single static Bitcoin address and nonfunctional 'decryption' channel were economically irrational for real ransomware — the note was camouflage for destruction, a case study in false-flag economics."
+        reference: "https://blog.talosintelligence.com/nyetya-compared-to-wannacry/"
+    references:
+      - "https://blog.talosintelligence.com/olympic-destroyer-takes-aim-at-winter-olympics/"
+      - "https://blog.talosintelligence.com/nyetya-compared-to-wannacry/"
+      - "https://attack.mitre.org/techniques/T1485/"
+
+  - id: AEG-T446
+    name: "Recovery Planning for Destruction Events"
+    category: wiper_destruction
+    description: >-
+      Destruction events differ from every other incident class in one
+      decisive way: there is no adversary to negotiate with, no decryptor
+      to buy, and no partial recovery through the attacker's
+      infrastructure — the only recovery path is the one built before the
+      incident. This technique is the constructive core of the pack: the
+      backup architecture (immutable, offline, tested), the bare-metal
+      rebuild playbooks, and the destruction-specific incident-response
+      decisions (assume total loss, rebuild from known-good, prioritize by
+      business function) that determine whether a wiper is a bad week or
+      an existential event.
+    how_it_works: >-
+      Effective recovery rests on three pillars. First, backup
+      architecture: 3-2-1 copies with at least one immutable or
+      air-gapped tier unreachable from domain credentials, because wipers
+      destroy every backup they can reach (T439); restores are tested on
+      a schedule, since an untested backup is only a hypothesis. Second,
+      rebuild readiness: gold images, automated provisioning, documented
+      build order by business priority, and offline copies of licenses,
+      credentials, and configurations needed to bootstrap an empty
+      network. Third, destruction-specific IR decisions made in advance:
+      the playbook assumes total loss of affected systems, skips
+      negotiation entirely, establishes clean-room rebuild networks, and
+      defines who declares the rebuild order when everything is down at
+      once. Organizations that rehearsed this — tabletop plus live
+      restore drills — recover in days; those that did not discover
+      during the incident that their backups were reachable, untested, or
+      cataloged only on the destroyed infrastructure.
+    indicators:
+      - "Backup restore tests succeeding from the immutable/offline tier on a documented schedule — the positive control for this technique."
+      - "Bare-metal rebuild drills completing within target timeframes for tier-one business functions."
+      - "Recovery runbooks that assume total loss and skip negotiation existing, versioned, and stored offline."
+      - "Post-incident reviews finding backup gaps (reachable, untested, or uncatalogued backups) before a wiper finds them."
+    detection:
+      rule: detect_recovery_readiness_gaps
+      patterns:
+        - '(immutable|air.gapped|offline).{0,20}backup.{0,20}(healthy|verified|tested|success)'
+        - '(restore|rebuild|drill|exercise).{0,20}(test|fail|overdue|never)'
+        - 'backup.{0,20}(integrity|restore).{0,20}(verif|test|validat).{0,20}(fail|pass|skip)'
+        - '(runbook|playbook).{0,20}(destruction|wiper|bare.metal).{0,20}(missing|outdated|untested)'
+    severity: high
+    mitigations:
+      - "Implement 3-2-1 backup with an immutable or air-gapped tier; test restores from that tier on a fixed schedule and track results."
+      - "Maintain offline gold images, build automation, and bootstrap credentials so rebuild does not depend on the destroyed infrastructure."
+      - "Write and rehearse a destruction-specific IR playbook: total-loss assumption, no negotiation, clean-room rebuild, prioritized build order."
+      - "Audit backup reachability from a domain-compromise perspective annually — if the wiper can reach it, it is not a backup."
+    examples:
+      - summary: "CISA's data-backup guidance and StopRansomware resources frame offline, encrypted, tested backups as the primary control against destructive malware — the control that decides the incident's outcome."
+        reference: "https://www.cisa.gov/news-events/news/data-backup-options"
+      - summary: "NIST SP 800-184 (Guide for Cybersecurity Event Recovery) provides the federal playbook structure for recovery planning, including prioritization and rebuild sequencing after destructive events."
+        reference: "https://csrc.nist.gov/pubs/sp/800/184/final"
+    references:
+      - "https://www.cisa.gov/news-events/news/data-backup-options"
+      - "https://www.cisa.gov/stopransomware"
+      - "https://csrc.nist.gov/pubs/sp/800/184/final"
+      - "https://attack.mitre.org/techniques/T1490/"

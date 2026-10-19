@@ -1,0 +1,681 @@
+pack: mobile_attacks
+version: "1.0"
+techniques:
+  - id: AEG-T447
+    name: "Smishing-to-Malicious-App Install Chains"
+    category: mobile_attacks
+    description: >-
+      Smishing (SMS phishing) is the delivery half of a mobile compromise
+      chain; the distinguishing subject of this technique is what happens
+      *after* the lure lands. Victims are pushed through a short-lived link
+      to a lookalike download page, persuaded to enable unknown-source
+      installs or enroll in a TestFlight/MDM-style side channel, and guided
+      to grant the permissions the payload needs. Defenders must treat the
+      message and the install as one correlated chain, not two isolated
+      events, because either half alone looks like ordinary user behavior.
+      (Out of scope: T130 covers the smishing message itself.)
+    how_it_works: >-
+      The attacker registers a short-lived domain and blasts lures about a
+      parcel, bank lockout, or toll fee. The link fingerprints the device and
+      serves an OS-appropriate next hop: Android victims get an APK from a
+      lookalike store or direct download with instructions to allow
+      unknown-source installs; iOS victims get TestFlight or MDM-profile
+      enrollment flows or are redirected to credential-harvest pages. Once
+      installed, the app requests SMS/read-contact and accessibility or
+      notification-listener permissions, then exfiltrates one-time passcodes
+      and contacts. In telemetry this shows as an SMS delivery followed
+      within minutes by an out-of-store APK install or MDM enrollment, then
+      first-seen permission grants on SMS read. The chain collapses if any
+      link is broken, so detection joins telecom, store, and device signals.
+    variants:
+      - "Parcel/toll/bank lures with per-campaign short domains"
+      - "TestFlight or MDM-profile enrollment flows for iOS victims"
+      - "Direct APK with in-page instructions to enable unknown-source installs"
+      - "Credential-harvest redirect as fallback when install is blocked"
+    indicators:
+      - "SMS-borne URL clicked followed within minutes by an out-of-store APK install or enrollment event"
+      - "Short-lived domains with parcel/toll/bank keywords resolving and disappearing within days"
+      - "Newly installed app granting READ_SMS/SMS-receive plus notification access on first run"
+      - "Multiple devices installing the same APK hash arriving via different carrier networks"
+    detection:
+      rule: detect_smishing_to_app_chain
+      patterns:
+        - '(?i)\b(smishing|sms\s*phish)\b.{0,60}\b(apk|install|download)\b'
+        - '(?i)\b(unknown[- ]sources?|install[- ]unknown[- ]apps?|REQUEST_INSTALL_PACKAGES)\b.{0,60}\b(sms|short\s*code|5\d{4})\b'
+        - '(?i)\bfirst[- ]seen\b.{0,40}\b(apk|package)\b.{0,40}\b(READ_SMS|RECEIVE_SMS)\b'
+    severity: high
+    mitigations:
+      - "Join carrier/SMS telemetry with device install telemetry so a click-to-install sequence fires a single alert"
+      - "Block or warn on unknown-source APK installs on managed fleets; enforce store-only policy via Android Enterprise work profiles"
+      - "Threat-intel feed of short-lived smishing domains pushed to DNS/web filters before the install hop"
+      - "User-awareness on lure themes (parcel, toll, bank) plus per-campaign SMS filter rules"
+    examples:
+      - summary: "ESET documented Android spyware campaigns that spread via SMS-borne links to lookalike download pages, where victims were walked through sideloading and granting SMS/contact permissions -- the canonical smishing-to-app chain this technique models."
+        reference: "https://www.welivesecurity.com/"
+      - summary: "Lookout's threat-intelligence research has repeatedly shown smishing lures tuned to current events (delivery, banking) serving OS-specific payloads, with correlation of the message and the install being the key defender breakpoint."
+        reference: "https://www.lookout.com/threat-intelligence"
+    references:
+      - "https://attack.mitre.org/matrices/mobile/"
+      - "https://www.cisa.gov/resources-tools/resources/mobile-device-best-practices"
+
+  - id: AEG-T448
+    name: "Sideloaded and Rogue App Distribution"
+    category: mobile_attacks
+    description: >-
+      Not every malicious app enters through a store. Sideloaded and rogue
+      apps reach devices through direct APK downloads, third-party stores,
+      TestFlight and enterprise-certificate channels on iOS, and abused
+      developer or enterprise provisioning paths. These channels lack store
+      review, so the enterprise's detection posture shifts from store
+      reputation to first-seen install telemetry, package provenance, and
+      signer inventory. A fleet that can see every install source can bound
+      this risk; a fleet that only watches the official store cannot.
+    how_it_works: >-
+      On Android, the attacker stands up an app outside Google Play and gets
+      victims to enable unknown-source installs or uses a "dropper" from a
+      store that later fetches the real payload. On iOS, the attacker abuses
+      TestFlight beta enrollment, enterprise developer certificates, or
+      configuration profiles to install apps that never faced App Store
+      review. In telemetry the signatures are: package installs from
+      non-store sources, signers never seen in the fleet, TestFlight/adhoc
+      provisioning profiles on managed devices, and apps whose permissions
+      vastly exceed their stated function. Detection is an allowlisting
+      problem -- flag every install that does not come from an approved
+      source or approved signer, and investigate droppers that change
+      behavior after an update.
+    variants:
+      - "Direct-download APKs with social-engineered unknown-source enablement"
+      - "Store-hosted droppers that download the real payload post-install"
+      - "TestFlight beta enrollment for iOS payload delivery outside App Store review"
+      - "Abused enterprise developer certificates distributing rogue iOS apps"
+    indicators:
+      - "APK installs recorded with installer package other than the official store"
+      - "First-seen code signers on managed devices with no entry in the approved-signer inventory"
+      - "TestFlight or ad-hoc provisioning profiles appearing on enterprise iOS devices"
+      - "Apps whose declared permission set is disproportionate to their stated function"
+    detection:
+      rule: detect_sideloaded_rogue_app
+      patterns:
+        - '(?i)\binstall.{0,40}\b(apk|package)\b.{0,40}\b(unknown[- ]source|sideload|third[- ]party|direct[- ]download)\b'
+        - '(?i)\b(installer\s+package|install\s+source)\b.{0,40}\b(not\s+from\s+store|com\.android\.chrome|browser)\b'
+        - '(?i)\b(testflight|enterprise\s+cert|ad[- ]hoc\s+provision)\b.{0,40}\b(enroll|install|profile)\b'
+    severity: high
+    mitigations:
+      - "Enforce store-only installs on managed fleets; block unknown-source install grants via MDM policy"
+      - "Maintain an approved-signer inventory and alert on any first-seen signer across the fleet"
+      - "Scan store apps for dropper behavior (payload fetch post-install) and re-review apps whose behavior changes after updates"
+      - "On iOS, inventory provisioning profiles and block enterprise-certificate installs except from approved internal issuers"
+    examples:
+      - summary: "Zimperium and Lookout research has repeatedly traced Android spyware and banking-troi campaigns to out-of-store distribution, with droppers in official stores downloading full payloads only after passing review -- the pattern enterprise install-source inventory is built to catch."
+        reference: "https://www.zimperium.com/mobile-threat-defense"
+      - summary: "Kaspersky's SecureList reporting documents Android malware families distributed via third-party stores and direct APK links, reinforcing that install-source telemetry, not store reputation, is the operative control."
+        reference: "https://securelist.com/"
+    references:
+      - "https://attack.mitre.org/matrices/mobile/"
+      - "https://developer.android.com/guide/topics/permissions/overview"
+
+  - id: AEG-T449
+    name: "Mobile Spyware and Surveillanceware Behaviors"
+    category: mobile_attacks
+    description: >-
+      Mercenary and criminal mobile spyware (Pegasus-class and its
+      copycats) compromises phones to harvest messages, calls, location,
+      and credentials, then exfiltrates quietly for months. Defenders
+      cannot see the exploit, but they can see the *behavior*: anomalous
+      process persistence, unusual encrypted egress to rare infrastructure,
+      and indicators left in system logs and backups. This technique is
+      strictly behavior-level -- indicators and network telemetry -- never
+      exploitation detail.
+    how_it_works: >-
+      After initial access (often a zero-click message-rendering chain the
+      victim never sees), the implant establishes persistence through
+      process-injection or system-service abuse and begins collection:
+      message databases, call logs, microphone/camera activation, and
+      location polling. Exfiltration is throttled and encrypted to
+      attacker-controlled or compromised infrastructure, often piggybacking
+      on legitimate-looking TLS. Because the exploit leaves almost no
+      on-device artifact, defenders rely on secondary signals: iTunes/iCloud
+      backup forensics (process names, crash logs, anomalous daemons),
+      network detection of beaconing to rare domains, battery and data
+      anomalies on target devices, and Mobile Verification Toolkit (MVT)
+      indicator sweeps. Enterprise response centers on targeted collection
+      from suspected devices, not on reproducing the exploit chain.
+    variants:
+      - "Zero-click message-rendering implants with no user interaction"
+      - "Persistence via injected processes or abused system services"
+      - "Throttled encrypted exfiltration to rare or compromised infrastructure"
+      - "Surveillanceware with visible icons behaving as spyware (stalkerware class)"
+    indicators:
+      - "MVT scan hits: known spyware process names, anomalous crash logs, or suspicious attachment artifacts in backups"
+      - "Long-lived encrypted sessions from a phone to domains with no business purpose and recent registration"
+      - "Microphone/camera/location access at times inconsistent with user activity"
+      - "Repeated reboots or daemon crashes correlating with exploit-window timeframes"
+    detection:
+      rule: detect_mobile_spyware_behavior
+      patterns:
+        - '(?i)\b(mvt|mobile\s+verification\s+toolkit)\b.{0,40}\b(indicators?|iocs?|stix)\b'
+        - '(?i)\b(pegasus|predator|surveillanceware|stalkerware)\b.{0,60}\b(process|daemon|crash\s*log|backup)\b'
+        - '(?i)\b(com\.android\.systemui|system\s+service)\b.{0,40}\b(inject\w+|anomalous|unexpected)\b.{0,40}\b(persist|launch)\b'
+    severity: critical
+    mitigations:
+      - "Run MVT indicator sweeps against backups of high-risk users on a schedule, not only after suspicion"
+      - "Enforce rapid OS patching on high-risk fleets; reboot schedules disrupt some implant persistence"
+      - "Deploy mobile threat defense (MTD) agents that flag anomalous processes, network egress, and sensor access"
+      - "Lockdown Mode or equivalent hardening profiles for targeted-risk users; restrict message attachment auto-processing"
+    examples:
+      - summary: "Amnesty's forensic methodology report for Pegasus established the backup-forensics playbook defenders still use: process-name artifacts, crash logs, and MVT indicators -- all behavior-level signals, none requiring exploit knowledge."
+        reference: "https://www.amnesty.org/en/latest/research/2021/07/forensic-methodology-report-how-to-catch-nso-groups-pegasus/"
+      - summary: "The Citizen Lab's Predator Files investigation documented mercenary spyware infrastructure and targeting, giving defenders concrete infrastructure indicators and victimology to hunt with."
+        reference: "https://citizenlab.ca/2023/10/predator-files-mercenary-spyware-threatens-democracy/"
+    references:
+      - "https://docs.mvt.re"
+      - "https://attack.mitre.org/matrices/mobile/"
+
+  - id: AEG-T450
+    name: "App-Permission Abuse and Overprivileged Data Collection"
+    category: mobile_attacks
+    description: >-
+      Legitimate-looking apps request far more permission than their
+      function needs -- SMS, contacts, call logs, precise location,
+      microphone -- and use it for data harvesting, brokered sale, or
+      staged exfiltration. Unlike malware, these apps pass store review
+      because each permission is individually justifiable. The defender's
+      control is permission auditing at fleet scale: comparing requested
+      permission sets against app purpose, watching runtime grant patterns,
+      and revoking or removing apps that collect beyond their stated need.
+    how_it_works: >-
+      The app is published to a store with a benign primary function (a
+      flashlight, a wallpaper pack, a "cleaner"). At install or first run it
+      requests a broad permission set, often staged: harmless permissions
+      first, sensitive ones later after trust is established, with
+      aggressive re-prompts if denied. Data -- contacts, SMS, location
+      history, device identifiers -- is uploaded to analytics or
+      advertising endpoints and frequently resold. In telemetry the signals
+      are: permission sets far exceeding category norms, runtime permission
+      grants spiking after updates, background location/SMS access on apps
+      with no foreground need, and outbound traffic to data-broker domains.
+      Enterprise defense is a permission-baseline per app category plus
+      automated revocation of grants that exceed it.
+    variants:
+      - "Staged permission requests: benign first, sensitive after trust is built"
+      - "Background location/SMS harvesting by apps with no foreground need"
+      - "Data-broker resale of 'analytics' collections"
+      - "Post-update permission expansion slipping past initial review"
+    indicators:
+      - "App permission sets far outside the norm for their store category"
+      - "Spikes in sensitive-permission grants following an app update"
+      - "Background access to SMS, location, or microphone by apps with no user-facing need"
+      - "Outbound traffic from consumer apps to known data-broker or bulk-collection domains"
+    detection:
+      rule: detect_permission_abuse
+      patterns:
+        - '(?i)\b(READ_SMS|READ_CONTACTS|READ_CALL_LOG|ACCESS_FINE_LOCATION|RECORD_AUDIO)\b.{0,60}\b(background|always\s+allow|revoke)\b'
+        - '(?i)\b(overprivileged|excessive\s+permissions?)\b.{0,40}\b(app|package)\b'
+        - '(?i)\bpermission.{0,30}\b(grant|request)\b.{0,40}\b(after\s+update|re[- ]prompt|escalat\w+)\b'
+    severity: medium
+    mitigations:
+      - "Baseline expected permissions per app category and auto-flag outliers on managed devices"
+      - "Set default-deny for background location, SMS, and microphone; require justification workflows for exceptions"
+      - "Periodically re-audit installed apps after updates -- permission sets change silently"
+      - "Block network egress from consumer apps to data-broker domains at the enterprise gateway"
+    examples:
+      - summary: "OWASP's Mobile Top 10 (M2: Inadequate Supply Chain / excessive permissions discussion) frames overprivileged collection as a standing mobile risk class, giving defenders a category baseline to audit against."
+        reference: "https://owasp.org/www-project-mobile-top-10/"
+      - summary: "NIST SP 800-124 Rev. 2 directs enterprises to manage mobile app permissions as a lifecycle control, including post-deployment re-review -- the policy basis for fleet-scale permission auditing."
+        reference: "https://csrc.nist.gov/publications/detail/sp/800-124/rev-2/final"
+    references:
+      - "https://owasp.org/www-project-mobile-top-10/"
+      - "https://developer.android.com/guide/topics/permissions/overview"
+
+  - id: AEG-T451
+    name: "Mobile Banking Trojans and Overlay Attacks"
+    category: mobile_attacks
+    description: >-
+      Mobile banking trojans steal credentials and authorize fraudulent
+      transactions by abusing Android accessibility services and overlay
+      windows: when the victim opens a banking app, the trojan draws a
+      pixel-perfect fake login screen on top and captures what is typed,
+      or it reads screen content directly through accessibility APIs.
+      Detection hinges on accessibility-service inventory, overlay-window
+      telemetry, and transaction-anomaly correlation -- the trojan's
+      on-screen deception is invisible to the victim but loud in telemetry.
+    how_it_works: >-
+      The trojan arrives via the chains in T447/T448, then requests
+      accessibility-service binding -- often under a plausible pretext like
+      a "battery saver" or "security" feature. With the service granted, it
+      monitors the foreground package; when a target banking or payment app
+      launches, it either draws a SYSTEM_ALERT_WINDOW overlay mimicking the
+      login screen or uses accessibility events to read and inject input.
+      Some families also intercept SMS one-time passcodes to complete
+      fraudulent transfers. In telemetry: accessibility services enabled
+      for non-assistive apps, overlay windows drawn over finance apps,
+      keystroke-shaped accessibility event bursts, and SMS reads correlated
+      with new payee additions. Banks add server-side device and behavior
+      risk scoring because on-device signals alone are evadable.
+    variants:
+      - "Overlay-window credential harvesting over banking apps"
+      - "Accessibility-API screen reading and input injection"
+      - "SMS one-time-passcode interception to complete fraudulent transfers"
+      - "Fake 'security update' pretexts for accessibility-service grants"
+    indicators:
+      - "Accessibility services enabled for apps with no assistive function"
+      - "Overlay windows rendered on top of banking or payment apps"
+      - "Bursts of accessibility events (clicks, text changes) inconsistent with user input rates"
+      - "SMS reads immediately followed by new-payee additions or high-value transfers"
+    detection:
+      rule: detect_banking_trojan_overlay
+      patterns:
+        - '(?i)\b(BIND_ACCESSIBILITY_SERVICE|accessibility\s+service)\b.{0,60}\b(enabled|bound|granted)\b'
+        - '(?i)\b(SYSTEM_ALERT_WINDOW|overlay\s+window|TYPE_APPLICATION_OVERLAY)\b.{0,40}\b(bank|payment|finance)\b'
+        - '(?i)\b(foreground\s+package|top\s+activity)\b.{0,40}\b(bank|wallet)\b.{0,40}\b(overlay|draw|inject)\b'
+    severity: critical
+    mitigations:
+      - "Inventory accessibility-service grants fleet-wide; default-deny for non-assistive apps and require approval workflows"
+      - "Banking apps should detect overlays and accessibility abuse at runtime and refuse to render sensitive screens"
+      - "Correlate SMS-read events with payment-initiation events for fraud alerting"
+      - "Server-side transaction risk scoring: device posture, payee novelty, and behavioral biometrics as backstop"
+    examples:
+      - summary: "ESET's WeLiveSecurity reporting on Android banking trojans documents the accessibility-service-to-overlay playbook across multiple families, including SMS interception for transaction authorization."
+        reference: "https://www.welivesecurity.com/"
+      - summary: "Kaspersky SecureList analyses of mobile banking malware show overlay HTML packs updated server-side per target bank -- defenders counter by fingerprinting overlay draw behavior, not static strings."
+        reference: "https://securelist.com/"
+    references:
+      - "https://attack.mitre.org/matrices/mobile/"
+      - "https://www.cisa.gov/resources-tools/resources/mobile-device-best-practices"
+
+  - id: AEG-T452
+    name: "MDM and EMM Enrollment Abuse"
+    category: mobile_attacks
+    description: >-
+      Mobile device management is the enterprise's control plane -- and a
+      high-value target. Attackers abuse it two ways: tricking users into
+      enrolling in attacker-controlled MDM (gaining remote wipe, profile
+      push, and app-install power), or compromising legitimate MDM/EMM
+      infrastructure to push malicious profiles and apps to the whole
+      fleet at once. Defense is enrollment provenance, MDM-console access
+      control, and profile-change auditing: every pushed configuration
+      must be attributable and reversible.
+    how_it_works: >-
+      In the rogue-enrollment variant, a smishing or helpdesk-pretext lure
+      walks the victim through installing an MDM enrollment profile from
+      the attacker's server; the device then obeys remote lock, wipe,
+      certificate, VPN, and app-push commands. In the infrastructure variant,
+      the attacker compromises the MDM console or its service accounts and
+      pushes malicious configuration profiles, certificates, or apps
+      fleet-wide -- a single action with blast radius across the company.
+      In telemetry: enrollment profiles pointing at unexpected MDM servers,
+      mass profile or app pushes outside change windows, MDM console
+      logins from anomalous networks, and devices reporting management
+      servers absent from the approved inventory. Recovery requires a
+      trusted re-enrollment path because a compromised MDM can lie about
+      device state.
+    variants:
+      - "Rogue MDM enrollment via smishing or helpdesk pretext"
+      - "Compromised MDM console pushing malicious profiles fleet-wide"
+      - "Stolen MDM service accounts used for silent app pushes"
+      - "MDM as persistence: re-push of removed profiles after cleanup"
+    indicators:
+      - "Devices enrolled against MDM servers not in the enterprise inventory"
+      - "Profile or app pushes outside approved change windows or by unexpected admin accounts"
+      - "MDM console authentication from anomalous networks or at anomalous hours"
+      - "Enrollment profiles with device-management capabilities installed via user-driven web flows"
+    detection:
+      rule: detect_mdm_enrollment_abuse
+      patterns:
+        - '(?i)\b(mdm|emm|device\s+management)\b.{0,40}\b(enroll\w*|provision\w*)\b.{0,40}\b(unexpected|unknown|rogue|unapproved)\b'
+        - '(?i)\b(enrollment\s+profile|management\s+profile)\b.{0,40}\bserver\b.{0,40}\b(not\s+in\s+inventory|unlisted)\b'
+        - '(?i)\bmdm\s+console\b.{0,40}\b(login|auth)\b.{0,40}\b(anomalous|new\s+location|impossible\s+travel)\b'
+    severity: critical
+    mitigations:
+      - "Maintain an authoritative inventory of MDM servers and enrollment profiles; alert on any device reporting another"
+      - "Gate MDM console access behind phishing-resistant MFA, IP allowlists, and privileged-access workstations"
+      - "Require change tickets for profile and app pushes; alert on out-of-window mass pushes"
+      - "Keep an offline, trusted re-enrollment path so a compromised MDM cannot block recovery"
+    examples:
+      - summary: "NIST SP 800-124 Rev. 2 treats MDM as the central mobile-security control and prescribes server inventory, console hardening, and enrollment verification -- the controls this technique's detection patterns implement."
+        reference: "https://csrc.nist.gov/publications/detail/sp/800-124/rev-2/final"
+      - summary: "CISA's Mobile Device Best Practices warn against unmanaged enrollment flows and call for attestation of device-management state, directly addressing rogue-enrollment risk."
+        reference: "https://www.cisa.gov/resources-tools/resources/mobile-device-best-practices"
+    references:
+      - "https://csrc.nist.gov/publications/detail/sp/800-124/rev-2/final"
+      - "https://developer.android.com/work/managed-configurations"
+  - id: AEG-T453
+    name: "Jailbreak and Root Detection Evasion"
+    category: mobile_attacks
+    description: >-
+      Jailbroken and rooted devices break the platform security model that
+      enterprise apps depend on: sandboxing, code signing, and keystore
+      protections all degrade. Malware and fraud tools actively hide
+      root/jailbreak state from app-level detection so banking, MDM, and
+      corporate apps keep running on compromised devices. Defenders treat
+      root-hiding as a trust signal -- a device fighting its own
+      attestation is untrustworthy regardless of what the hidden payload
+      is -- and combine on-device checks with server-side attestation.
+    how_it_works: >-
+      Rooting (Android) or jailbreaking (iOS) grants privileged access by
+      exploiting the boot chain or abusing developer affordances. Attackers
+      and fraudsters then install root-hiding modules that intercept the
+      filesystem, process, and package-manager queries apps use to detect
+      compromise, returning clean answers. Some variants also spoof SafetyNet
+      / Play Integrity and DeviceCheck verdicts. In telemetry the tells are
+      behavioral rather than binary: apps behaving as if privileged files
+      exist while reporting unrooted, integrity verdicts that contradict
+      device telemetry, known hiding-module package or module names, and
+      banking sessions originating from devices with inconsistent
+      attestation history. Enterprise policy should fail closed: no
+      trustworthy attestation, no corporate data.
+    variants:
+      - "Root-hiding modules intercepting filesystem and process queries"
+      - "Spoofed Play Integrity / SafetyNet verdicts on rooted Android"
+      - "Jailbreak detection bypasses via hooked detection libraries on iOS"
+      - "Emulator farms presenting as physical devices for fraud"
+    indicators:
+      - "Integrity verdicts (Play Integrity, DeviceCheck) inconsistent with observed device telemetry"
+      - "Known root-hiding module names or mount-namespace anomalies on device"
+      - "Apps detecting su binaries or writable system partitions while the device reports clean"
+      - "Fraud or account-takeover sessions correlating with devices failing attestation"
+    detection:
+      rule: detect_root_jailbreak_evasion
+      patterns:
+        - '(?i)\b(root\s*hide|hide\s*root|jailbreak\s*(bypass|hide|detection))\b'
+        - '(?i)\b(play\s*integrity|safetynet|devicecheck)\b.{0,40}\b(fail|spoof|inconsistent|mismatch)\b'
+        - '(?i)\b(su\s+binary|/system/xbin/su|magisk|checkra1n|unc0ver)\b.{0,40}\b(detect\w*|present|found)\b'
+    severity: high
+    mitigations:
+      - "Require hardware-backed attestation (Play Integrity, App Attest) for corporate and banking apps; fail closed on verdict failure"
+      - "Do not rely on client-side-only root checks -- corroborate with server-side behavioral risk scoring"
+      - "MDM compliance policy: devices failing attestation lose corporate profiles and app access automatically"
+      - "Detect emulator farms via sensor, telephony, and hardware-profile inconsistencies"
+    examples:
+      - summary: "Google's Android security documentation and Play Integrity guidance frame hardware-backed attestation as the authoritative root/compromise signal precisely because client-side checks are spoofable -- the fail-closed posture this technique prescribes."
+        reference: "https://source.android.com/security"
+      - summary: "Apple's Platform Security guide documents the iOS secure boot chain that jailbreaks must defeat, and why DeviceCheck/App Attest exist as server-verifiable trust signals for high-value apps."
+        reference: "https://support.apple.com/guide/security/welcome/web"
+    references:
+      - "https://source.android.com/security"
+      - "https://support.apple.com/guide/security/welcome/web"
+
+  - id: AEG-T454
+    name: "Malicious SDKs and Ad-Fraud Modules"
+    category: mobile_attacks
+    description: >-
+      Third-party SDKs bundled into legitimate apps are a software
+      supply chain inside the app: an advertising, analytics, or
+      social SDK can exfiltrate data, commit ad fraud (fake impressions
+      and clicks), or serve as a dormant loader for later payloads.
+      The app passes review because the host is benign; the SDK's
+      behavior is the threat. Defense is SDK inventory, network
+      allowlisting of SDK endpoints, and behavioral monitoring for
+      ad-fraud and data-exfiltration patterns at runtime.
+    how_it_works: >-
+      The attacker publishes a useful SDK (ads, crash reporting, social
+      login) and gets it bundled into many apps, or compromises an
+      existing popular SDK's update channel. At runtime the SDK runs with
+      the host app's permissions: harvesting identifiers and sensor data,
+      generating fake ad impressions and clicks in hidden webviews,
+      downloading secondary payloads, or proxying device traffic. In
+      telemetry the signals cut across apps: many unrelated apps beaconing
+      to the same SDK domain, hidden-webview ad traffic with no user
+      interaction, SDK versions whose network behavior changed after an
+      update, and data volumes far exceeding the SDK's stated function.
+      Enterprise app-vetting should decompose apps to their SDK bill of
+      materials and diff behavior per SDK version.
+    variants:
+      - "Ad-fraud SDKs generating fake impressions/clicks in hidden webviews"
+      - "Data-harvesting SDKs exfiltrating identifiers and sensor data"
+      - "Dormant loader SDKs fetching secondary payloads post-install"
+      - "Compromised update channels of previously benign SDKs"
+    indicators:
+      - "Unrelated apps sharing beaconing patterns to the same third-party SDK domains"
+      - "Ad-network traffic from hidden or zero-size webviews with no user interaction"
+      - "SDK network behavior changing sharply after a version update"
+      - "Exfiltration volumes from analytics/crash SDKs exceeding their stated function"
+    detection:
+      rule: detect_malicious_sdk_adfraud
+      patterns:
+        - '(?i)\b(sdk|library)\b.{0,40}\b(hidden\s+webview|fake\s+(impression|click)|invisible\s+ad)\b'
+        - '(?i)\b(ad\s*fraud|click\s*fraud|impression\s*fraud)\b.{0,40}\b(sdk|webview|background)\b'
+        - '(?i)\b(third[- ]party\s+sdk|bundled\s+sdk)\b.{0,40}\b(exfiltrat\w+|beacon\w*|payload)\b'
+    severity: high
+    mitigations:
+      - "Maintain an approved-SDK list; decompose vetted apps to their SDK bill of materials"
+      - "Monitor SDK network endpoints per version and alert on behavior changes after SDK updates"
+      - "Block or flag ad traffic from hidden webviews and non-interactive sessions"
+      - "Contractual and technical controls: pin SDK versions, verify SDK signatures, restrict SDK permissions via app sandboxing"
+    examples:
+      - summary: "Zimperium's mobile threat research has documented SDK-borne ad fraud and data harvesting at scale, where the host apps were legitimate and the SDK was the malicious actor -- the supply-chain-inside-the-app pattern."
+        reference: "https://www.zimperium.com/mobile-threat-defense"
+      - summary: "Kaspersky SecureList reporting on aggressive adware SDKs shows the blurry line between 'aggressive monetization' and fraud, with hidden-webview impressions as the key behavioral discriminator."
+        reference: "https://securelist.com/"
+    references:
+      - "https://owasp.org/www-project-mobile-top-10/"
+      - "https://attack.mitre.org/matrices/mobile/"
+
+  - id: AEG-T455
+    name: "Push-Notification C2 Channels"
+    category: mobile_attacks
+    description: >-
+      Push-notification infrastructure (FCM, APNs) is an always-on,
+      trusted channel into every phone -- ideal cover for command and
+      control. Malware registers for push, receives tasking encoded in
+      notification payloads or silent data messages, and exfiltrates in
+      small chunks, all blended into the OS's own notification traffic.
+      Because the traffic terminates at Google/Apple infrastructure,
+      network defenders cannot see the payload; detection moves to
+      on-device signals and server-side sender analysis.
+    how_it_works: >-
+      The implant registers a push token with the attacker's backend at
+      install time. Tasking arrives as data-only push messages or as
+      notification payloads with encoded fields; the implant wakes on
+      receipt, executes (collect, screenshot, record), and acknowledges
+      via HTTPS or the next push registration. Silent pushes keep the
+      user unaware. In telemetry the signals are: apps with push
+      registration to backend domains that also serve other implants,
+      wake-lock and network bursts correlated with push receipt times,
+      data-message volumes far above the app's notification needs, and
+      push senders whose registration metadata (new accounts, bulk
+      tokens) looks anomalous. Defenders can also work with the push
+      providers' abuse channels to kill malicious sender projects.
+    variants:
+      - "Silent data-message tasking with no visible notification"
+      - "Encoded fields inside visible notification payloads"
+      - "Push-triggered wakeups for collection and exfiltration bursts"
+      - "Fallback to polling when push registration is revoked"
+    indicators:
+      - "Apps receiving high volumes of data-only pushes inconsistent with their notification function"
+      - "Network and wake bursts tightly correlated with push-receipt timestamps"
+      - "Push sender projects with bulk token registrations and fresh account metadata"
+      - "Exfiltration-shaped HTTPS traffic following silent push delivery"
+    detection:
+      rule: detect_push_notification_c2
+      patterns:
+        - '(?i)\b(push|fcm|apns)\b.{0,40}\b(data[- ]only|silent\s+push|data\s+message)\b.{0,40}\b(c2|tasking|command)\b'
+        - '(?i)\b(push\s+token|registration\s+token)\b.{0,40}\b(bulk|anomalous|suspicious)\b.{0,40}\b(sender|project)\b'
+        - '(?i)\bwake.{0,20}(lock|up).{0,40}\bpush\b.{0,40}\b(burst|exfiltrat\w+|collect\w*)\b'
+    severity: high
+    mitigations:
+      - "Baseline data-push volumes per app; alert on silent-push floods and push-correlated wake bursts"
+      - "Inventory push sender projects for enterprise apps; treat unknown senders as untrusted"
+      - "Use push-provider abuse reporting to revoke malicious sender projects"
+      - "On-device MTD agents correlating push receipt with process wakeups and network egress"
+    examples:
+      - summary: "Google's Threat Analysis Group has documented commercial spyware abusing standard platform channels for tasking, reinforcing that trusted infrastructure -- not exotic protocols -- is the modern C2 cover."
+        reference: "https://blog.google/threat-analysis-group/"
+      - summary: "MITRE ATT&CK for Mobile catalogs push-notification-based C2 concepts, giving defenders a standard taxonomy to map push-anomaly detections onto."
+        reference: "https://attack.mitre.org/matrices/mobile/"
+    references:
+      - "https://blog.google/threat-analysis-group/"
+      - "https://attack.mitre.org/matrices/mobile/"
+
+  - id: AEG-T456
+    name: "Malicious Configuration Profiles and Certificates"
+    category: mobile_attacks
+    description: >-
+      Configuration profiles are the legitimate mechanism for enterprise
+      device setup -- Wi-Fi, VPN, certificates, restrictions -- which
+      makes them a perfect masquerade for attackers. A malicious profile
+      can install a rogue root CA (enabling traffic interception), force
+      traffic through an attacker VPN or proxy, disable security
+      controls, and enroll the device in attacker MDM. iOS and Android
+      both support rich profile payloads; defense is profile inventory,
+      signature verification, and user-consent gating.
+    how_it_works: >-
+      The victim is lured (smishing, fake support call, malicious captive
+      portal) into installing a profile, or the profile arrives via the
+      MDM-abuse chain in T452. Once installed, a rogue root certificate
+      lets the attacker proxy and decrypt TLS; a VPN/proxy payload routes
+      all traffic through attacker infrastructure; restriction payloads
+      can disable passcode requirements or app protections. On iOS,
+      profiles can also silently install enterprise apps. In telemetry:
+      profiles with root-CA payloads from non-enterprise issuers, VPN
+      profiles pointing at unknown servers, restriction payloads that
+      weaken security posture, and profile installs outside IT change
+      windows. Managed devices should only accept signed profiles from
+      the enterprise MDM; unmanaged BYOD needs user education plus
+      periodic profile audits.
+    variants:
+      - "Rogue root CA installation for TLS interception"
+      - "Attacker VPN/proxy profiles routing all device traffic"
+      - "Restriction payloads disabling passcode or security controls"
+      - "Profiles as droppers for enterprise-signed malicious apps (iOS)"
+    indicators:
+      - "Root-CA payloads in profiles issued by unknown or non-enterprise authorities"
+      - "VPN or proxy profiles pointing at servers absent from enterprise inventory"
+      - "Restriction payloads that weaken passcode, encryption, or app protections"
+      - "Profile installations outside IT change windows or via user-driven web flows"
+    detection:
+      rule: detect_malicious_config_profile
+      patterns:
+        - '(?i)\b(configuration\s+profile|managed\s+profile)\b.{0,40}\b(root\s*(ca|cert)|rogue\s+cert)\b'
+        - '(?i)\b(profile\s+payload|PayloadType)\b.{0,40}\b(vpn|proxy|restrictions?)\b.{0,40}\b(unknown|unapproved|attacker)\b'
+        - '(?i)\bprofile\b.{0,30}\binstall\b.{0,40}\b(outside\s+change\s+window|user[- ]driven|unverified\s+source)\b'
+    severity: high
+    mitigations:
+      - "Managed devices: accept only MDM-signed profiles; block user installation of configuration profiles"
+      - "Inventory all installed profiles and certificates fleet-wide; alert on root-CA additions"
+      - "BYOD: periodic profile audits plus user education on fake support/captive-portal lures"
+      - "Network detection of TLS interception: certificate-pinning violations and unexpected proxy chains"
+    examples:
+      - summary: "Apple's deployment documentation describes configuration profiles as powerful device-management primitives -- the same primitives attackers repurpose, which is why signature verification and install-source control are the prescribed defenses."
+        reference: "https://support.apple.com/guide/deployment/welcome/web"
+      - summary: "CISA's Mobile Device Best Practices call for auditing installed profiles and certificates as part of mobile hygiene, directly countering the rogue-CA masquerade."
+        reference: "https://www.cisa.gov/resources-tools/resources/mobile-device-best-practices"
+    references:
+      - "https://support.apple.com/guide/deployment/welcome/web"
+      - "https://www.cisa.gov/resources-tools/resources/mobile-device-best-practices"
+
+  - id: AEG-T457
+    name: "Baseband and SIM-Toolkit Attack Concepts"
+    category: mobile_attacks
+    description: >-
+      Below the application processor sits the baseband -- the real-time
+      OS speaking cellular protocols -- and the SIM toolkit, a legacy
+      applet environment on the SIM itself. Both are reachable over the
+      air and both have been abused for location tracking, call/SMS
+      interception, and silent command execution on the handset. This
+      technique is detection-level only: what the abuse looks like in
+      carrier and device telemetry, never protocol exploitation detail.
+      (Out of scope: T239 covers carrier-side SIM swapping; this is the
+      on-device/air-interface layer.)
+    how_it_works: >-
+      Baseband attacks arrive as malformed or malicious cellular signaling
+      that the baseband parses before the main OS ever sees it; successful
+      abuse can yield call/SMS interception or a foothold toward the
+      application processor. SIM-toolkit abuse uses over-the-air applet
+      commands (the same channel carriers use for legitimate SIM updates)
+      to make the handset silently send SMS, initiate calls, or report
+      location -- historically seen in targeted surveillance operations.
+      In telemetry: devices exhibiting signaling anomalies on carrier
+      probes, unexpected proactive SIM commands in device logs, SMS sent
+      with no user interaction, and location-reporting inconsistent with
+      app-level requests. Defense is carrier cooperation (signaling
+      firewalls, SS7/Diameter filtering), SIM applet inventory, and
+      rapid baseband patching where the vendor ships it.
+    variants:
+      - "Malformed cellular signaling targeting baseband parsers"
+      - "Over-the-air SIM-toolkit commands driving silent SMS/calls"
+      - "Location-tracking via signaling queries against the carrier core"
+      - "Baseband-to-application-processor escalation as surveillance foothold"
+    indicators:
+      - "Devices sending SMS or initiating calls with no corresponding user interaction"
+      - "Proactive SIM-toolkit commands in device logs outside carrier maintenance windows"
+      - "Carrier signaling-firewall hits for anomalous SS7/Diameter queries against subscribers"
+      - "Location disclosures inconsistent with any app-level location request"
+    detection:
+      rule: detect_baseband_simtoolkit_abuse
+      patterns:
+        - '(?i)\b(sim\s*toolkit|stk|sim\s+applet)\b.{0,40}\b(proactive\s+command|over[- ]the[- ]air|silent\s+sms)\b'
+        - '(?i)\b(baseband|modem\s+processor)\b.{0,40}\b(crash|anomalous\s+signal|malformed)\b'
+        - '(?i)\b(ss7|diameter)\b.{0,40}\b(signaling\s+firewall|anomalous\s+query|location\s+request)\b'
+    severity: high
+    mitigations:
+      - "Work with carriers on signaling firewalls and SS7/Diameter filtering for enterprise subscriber ranges"
+      - "Inventory SIM applets; disable or remove unused SIM-toolkit applets on corporate SIMs"
+      - "Ship baseband updates promptly where the device vendor provides them; prefer devices with timely baseband patching"
+      - "Monitor for silent-SMS and no-interaction call patterns as handset-level tripwires"
+    examples:
+      - summary: "Public research into SIM-toolkit-based surveillance demonstrated silent handset control via over-the-air applet commands -- the behavior class this technique's device-log and carrier-signaling detections target."
+        reference: "https://www.gsma.com/solutions-and-impact/technologies/networks/"
+      - summary: "MITRE ATT&CK for Mobile includes SIM and baseband-adjacent techniques, giving defenders standard mappings for signaling-layer detections."
+        reference: "https://attack.mitre.org/matrices/mobile/"
+    references:
+      - "https://www.gsma.com/solutions-and-impact/technologies/networks/"
+      - "https://attack.mitre.org/matrices/mobile/"
+
+  - id: AEG-T458
+    name: "Mobile Device Forensics Readiness"
+    category: mobile_attacks
+    description: >-
+      Every technique in this pack ends at the same place: a suspect
+      device whose evidence must be collected lawfully, quickly, and
+      without destroying it. Forensics readiness is the standing
+      capability to acquire that evidence -- what to collect (backups,
+      logs, network captures, MDM telemetry), how to preserve chain of
+      custody, and the legal framing (consent, corporate ownership,
+      privacy law) that makes the collection defensible. Without it,
+      investigations start with a wiped phone and end with uncertainty.
+    how_it_works: >-
+      When a device is suspected of compromise (spyware indicators from
+      T449, trojan behavior from T451, rogue profiles from T456), the
+      responder isolates it from networks (airplane mode, Faraday bag --
+      never power-off, which can lose volatile state), captures a
+      logical backup for MVT-style indicator sweeps, preserves MDM
+      telemetry and carrier records, and images what the platform allows.
+      iOS and Android both restrict full physical acquisition on modern
+      devices, so logical acquisition plus cloud-backup forensics plus
+      network/carrier records is the realistic evidence set. Every step is
+      documented with hashes and timestamps. The legal layer is
+      non-optional: corporate-owned devices under a signed acceptable-use
+      policy, BYOD only with explicit consent, and privacy-law review
+      before any personal-data handling. Readiness means these playbooks,
+      tools, and authorizations exist *before* the incident.
+    variants:
+      - "Corporate-owned device acquisition under acceptable-use policy"
+      - "BYOD acquisition with explicit, documented user consent"
+      - "Cloud-backup forensics as a complement to on-device acquisition"
+      - "Carrier-record preservation for signaling-layer cases (T457)"
+    indicators:
+      - "Suspect device identified by any pack technique with no forensics playbook available"
+      - "Evidence-collection attempts that power off the device before volatile capture"
+      - "Investigations stalled on missing legal authorization for BYOD collection"
+      - "MDM telemetry or carrier records aged out before preservation request"
+    detection:
+      rule: detect_forensics_readiness_gap
+      patterns:
+        - '(?i)\bforensic\b.{0,40}\b(readiness|playbook|acquisition)\b.{0,40}\b(missing|absent|not\s+defined)\b'
+        - '(?i)\b(evidence|chain\s+of\s+custody)\b.{0,40}\b(gap|broken|undocumented)\b'
+        - '(?i)\b(mvt|backup)\b.{0,40}\b(acquir\w+|collect\w*)\b.{0,40}\b(consent|authorization|aup)\b'
+    severity: medium
+    mitigations:
+      - "Publish device-forensics playbooks per ownership model (corporate, BYOD, shared) before incidents occur"
+      - "Pre-position acquisition tooling (MVT, backup parsers) and train responders on airplane-mode-first isolation"
+      - "Set log and telemetry retention to cover investigation timelines; automate legal-hold preservation"
+      - "Review acceptable-use policies and privacy-law obligations annually so collection authority is never in doubt mid-incident"
+    examples:
+      - summary: "Amnesty's MVT project is the reference implementation of readiness: standardized indicators plus a documented acquisition workflow that responders can run the moment suspicion arises."
+        reference: "https://docs.mvt.re"
+      - summary: "NIST SP 800-124 Rev. 2 frames mobile incident response -- including evidence collection roles and tooling -- as a required enterprise capability, not an ad-hoc activity."
+        reference: "https://csrc.nist.gov/publications/detail/sp/800-124/rev-2/final"
+    references:
+      - "https://docs.mvt.re"
+      - "https://csrc.nist.gov/publications/detail/sp/800-124/rev-2/final"
