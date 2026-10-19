@@ -66,7 +66,7 @@ aegis respond rotate-keys openai             # incident runbooks (operator-execu
 
 ## Features
 
-- **Agent loop** (`aegis`) — chat-driven terminal agent with streaming, syntax highlighting, sessions that survive restarts, diff previews before file edits are approved, and a slash-command palette. For complex jobs, `/planexec <task>` makes the model propose an explicit step plan, the guard screens every step's shape, and only a fully approved plan executes.
+- **Agent loop** (`aegis`) — chat-driven terminal agent with streaming, syntax highlighting, sessions that survive restarts, diff previews before file edits are approved, and a slash-command palette. For complex jobs, `/planexec <task>` makes the model propose an explicit step plan, the guard screens every step's shape, you approve it before anything runs, and a verification pass checks the real outcomes (files created, tests green, guard denials disclosed) before the task is declared done — deviations from the approved plan are blocked. `/commit [paths...]` commits from the real working tree: explicit paths only (never blind `git add -A`), message written from the actual diff, staged secrets abort the commit, approval before it lands.
 - **In-loop guard** — every tool call passes through allowlist/denylist, dangerous-argument patterns (fork bombs, `rm -rf /`, reverse shells, LOLBin download cradles…), secret redaction on args *and* outputs, egress domain control, and approval escalation — *before* execution. Session taint tracking escalates outbound calls made after sensitive files were read, and multi-step attack chains are caught live, not just in post-mortems.
 - **386-technique knowledge base** (`aegis kb "<query>"`) — 31 packs: agent-attack techniques, dark-web threat intel, APT tradecraft from public reporting, ransomware playbooks, web exploitation, C2 operations, cloud attacks, AI-agent attacks, the hacker-tools catalog, attack methodologies, and the hacker-mindset doctrine that shapes the agent's own reasoning.
 - **Watch** (`aegis watch --once|--interval|--schedule <dir>`, `aegis watch --triage`) — SOC-in-a-box: change-detected rescans, secret + pattern detection, alert banners, and a severity-ranked, deduped finding queue.
@@ -89,6 +89,7 @@ Strict schema validation runs on every load (bad packs refuse to load), and a bi
                         │        aegis REPL           │
                         │  /hunt /plan /emulate /kb   │
                         │  /planexec /mode /sessions  │
+                        │  /commit                    │
                         │  palette, @files, diffs     │
                         └──────────────┬──────────────┘
                                        │ user message

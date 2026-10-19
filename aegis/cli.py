@@ -230,6 +230,66 @@ def cmd_graph(args) -> int:
     return run_graph(args.target, json_mode=args.json, top=args.top)
 
 
+def cmd_planexec(args) -> int:
+    """`aegis planexec "<task>" [--yes] [--verify-cmd CMD]`.
+
+    Non-interactive plan-then-execute. Without --yes the proposed plan is
+    printed and execution is refused — approval is mandatory. Exit codes:
+    0 verified, 1 verification failed, 2 plan blocked / rejected /
+    unapproved / no plan proposed.
+    """
+    from pathlib import Path
+
+    from .agent import AgentLoop
+    from .planning import PLAN_FAILED, VERIFIED
+    from .providers import get_provider
+    from .tools.registry import TOOL_NAMES
+
+    try:
+        provider = get_provider(args.provider, args.model)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    mode = (args.mode or os.environ.get("AEGIS_MODE", "dev")).lower()
+    if mode not in ("dev", "plan"):
+        print(f"error: unknown mode '{mode}' (want dev|plan)", file=sys.stderr)
+        return 2
+    kb = _kb()
+    policy = Policy(allowed_tools=set(TOOL_NAMES), name="planexec-cli",
+                    mode=mode)
+    session = guard_mod.create_session(policy, kb)
+
+    def show_and_deny(info: dict) -> bool:
+        if info.get("kind") == "plan":
+            print("proposed plan (re-run with --yes to approve):")
+            for i, s in enumerate(info["plan"]["steps"], 1):
+                print(f"  {i}. {s['tool']} — "
+                      f"{s.get('purpose') or '(no purpose given)'}")
+        else:
+            print(f"plan deviation denied (non-interactive): "
+                  f"{info.get('tool')}")
+        return False
+
+    from . import session as session_mod
+    conv = session_mod.new_session(session.id)
+    loop = AgentLoop(provider, kb, session, cwd=Path.cwd(),
+                     on_text=lambda s: (sys.stdout.write(s),
+                                        sys.stdout.flush()),
+                     conversation_id=conv["id"],
+                     plan_approval_callback=show_and_deny,
+                     auto_approve_plans=bool(args.yes),
+                     verify_command=args.verify_cmd or "")
+    print(loop.run(args.task, plan_first=True))
+    plan = loop.last_plan
+    if plan is None:
+        return 2
+    if plan.state == VERIFIED:
+        return 0
+    if plan.state == PLAN_FAILED:
+        return 1
+    return 2
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aegis",
                                 description="Aegis defensive guard agent")
@@ -301,6 +361,16 @@ def build_parser() -> argparse.ArgumentParser:
     mc.add_argument("tool", help="tool name on that server")
     mc.add_argument("--args", default="{}", help="JSON object of tool arguments")
 
+    px = sub.add_parser("planexec", help="plan-then-execute a task "
+                        "non-interactively (plan needs --yes to run)")
+    px.add_argument("task", help="the task to plan and execute")
+    px.add_argument("--yes", action="store_true",
+                    help="approve the proposed plan without prompting")
+    px.add_argument("--verify-cmd", default="",
+                    help="command run to verify completion, e.g. 'pytest -q'")
+    px.add_argument("--mode", default="",
+                    help="dev|plan (default: dev; AEGIS_MODE env)")
+
     sub.add_parser("version", help="print version")
 
     ev = sub.add_parser("eval", help="run the guard eval battery "
@@ -349,6 +419,8 @@ def main(argv=None) -> int:
         return cmd_mcp(args)
     if cmd == "eval":
         return cmd_eval(args)
+    if cmd == "planexec":
+        return cmd_planexec(args)
     if cmd == "version":
         print(f"aegis {__version__}")
         return 0

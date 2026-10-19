@@ -1,5 +1,11 @@
 # Aegis — Defensive Guard Agent (working title; founder may rename)
 
+**THE GOAL (founder, 2026-10-19):** build an agent really good at coding AND
+really good at hacking — god of coding and god of hacking. No AI coding agent
+(Claude Code, Codex, OpenCode) out-codes it; no AI hacking agent stands
+against it. The intersection is the moat: the agent that writes the code AND
+makes it unhackable.
+
 **Commissioned:** 2026-10-18 by the founder.
 **Trigger:** OpenCode breach disclosed 2026-10-17 — "large scale distillation attack",
 1.4% of Console users, stored OpenAI/Anthropic/Google provider API keys exposed from a
