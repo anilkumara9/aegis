@@ -40,9 +40,10 @@ aegis version   # -> aegis 0.5.0
 | openai    | `OPENAI_API_KEY`    | `gpt-4o`             |
 | google    | `GOOGLE_API_KEY`    | `gemini-2.0-flash`   |
 | ollama    | *(none needed)*     | you pick: `AEGIS_PROVIDER=ollama AEGIS_MODEL=llama3.1` |
+| openrouter | `OPENROUTER_API_KEY` | free: `nvidia/nemotron-3-super-120b-a12b:free` |
 | mock      | *(none needed)*     | offline demo: `AEGIS_PROVIDER=mock aegis` |
 
-Override the model any time with `AEGIS_MODEL=<name>`.
+Override the model any time with `AEGIS_MODEL=<name>`. OpenRouter is **free-models-only** — it refuses paid models unless `AEGIS_ALLOW_PAID=1` is set, so your credits are safe.
 
 **First run:**
 

@@ -19,6 +19,7 @@ must tolerate its absence — it is informational, never required.
 from __future__ import annotations
 
 import json
+import os
 import urllib.request
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -171,6 +172,10 @@ class OpenAIProvider(Provider):
         self.api_key = api_key
         self.model = model
 
+    def _extra_headers(self) -> dict:
+        """Hook for subclasses (e.g. OpenRouter) to add request headers."""
+        return {}
+
     def _to_openai(self, messages: list[dict]) -> list[dict]:
         out = []
         for m in messages:
@@ -201,10 +206,11 @@ class OpenAIProvider(Provider):
                                     "parameters": t["parameters"]}}
                       for t in tools],
         }
+        headers = {"Authorization": f"Bearer {self.api_key}",
+                   "content-type": "application/json"}
+        headers.update(self._extra_headers())
         req = urllib.request.Request(
-            self.api_url, data=json.dumps(body).encode(),
-            headers={"Authorization": f"Bearer {self.api_key}",
-                     "content-type": "application/json"})
+            self.api_url, data=json.dumps(body).encode(), headers=headers)
         try:
             resp = urllib.request.urlopen(req, timeout=120)
         except Exception as e:
@@ -246,6 +252,42 @@ class OpenAIProvider(Provider):
                              "output_tokens": usage_out,
                              "estimated": False})
         yield ("done", None)
+
+
+class OpenRouterProvider(OpenAIProvider):
+    """OpenRouter transport (OpenAI-compatible) — FREE models only by default.
+
+    The founder's credits are limited, so this provider refuses any model that
+    is not free (id ending in ":free", or the "openrouter/free" router) unless
+    AEGIS_ALLOW_PAID=1 is set. Default model is a free, tool-calling-capable
+    model verified against the live API.
+    """
+
+    name = "openrouter"
+    api_url = "https://openrouter.ai/api/v1/chat/completions"
+    default_model = "nvidia/nemotron-3-super-120b-a12b:free"
+
+    def __init__(self, api_key: str, model: str):
+        if not api_key:
+            raise ValueError("OPENROUTER_API_KEY is not set")
+        model = model or self.default_model
+        if not self._is_free(model):
+            from .. import config
+            if not config.OPENROUTER_ALLOW_PAID:
+                raise ValueError(
+                    f"OpenRouter model '{model}' is not free — paid models are "
+                    "blocked to protect your credits. Use a ':free' model or "
+                    "set AEGIS_ALLOW_PAID=1 to override.")
+        self.api_key = api_key
+        self.model = model
+
+    @staticmethod
+    def _is_free(model: str) -> bool:
+        return model == "openrouter/free" or model.endswith(":free")
+
+    def _extra_headers(self) -> dict:
+        return {"HTTP-Referer": "https://github.com/anilkumara9/aegis",
+                "X-Title": "Aegis defensive agent"}
 
 
 class GoogleProvider(Provider):
@@ -487,10 +529,23 @@ def _safe_args(raw: str) -> dict:
     return args if isinstance(args, dict) else {}
 
 
+_PROVIDER_DEFAULT_MODELS = {
+    "anthropic": "claude-sonnet-4-5-20250929",
+    "openai": "gpt-4o",
+    "google": "gemini-2.0-flash",
+    "openrouter": OpenRouterProvider.default_model,
+}
+
+
 def get_provider(name: str = "", model: str = "") -> Provider:
     from .. import config
     name = (name or config.PROVIDER).lower()
-    model = model or config.MODEL
+    if not model:
+        # An explicit AEGIS_MODEL always wins; otherwise default per the
+        # *requested* provider (not the ambient one) so that e.g.
+        # AEGIS_PROVIDER=openrouter gets a free model, not anthropic's.
+        model = config.MODEL if "AEGIS_MODEL" in os.environ \
+            else _PROVIDER_DEFAULT_MODELS.get(name, "")
     if name == "anthropic":
         return AnthropicProvider(config.ANTHROPIC_API_KEY, model)
     if name == "openai":
@@ -499,7 +554,9 @@ def get_provider(name: str = "", model: str = "") -> Provider:
         return GoogleProvider(config.GOOGLE_API_KEY, model)
     if name == "ollama":
         return OllamaProvider(config.OLLAMA_URL, model)
+    if name == "openrouter":
+        return OpenRouterProvider(config.OPENROUTER_API_KEY, model)
     if name == "mock":
         return MockProvider([])
     raise ValueError(f"unknown provider '{name}' "
-                     f"(want anthropic|openai|google|ollama|mock)")
+                     f"(want anthropic|openai|google|ollama|openrouter|mock)")

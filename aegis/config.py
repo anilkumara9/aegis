@@ -27,16 +27,21 @@ STATE_DIR = state_dir()
 SESSIONS_DIR = sessions_dir()
 AUDIT_DIR = audit_dir()
 
-PROVIDER = os.environ.get("AEGIS_PROVIDER", "anthropic").lower()  # anthropic | openai | google | ollama | mock
+PROVIDER = os.environ.get("AEGIS_PROVIDER", "anthropic").lower()  # anthropic | openai | google | ollama | openrouter | mock
 _MODEL_DEFAULTS = {
     "anthropic": "claude-sonnet-4-5-20250929",
     "openai": "gpt-4o",
     "google": "gemini-2.0-flash",
+    # OpenRouter default is a FREE model (see OpenRouterProvider's free-only guard).
+    "openrouter": "nvidia/nemotron-3-super-120b-a12b:free",
 }
 MODEL = os.environ.get("AEGIS_MODEL", _MODEL_DEFAULTS.get(PROVIDER, ""))
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "") or os.environ.get("GEMINI_API_KEY", "")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+# OpenRouter is free-models-only by default. Set AEGIS_ALLOW_PAID=1 to allow paid models.
+OPENROUTER_ALLOW_PAID = os.environ.get("AEGIS_ALLOW_PAID", "") == "1"
 OLLAMA_URL = os.environ.get("AEGIS_OLLAMA_URL", "http://localhost:11434")
 
 # Tool sandbox: "docker" runs bash through a container when docker is present,
