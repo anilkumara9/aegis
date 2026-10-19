@@ -58,7 +58,17 @@ def _register_extended_kb_contract() -> None:
         "lateral_movement": (325, 336),
         "cybercrime_economy": (337, 348),
     }
-    for packs in (v02_packs, v04_packs):
+    v06_packs = {
+        "ml_serialization_attacks": (387, 398),
+        "fraud_bec_operations": (399, 410),
+        "insider_threat_patterns": (411, 422),
+        "ics_ot_attacks": (423, 434),
+        "wiper_destruction": (435, 446),
+        "mobile_attacks": (447, 458),
+        "crypto_attacks": (459, 470),
+        "firmware_hardware_attacks": (471, 482),
+    }
+    for packs in (v02_packs, v04_packs, v06_packs):
         test_kb.ID_RANGES.update(packs)
         for pack in packs:
             if pack not in test_kb.EXPECTED_PACKS:

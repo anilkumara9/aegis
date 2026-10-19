@@ -145,15 +145,20 @@ def test_guard_denial_by_arg_pattern(mcp_env, kb):
 
 
 def test_needs_approval_path(mcp_env, kb):
-    # A URL in args with no egress allowlist -> needs_approval verdict.
+    # A URL in args from a TAINTED session with no egress allowlist ->
+    # needs_approval verdict. (v0.6 policy: clean egress is allowed;
+    # only risky egress gates on approval.)
     mgr = MCPManager.from_config()
     approved = _ctx(kb, approval=lambda findings: True)
     denied = _ctx(kb, approval=lambda findings: False)
     try:
         args = {"text": "check https://example.com/x"}
+        # clean session: allowed without approval
         out = mgr.call("mock", "echo", args, approved)
         assert "echo:" in out
-        assert len(_calls(mcp_env["log"])) == 1
+        # tainted session: needs approval
+        approved.guard_session.check_call("read", {"path": ".env"})
+        denied.guard_session.check_call("read", {"path": ".env"})
         out2 = mgr.call("mock", "echo", args, denied)
         assert out2.startswith("GUARD DENIED")
         assert "approval" in out2.lower()

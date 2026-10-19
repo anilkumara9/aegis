@@ -10,7 +10,7 @@
 [![Contributors](https://img.shields.io/github/contributors/anilkumara9/aegis)](https://github.com/anilkumara9/aegis/graphs/contributors)
 [![Stars](https://img.shields.io/github/stars/anilkumara9/aegis?style=social)](https://github.com/anilkumara9/aegis/stargazers)
 
-Aegis is a Claude-Code-class terminal agent that knows how hackers think, work, and attack — **386 attack techniques across 31 packs** — and aims that knowledge at exactly one thing: defending your systems. It was born the day after the [OpenCode breach](https://www.cyera.com/blog/opencode-breach-what-happened-and-how-to-rotate-exposed-ai-api-keys) (Oct 2026), where a "large scale distillation attack" exposed developers' AI provider keys. OpenCode's own docs admit its permissions are a UX feature, not a security boundary. Aegis is the opposite: **the guard engine lives inside the agent loop**, and every tool call is screened *before* it executes.
+Aegis is a Claude-Code-class terminal agent that knows how hackers think, work, and attack — **482 attack techniques across 39 packs** — and aims that knowledge at exactly one thing: defending your systems. It was born the day after the [OpenCode breach](https://www.cyera.com/blog/opencode-breach-what-happened-and-how-to-rotate-exposed-ai-api-keys) (Oct 2026), where a "large scale distillation attack" exposed developers' AI provider keys. OpenCode's own docs admit its permissions are a UX feature, not a security boundary. Aegis is the opposite: **the guard engine lives inside the agent loop**, and every tool call is screened *before* it executes.
 
 **Defensive only.** Aegis detects, prevents, audits, and remediates. It never generates exploit payloads or malware, never automates unauthorized access, and only ever touches your own local systems. Its knowledge base describes attacks at TTP/detection level — the same level as MITRE ATT&CK.
 
@@ -56,7 +56,7 @@ You get a chat prompt. Type `/` for the command palette, `@path/to/file` to atta
 A tour of the essentials:
 
 ```bash
-aegis kb "prompt injection in tool output"   # ask the 386-technique knowledge base
+aegis kb "prompt injection in tool output"   # ask the 482-technique knowledge base
 aegis scan examples/opencode_pattern_trace.jsonl  # analyze a tool-call trace
 aegis hunt ~/my-project                      # vulnerability triage of YOUR OWN code
 aegis watch --once ~/my-project              # continuous monitoring pass + alerts
@@ -69,7 +69,7 @@ aegis respond rotate-keys openai             # incident runbooks (operator-execu
 
 - **Agent loop** (`aegis`) — chat-driven terminal agent with streaming, syntax highlighting, sessions that survive restarts, diff previews before file edits are approved, and a slash-command palette. For complex jobs, `/planexec <task>` makes the model propose an explicit step plan, the guard screens every step's shape, you approve it before anything runs, and a verification pass checks the real outcomes (files created, tests green, guard denials disclosed) before the task is declared done — deviations from the approved plan are blocked. `/commit [paths...]` commits from the real working tree: explicit paths only (never blind `git add -A`), message written from the actual diff, staged secrets abort the commit, approval before it lands.
 - **In-loop guard** — every tool call passes through allowlist/denylist, dangerous-argument patterns (fork bombs, `rm -rf /`, reverse shells, LOLBin download cradles…), secret redaction on args *and* outputs, egress domain control, and approval escalation — *before* execution. Session taint tracking escalates outbound calls made after sensitive files were read, and multi-step attack chains are caught live, not just in post-mortems.
-- **386-technique knowledge base** (`aegis kb "<query>"`) — 31 packs: agent-attack techniques, dark-web threat intel, APT tradecraft from public reporting, ransomware playbooks, web exploitation, C2 operations, cloud attacks, AI-agent attacks, the hacker-tools catalog, attack methodologies, and the hacker-mindset doctrine that shapes the agent's own reasoning.
+- **482-technique knowledge base** (`aegis kb "<query>"`) — 39 packs: agent-attack techniques, dark-web threat intel, APT tradecraft from public reporting, ransomware playbooks, web exploitation, C2 operations, cloud attacks, AI-agent attacks, the hacker-tools catalog, attack methodologies, and the hacker-mindset doctrine that shapes the agent's own reasoning.
 - **Watch** (`aegis watch --once|--interval|--schedule <dir>`, `aegis watch --triage`) — SOC-in-a-box: change-detected rescans, secret + pattern detection, alert banners, and a severity-ranked, deduped finding queue.
 - **Emulate** (`aegis emulate --target <dir>`, `/emulate`) — purple-team adversary emulation: chains KB techniques into multi-stage campaign narratives against your own systems, then verifies each stage would be caught. Plan-level only — nothing is executed, markers are inert.
 - **Graph** (`aegis graph <dir>`) — ranked attack paths an adversary would take through your system, each annotated with the defense that breaks it.
@@ -97,7 +97,7 @@ Strict schema validation runs on every load (bad packs refuse to load), and a bi
                         ┌──────────────▼──────────────┐
                         │        Agent loop           │
                         │  system prompt ← KB depth   │
-                        │  (mindset doctrine + 386    │
+                        │  (mindset doctrine + 482    │
                         │   techniques + guard rules) │
                         │  plan-then-execute phase    │
                         └──────────────┬──────────────┘
@@ -114,7 +114,7 @@ Strict schema validation runs on every load (bad packs refuse to load), and a bi
         ┌──────────────────┬───────────┼───────────┬──────────────────┐
         ▼                  ▼           ▼           ▼                  ▼
   ┌───────────┐     ┌─────────────┐ ┌────────┐ ┌──────────┐    ┌────────────┐
-  │  Tools    │     │  Audit log  │ │ Redact │ │ Providers│    │  KB (386)  │
+  │  Tools    │     │  Audit log  │ │ Redact │ │ Providers│    │  KB (482)  │
   │ bash, read│     │ JSONL, every│ │ at EVERY│ │Anthropic │    │ 31 packs,  │
   │ write/edit│     │ call, args+ │ │ return │ │OpenAI    │    │ cached,    │
   │ ps, hash, │     │ output      │ │boundary│ │Google    │    │ validated  │
@@ -146,7 +146,8 @@ Strict schema validation runs on every load (bad packs refuse to load), and a bi
 | v0.2.0 — OpenCode parity push | ✅ done | Gap analysis vs OpenCode, 252 techniques (23 packs), sessions/palette/diffs, `aegis watch` SOC-in-a-box, 241 tests |
 | v0.3.0 — model-agnostic + one command | ✅ done | Google + Ollama providers, dev/plan modes, polished TUI, `install.sh` single-command setup, 291 tests |
 | v0.4.0 — Godfather Program | ✅ done | 8-specialist training panel → 386 techniques (31 packs); `aegis emulate`, `aegis graph`, MCP client; 576 tests |
-| v0.5.0 — god-level power | ✅ done (current) | Inspection arsenal (ps/netconns/hash/search), plan-then-execute, guard hardening (taint + live chains + reverse-shell rules), KB binary cache, 600 tests |
+| v0.5.0 — god-level power | ✅ done | Inspection arsenal (ps/netconns/hash/search), plan-then-execute, guard hardening (taint + live chains + reverse-shell rules), KB binary cache, 600 tests |
+| v0.6.0 — "Unmatched" | ✅ done (current) | Proving ground: `aegis eval` — 306 hostile scenarios + 64 benign controls, public scorecard (237/242 caught, 0 FP); training wave 2 → 482 techniques (39 packs); guard gap-fill loop |
 
 Progress to 1.0: ██████████░░░░░░░░ — the agent is real, tested, and installs with one command. Stars and contributors below are the fuel for what comes next.
 
