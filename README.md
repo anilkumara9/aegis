@@ -14,6 +14,10 @@ Aegis is a Claude-Code-class terminal agent that knows how hackers think, work, 
 
 **Defensive only.** Aegis detects, prevents, audits, and remediates. It never generates exploit payloads or malware, never automates unauthorized access, and only ever touches your own local systems. Its knowledge base describes attacks at TTP/detection level — the same level as MITRE ATT&CK.
 
+![Aegis terminal interface — hunting secrets, then blocking a live exfiltration attempt](docs/screenshot.png)
+
+*Above: a real session. The agent hunts a workspace for exposed secrets — then a planted instruction tries to make it exfiltrate them, and the guard denies the call before anything executes.*
+
 ## 60-second quickstart
 
 **Install** — one command, no manual venv steps (isolated venv at `~/.aegis/venv`, `aegis` linked into `~/.local/bin`):
