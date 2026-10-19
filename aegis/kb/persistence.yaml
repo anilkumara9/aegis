@@ -254,7 +254,8 @@ techniques:
       rule: detect_startup_script_modification
       patterns:
         - '(?i)(\.bashrc|\.zshrc|\.profile|\.bash_profile|/\.config/autostart/)'
-        - '(?i)(curl|wget|powershell\s+-e|base64\s+(-d|--decode)|/tmp/|/dev/shm/)'
+        - '(?i)(curl|wget|powershell\s+-e|base64\s+(-d|--decode))'
+        - "(?i)(/tmp/|/dev/shm/)[^\\s\"']*\\.(sh|bash|zsh|bin|elf|exe|py|pyw|pl|rb|php|ps1|bat|cmd|vbs|js|jse|jar|apk|so|dll|msi|run|app|command)(?![\\w])"
         - '(?i)(Run|RunOnce)\\[^\n]*\.(exe|bat|ps1|vbs|lnk)'
     severity: high
     mitigations:

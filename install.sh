@@ -19,11 +19,8 @@
 # source tarball (or a local directory) and the package's PyPI dependencies.
 set -eu
 
-# ---------------------------------------------------------------- FOUNDER ---
-# After pushing to GitHub, replace the placeholder org/user below with the
-# real one. Until then the download path below will 404 on purpose.
-AEGIS_TARBALL_URL="https://github.com/anilkumara9/aegis/archive/refs/heads/main.tar.gz"
-# ----------------------------------------------------------------------------
+# The source tarball for fresh installs (curl-pipe). Branch is `master`.
+AEGIS_TARBALL_URL="https://github.com/anilkumara9/aegis/archive/refs/heads/master.tar.gz"
 
 AEGIS_HOME="${AEGIS_HOME:-$HOME/.aegis}"
 VENV_DIR="$AEGIS_HOME/venv"
@@ -142,8 +139,9 @@ echo "  1. Set a provider key (pick one):"
 echo "       export ANTHROPIC_API_KEY=...   # default model: claude-sonnet-4-5"
 echo "       export OPENAI_API_KEY=...      # default model: gpt-4o"
 echo "       export GOOGLE_API_KEY=...      # Google provider (v0.3+)"
+echo "       export OPENROUTER_API_KEY=<redacted>   # free models only by default"
 echo "     ...or run keyless:  AEGIS_PROVIDER=ollama AEGIS_MODEL=<name> aegis"
 echo "     ...or offline demo: AEGIS_PROVIDER=mock aegis"
 echo "  2. Just type:  aegis"
 echo ""
-echo "Docs: https://github.com/anilkumara9/aegis  (FOUNDER: replace after push)"
+echo "Docs: https://github.com/anilkumara9/aegis"

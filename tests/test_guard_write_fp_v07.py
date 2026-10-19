@@ -112,3 +112,28 @@ def test_write_sqli_still_denied_by_secwrite(kb):
         "content": 'cur.execute(f"SELECT * FROM users WHERE id = {uid}")\n'})
     assert verdict.decision == "deny"
     assert any(f.technique_id == "AEG-T139" for f in verdict.findings)
+
+
+def test_write_tmp_data_file_not_flagged_t053(kb):
+    # REPL QA 2026-10-19: T053's `/tmp/` alternative fired HIGH on a benign
+    # write to /tmp/repltest/x.txt. Bare writes to temp dirs are not
+    # persistence; the pattern now only matches executable payload refs.
+    sess = _sess(kb)
+    verdict = sess.check_call("write", {
+        "path": "/tmp/repltest/x.txt",
+        "content": "hi\n"})
+    assert not any(f.technique_id == "AEG-T053" for f in verdict.findings), \
+        verdict.reason
+
+
+def test_write_systemd_unit_pointing_at_tmp_payload_still_flagged(kb):
+    # EVL-218: a persistence config (systemd unit) whose payload lives in
+    # /tmp must still trip T053 — the narrowed pattern keeps executable
+    # extensions under /tmp/ and /dev/shm/. Note the trailing newline: the
+    # guard scans JSON-escaped args, so the pattern must tolerate the
+    # backslash of an escaped \n after the extension.
+    sess = _sess(kb)
+    verdict = sess.check_call("write", {
+        "path": "/home/u/.config/systemd/user/sync.service",
+        "content": "[Service]\nExecStart=/tmp/sync.sh\n"})
+    assert any(f.technique_id == "AEG-T053" for f in verdict.findings)
