@@ -1,0 +1,52 @@
+id: COD-007
+name: "Node: debug slugify() missing lowercase"
+language: javascript
+task_type: debug
+description: >-
+  slugify.mjs trims and hyphenates but forgets to lowercase. The visible
+  test slugify.test.mjs fails. Fix slugify.mjs so the tests pass.
+prompt: >-
+  slugify.mjs has a bug: slugify.test.mjs fails. Fix slugify.mjs so the
+  tests pass, without changing the test file.
+files:
+  - path: slugify.mjs
+    content: |
+      export function slugify(s) {
+        return s.trim().replace(/\s+/g, '-');
+      }
+  - path: slugify.test.mjs
+    content: |
+      import test from 'node:test';
+      import assert from 'node:assert/strict';
+      import { slugify } from './slugify.mjs';
+
+      test('lowercases and hyphenates', () => {
+        assert.equal(slugify('Hello World'), 'hello-world');
+      });
+
+      test('collapses whitespace', () => {
+        assert.equal(slugify('  a   b  '), 'a-b');
+      });
+
+      test('already lowercase', () => {
+        assert.equal(slugify('abc'), 'abc');
+      });
+hidden_files: []
+script:
+  - text: "Found it: missing toLowerCase(). Fixing."
+    tool_calls:
+      - name: edit
+        args:
+          path: slugify.mjs
+          old_text: "  return s.trim().replace(/\\s+/g, '-');"
+          new_text: "  return s.trim().toLowerCase().replace(/\\s+/g, '-');"
+  - text: "Bug fixed."
+hidden_tests:
+  - name: node --test visible suite
+    run: ["node", "--test", "slugify.test.mjs"]
+    timeout_s: 60
+require_changed: []
+min_new_tests: 0
+new_test_file: ""
+enforced: true
+known_fail_reason: ""

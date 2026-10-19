@@ -1,0 +1,80 @@
+id: COD-009
+name: "Node: add tests to untested Queue"
+language: javascript
+task_type: add_tests
+description: >-
+  queue.mjs ships with no tests. Add queue.test.mjs with at least 3
+  node:test tests covering enqueue/dequeue/peek/size; all must pass.
+prompt: >-
+  queue.mjs has no tests. Write queue.test.mjs with at least 3 tests
+  covering enqueue, dequeue, peek, and size. Do not modify queue.mjs.
+files:
+  - path: queue.mjs
+    content: |
+      export class Queue {
+        constructor() {
+          this._items = [];
+        }
+        enqueue(x) {
+          this._items.push(x);
+        }
+        dequeue() {
+          return this._items.shift();
+        }
+        peek() {
+          return this._items[0];
+        }
+        get size() {
+          return this._items.length;
+        }
+      }
+hidden_files: []
+script:
+  - text: "Adding tests for the Queue class."
+    tool_calls:
+      - name: write
+        args:
+          path: queue.test.mjs
+          content: |
+            import test from 'node:test';
+            import assert from 'node:assert/strict';
+            import { Queue } from './queue.mjs';
+
+            test('enqueue and dequeue are FIFO', () => {
+              const q = new Queue();
+              q.enqueue(1);
+              q.enqueue(2);
+              assert.equal(q.dequeue(), 1);
+              assert.equal(q.dequeue(), 2);
+            });
+
+            test('peek does not remove', () => {
+              const q = new Queue();
+              q.enqueue('a');
+              assert.equal(q.peek(), 'a');
+              assert.equal(q.size, 1);
+            });
+
+            test('size tracks elements', () => {
+              const q = new Queue();
+              assert.equal(q.size, 0);
+              q.enqueue(1);
+              q.enqueue(2);
+              q.dequeue();
+              assert.equal(q.size, 1);
+            });
+
+            test('dequeue on empty returns undefined', () => {
+              const q = new Queue();
+              assert.equal(q.dequeue(), undefined);
+            });
+  - text: "Tests added."
+hidden_tests:
+  - name: node --test new tests
+    run: ["node", "--test", "queue.test.mjs"]
+    timeout_s: 60
+require_changed: []
+min_new_tests: 3
+new_test_file: "queue.test.mjs"
+enforced: true
+known_fail_reason: ""

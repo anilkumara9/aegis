@@ -1,0 +1,63 @@
+id: COD-008
+name: "Node: refactor messy cart total"
+language: javascript
+task_type: refactor
+description: >-
+  cart.mjs computes a cart total with a manual loop and temp variables.
+  Rewrite it for clarity while preserving behavior: keep the exported
+  `total` name/signature; the original tests must still pass and the file
+  must actually change.
+prompt: >-
+  Rewrite cart.mjs for clarity (clean idiomatic JS) without changing its
+  behavior: keep the exported function name `total` and its signature.
+  The existing tests in cart.test.mjs must keep passing.
+files:
+  - path: cart.mjs
+    content: |
+      export function total(items) {
+        let s = 0;
+        for (let i = 0; i < items.length; i++) {
+          let it = items[i];
+          let line = it.price * it.qty;
+          s = s + line;
+        }
+        return s;
+      }
+  - path: cart.test.mjs
+    content: |
+      import test from 'node:test';
+      import assert from 'node:assert/strict';
+      import { total } from './cart.mjs';
+
+      test('sums lines', () => {
+        assert.equal(total([{price: 10, qty: 2}, {price: 5, qty: 1}]), 25);
+      });
+
+      test('empty cart', () => {
+        assert.equal(total([]), 0);
+      });
+
+      test('fractional prices', () => {
+        assert.equal(total([{price: 2.5, qty: 4}]), 10);
+      });
+hidden_files: []
+script:
+  - text: "Rewriting cart.mjs idiomatically, same behavior."
+    tool_calls:
+      - name: write
+        args:
+          path: cart.mjs
+          content: |
+            export function total(items) {
+              return items.reduce((sum, it) => sum + it.price * it.qty, 0);
+            }
+  - text: "Refactor done."
+hidden_tests:
+  - name: node --test original suite
+    run: ["node", "--test", "cart.test.mjs"]
+    timeout_s: 60
+require_changed: ["cart.mjs"]
+min_new_tests: 0
+new_test_file: ""
+enforced: true
+known_fail_reason: ""

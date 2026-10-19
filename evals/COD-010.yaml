@@ -1,0 +1,53 @@
+id: COD-010
+name: "C: implement clamp() from spec"
+language: c
+task_type: write
+description: >-
+  Implement `int clamp(int v, int lo, int hi)` in solution.c: return lo
+  when v < lo, hi when v > hi, else v. Verified by compiling with the
+  hidden test driver and running it.
+prompt: >-
+  Implement int clamp(int v, int lo, int hi) in solution.c: return lo if
+  v < lo, hi if v > hi, otherwise v. Write the implementation to
+  solution.c.
+files: []
+hidden_files:
+  - path: test_main.c
+    content: |
+      #include <assert.h>
+      #include <stdio.h>
+
+      int clamp(int v, int lo, int hi);
+
+      int main(void) {
+          assert(clamp(5, 0, 10) == 5);
+          assert(clamp(-3, 0, 10) == 0);
+          assert(clamp(99, 0, 10) == 10);
+          assert(clamp(0, 0, 0) == 0);
+          assert(clamp(-5, -10, -1) == -5);
+          assert(clamp(7, 7, 7) == 7);
+          printf("all clamp tests passed\n");
+          return 0;
+      }
+script:
+  - text: "Implementing clamp per the spec."
+    tool_calls:
+      - name: write
+        args:
+          path: solution.c
+          content: |
+            int clamp(int v, int lo, int hi) {
+                if (v < lo) return lo;
+                if (v > hi) return hi;
+                return v;
+            }
+  - text: "Implementation written."
+hidden_tests:
+  - name: gcc compile + run hidden driver
+    run: ["sh", "-c", "gcc -O1 -Wall -o tprog test_main.c solution.c && ./tprog"]
+    timeout_s: 60
+require_changed: []
+min_new_tests: 0
+new_test_file: ""
+enforced: true
+known_fail_reason: ""

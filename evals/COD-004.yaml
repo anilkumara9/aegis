@@ -1,0 +1,65 @@
+id: COD-004
+name: "Python: add tests to untested Order class"
+language: python
+task_type: add_tests
+description: >-
+  orders.py ships with no tests. Add a test file exercising the Order
+  class: at least 3 tests, all passing when executed.
+prompt: >-
+  orders.py has no tests. Write test_orders.py with at least 3 tests
+  covering Order.subtotal and Order.total (including a discount case).
+  Do not modify orders.py.
+files:
+  - path: orders.py
+    content: |
+      class Order:
+          """A simple order: items are (name, price, qty) tuples."""
+
+          def __init__(self, items):
+              self.items = list(items)
+
+          def subtotal(self):
+              return sum(price * qty for _, price, qty in self.items)
+
+          def total(self, discount=0.0):
+              return round(self.subtotal() * (1 - discount), 2)
+hidden_files: []
+script:
+  - text: "Adding tests for the Order class."
+    tool_calls:
+      - name: write
+        args:
+          path: test_orders.py
+          content: |
+            from orders import Order
+
+
+            def test_subtotal():
+                o = Order([("a", 10.0, 2), ("b", 5.0, 1)])
+                assert o.subtotal() == 25.0
+
+
+            def test_total_no_discount():
+                o = Order([("a", 10.0, 2)])
+                assert o.total() == 20.0
+
+
+            def test_total_with_discount():
+                o = Order([("a", 10.0, 2)])
+                assert o.total(discount=0.1) == 18.0
+
+
+            def test_empty_order():
+                o = Order([])
+                assert o.subtotal() == 0
+                assert o.total() == 0.0
+  - text: "Tests added."
+hidden_tests:
+  - name: pytest new tests
+    run: ["python", "-m", "pytest", "test_orders.py", "-q"]
+    timeout_s: 60
+require_changed: []
+min_new_tests: 3
+new_test_file: "test_orders.py"
+enforced: true
+known_fail_reason: ""

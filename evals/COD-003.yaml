@@ -1,0 +1,58 @@
+id: COD-003
+name: "Python: refactor messy doubling function"
+language: python
+task_type: refactor
+description: >-
+  messy.py works but is written unclearly (manual loop, temp variables).
+  Rewrite it for clarity while preserving behavior: the original tests
+  must still pass and the file must actually change.
+prompt: >-
+  Rewrite messy.py for clarity (clean idiomatic Python) without changing
+  its behavior: keep the function name `f` and its signature. The
+  existing tests in test_messy.py must keep passing.
+files:
+  - path: messy.py
+    content: |
+      def f(a):
+          r = []
+          for x in a:
+              t = x * 2
+              t = t + 1
+              r.append(t)
+          return r
+  - path: test_messy.py
+    content: |
+      from messy import f
+
+
+      def test_values():
+          assert f([1, 2, 3]) == [3, 5, 7]
+
+
+      def test_empty():
+          assert f([]) == []
+
+
+      def test_negative():
+          assert f([-2, 0]) == [-3, 1]
+hidden_files: []
+script:
+  - text: "Rewriting messy.py idiomatically, same behavior."
+    tool_calls:
+      - name: write
+        args:
+          path: messy.py
+          content: |
+            def f(a):
+                """Return [2*x + 1 for x in a]."""
+                return [2 * x + 1 for x in a]
+  - text: "Refactor done."
+hidden_tests:
+  - name: pytest original suite
+    run: ["python", "-m", "pytest", "test_messy.py", "-q"]
+    timeout_s: 60
+require_changed: ["messy.py"]
+min_new_tests: 0
+new_test_file: ""
+enforced: true
+known_fail_reason: ""
