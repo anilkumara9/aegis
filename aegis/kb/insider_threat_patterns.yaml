@@ -1,0 +1,754 @@
+pack: insider_threat_patterns
+version: "1.0"
+techniques:
+  - id: AEG-T411
+    name: "Departing-Employee Data Theft"
+    category: insider_threat_patterns
+    description: >-
+      Departing employees are the highest-concentration insider-theft risk in
+      every public dataset: a worker with legitimate access, a deadline (last
+      day), and a motive (next employer, resentment, or self-interest). CERT
+      insider-threat research has repeatedly found the bulk of IP theft occurs
+      in the 30 days before or after departure — the attacker already has the
+      keys, so there is no intrusion to detect, only anomalous collection.
+      Public cases (Tesla's 2023 disclosure of two former employees leaking
+      records of 75,000+ employees; the Waymo-v.-Uber trade-secret matter)
+      show the same staging: quiet bulk downloads, personal-cloud uploads,
+      and access to projects outside the employee's normal scope in the final
+      weeks. Controls must fire on the combination of HR state and data-access
+      behavior, not on behavior alone.
+    how_it_works: >-
+      The pattern has four stages defenders can instrument. (1) Trigger:
+      resignation letter, performance improvement plan, layoff notice, or
+      disciplinary action creates motive; HR systems hold the earliest
+      signal. (2) Collection: the employee browses and downloads outside
+      their normal project footprint — bulk pulls from document repositories,
+      code pulls of whole repos instead of single files, exports of CRM
+      contact lists. (3) Staging: data is consolidated (renamed archives,
+      encrypted zips) and moved off-host via personal cloud drives, webmail
+      attachments, or USB mass storage. (4) Exit: access is revoked late or
+      credentials linger, and post-termination logins appear. Each stage is
+      individually benign; the tell is the correlation of elevated collection
+      with a termination/transfer event. Defensive instrumentation joins the
+      HRIS offboarding feed to DLP, CASB, and endpoint telemetry, and
+      applies tighter volume thresholds automatically for employees in a
+      notice window.
+    variants:
+      - "Trade-secret theft for a competitor: targeted collection of source code, formulations, or pricing — CERT's classic pattern."
+      - "Contact-list / customer-data harvesting: CRM exports for a personal book of business, often timed with a move to a rival."
+      - "Sabotage-flavored collection: downloading data to destroy the employer's copy or leak it publicly after exit."
+    indicators:
+      - "HR termination, resignation, PIP, or layoff-list event for a user, correlated within days with elevated data access."
+      - "Bulk or off-scope downloads: whole-repo clones, mass document-library pulls, or CRM exports far outside the user's normal projects."
+      - "Staging signals: encrypted archives, renamed zip files, USB mass-storage writes, or uploads to personal cloud/webmail."
+      - "Post-exit anomalies: logins after the termination date, dormant-account reactivations, or VPN use by a separated user."
+    detection:
+      rule: detect_departing_employee_exfil
+      patterns:
+        - '(?i)(terminat|resign|offboard|notice.period|exit.interview).*(download|upload|usb|cloud|share|export).*(bulk|mass|volume|unusual|anomal)'
+        - '(?i)(dlp|casb|endpoint).*(alert|block).*(terminat|resign|offboard|notice.period)'
+    severity: high
+    mitigations:
+      - "Automated joiner/mover/leaver: HRIS-driven provisioning that applies a 'notice-window' policy (tighter DLP thresholds, blocked USB/personal-cloud) from the moment a resignation or PIP is recorded, not from the last day."
+      - "Immediate, verified revocation on exit — SSO, VPN, SaaS, SSH keys, API tokens, and personal-device MDM enrollment — with a post-termination login alert as a backstop."
+      - "Manager and custodian reviews of data accessed in the 30 days before departure, focused on off-scope collection."
+      - "Legal posture: offer letters and separation agreements that define IP boundaries and document-hold obligations, so investigation and referral are possible."
+    examples:
+      - summary: "Tesla's May 2023 data-breach disclosure attributed the leak of records on 75,735 employees to two former employees who 'misappropriated the information in violation of Tesla's IT security and data protection policies' — the canonical departing-insider exfiltration case."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+      - summary: "CERT's insider-threat case corpus consistently shows IP theft clustering around job-change events — the majority of theft cases in the corpus involve an employee stealing within 30 days of leaving, which is why HR-event correlation is the control point."
+        reference: "https://www.sei.cmu.edu/our-work/insider-threat/"
+    references:
+      - "https://www.cisa.gov/insider-threat-mitigation"
+      - "https://www.sei.cmu.edu/our-work/insider-threat/"
+      - "https://attack.mitre.org/techniques/T1020/"
+      - "https://attack.mitre.org/techniques/T1048/"
+
+  - id: AEG-T412
+    name: "Rogue-Administrator Privilege Abuse"
+    category: insider_threat_patterns
+    description: >-
+      Privileged administrators hold the keys to detection itself — they can
+      read, modify, or delete the logs that would catch them. Rogue-admin
+      abuse is rare but catastrophic: the classic case is Terry Childs, the
+      San Francisco city network administrator who in 2008 locked the city's
+      FiberWAN out of its own administrators' reach by withholding the
+      passwords, resulting in a 2010 felony conviction. Detection relies on
+      baselining privileged actions (what each admin normally does, when,
+      and from where) so that deviations — new persistent accounts, disabled
+      logging, after-hours bulk changes — surface even when the actor has
+      legitimate credentials and deep system knowledge.
+    how_it_works: >-
+      The rogue admin abuses the standing privilege they already hold rather
+      than escalating. Observable phases: (1) persistence preparation —
+      creating secondary admin or service accounts, adding personal SSH keys
+      or MFA devices, establishing out-of-band access paths; (2) control
+      capture — changing shared passwords, altering backup or replication
+      targets so recovery depends on them, disabling or filtering audit
+      pipelines for their own sessions; (3) leverage — using exclusive
+      knowledge or access as bargaining power, or quietly exfiltrating via
+      legitimate admin channels (backups, snapshots, replication). Because
+      every step can be legitimate admin work, the discriminating signal is
+      deviation from the admin's own baseline combined with secrecy markers:
+      actions during off-hours, from unusual hosts, with log-suppression
+      nearby, or concealed from peers. Defensive design removes single-admin
+      control: no individual holds the only copy of any credential, audit
+      logs are append-only and shipped off-admin-control, and high-impact
+      admin actions require dual control.
+    variants:
+      - "Control-capture for leverage: withholding credentials or configuration knowledge (the Terry Childs pattern)."
+      - "Silent persistence: secondary accounts and keys planted for post-employment access."
+      - "Audit subversion: disabling or filtering logging and monitoring to create blind spots."
+    indicators:
+      - "New privileged accounts, SSH keys, or MFA registrations created by an administrator outside a change window."
+      - "Audit-log gaps, disabled logging, or monitoring exclusions applied by the same identity performing sensitive actions."
+      - "After-hours or off-host privileged sessions far outside the admin's historical baseline."
+      - "Single-point-of-knowledge behaviors: password changes on shared systems not recorded in the vault, undocumented recovery procedures."
+    detection:
+      rule: detect_rogue_admin_abuse
+      patterns:
+        - '(?i)(privileg|admin|root).*(baselin|deviat|anomal).*(after.hours|off.hours|weekend|unusual.host)'
+        - '(?i)(admin|root|system).*(audit.log|security.log|siem).*(delet|clear|disable|filter|exclud)'
+    severity: critical
+    mitigations:
+      - "Dual control and split knowledge: no single administrator holds sole access to critical systems; privileged actions require a second approver for defined high-impact operations."
+      - "Append-only, off-admin-control audit pipelines — logs shipped to a separate security account the admin cannot modify or filter."
+      - "Privileged session recording and just-in-time elevation so standing admin rights are minimized and every elevated session is attributable."
+      - "Quarterly privileged-access reviews and mandatory vacation/rotation policies that force handover of sole-knowledge systems."
+    examples:
+      - summary: "In 2008, San Francisco network administrator Terry Childs refused to surrender administrative passwords to the city's FiberWAN network, locking out his own employer for days; he was convicted of felony network tampering in 2010 — the landmark rogue-admin control-capture case."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+      - summary: "CISA's insider-threat mitigation guidance explicitly flags privileged users as the highest-impact insider category and prescribes separation of duties, least privilege, and independent audit logging as the core controls."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+    references:
+      - "https://www.cisa.gov/insider-threat-mitigation"
+      - "https://www.sei.cmu.edu/our-work/insider-threat/"
+      - "https://attack.mitre.org/techniques/T1078/"
+      - "https://attack.mitre.org/techniques/T1070/"
+
+  - id: AEG-T413
+    name: "Sabotage and Logic-Bomb Concepts"
+    category: insider_threat_patterns
+    description: >-
+      Sabotage insiders intend damage rather than theft: deleting data,
+      corrupting systems, or planting logic bombs — dormant code or scheduled
+      tasks that trigger on a condition (a date, an account deletion, a
+      missing heartbeat). The landmark cases are Tim Lloyd, who planted a
+      logic bomb at Omega Engineering in 1996 that detonated after his
+      firing and caused over $10M in damage, and Roger Duronio, whose 2002
+      logic bomb at UBS PaineWebber followed a bonus dispute and caused
+      millions in damage; both were prosecuted and convicted. For defenders
+      the signal is correlation: code or configuration changes with
+      destructive capability appearing near HR grievance events, dormant
+      accounts, or anomalous scheduled tasks — never the destructive code
+      alone, which in isolation resembles legitimate automation.
+    how_it_works: >-
+      The sabotage lifecycle is (1) motive formation — termination, demotion,
+      bonus dispute, or perceived unfairness; (2) planting — the insider
+      inserts dormant destructive logic (time bombs, conditional deletes,
+      corruptions of backups or data) while they still have legitimate
+      write access, often disguised inside normal commits or scripts;
+      (3) trigger — the payload fires on a timer, on the insider's account
+      deletion, or on a remote command; (4) impact — data destruction,
+      service outage, or corrupted backups that defeat recovery. Defensive
+      detection correlates three data sources defenders already have:
+      code/config change review for destructive-capability patterns,
+      scheduled-task and automation inventories for dormant or disguised
+      entries, and HR grievance/exit events. Backups that are immutable and
+      tested are the containment control: sabotage is recoverable only if
+      the insider could not reach the recovery path.
+    variants:
+      - "Time-triggered logic bombs: dormant code detonating on a date or after account removal (Omega/UBS pattern)."
+      - "Data-wiper sabotage: direct destructive deletion timed with departure, without a planted trigger."
+      - "Backup-targeted sabotage: corrupting or deleting backups first so the primary destruction is unrecoverable."
+    indicators:
+      - "Code commits, scripts, or config changes containing mass-delete, wipe, or corruption capability appearing near a grievance, PIP, or termination event."
+      - "Scheduled tasks, cron jobs, or automation rules created or modified by an employee in a notice window, especially with dormant/future triggers."
+      - "Access to or modification of backup systems, snapshots, or disaster-recovery configs outside the employee's role."
+      - "Defensive-tool tampering: disabled endpoint protection, altered monitoring, or deleted logs by the same identity."
+    detection:
+      rule: detect_sabotage_planting
+      patterns:
+        - '(?i)(logic.bomb|time.bomb|dead.man|dormant.{0,20}(task|script|job)|plant.{0,20}(malicious|destructive))'
+        - '(?i)(schedul|commit|deploy).*(terminat|grievance|disciplin|pip|performance.plan|layoff).*(delet|wipe|corrupt|destroy)'
+    severity: critical
+    mitigations:
+      - "Code-review and change-approval discipline for destructive-capability changes: mass-delete utilities, backup modifications, and automation-rule changes require peer review and a second approver."
+      - "Immutable, tested, off-site backups with a recovery path the sabotage target's administrators cannot reach or alter."
+      - "HR-event-correlated monitoring: on grievance, PIP, or termination, automatically review the employee's recent code/config changes and scheduled-task inventory."
+      - "Immediate revocation and session invalidation on involuntary termination — the highest-risk hour is the exit itself."
+    examples:
+      - summary: "Tim Lloyd planted a logic bomb at Omega Engineering that detonated after his 1996 firing, destroying design and manufacturing data; the damage exceeded $10M and Lloyd was convicted — the archetypal insider sabotage case in CERT's corpus."
+        reference: "https://www.sei.cmu.edu/our-work/insider-threat/"
+      - summary: "Roger Duronio's 2002 logic bomb at UBS PaineWebber, planted after a bonus dispute, damaged over 1,000 computers; he received an 8-year federal sentence — establishing that dormant destructive code by insiders is prosecuted as computer sabotage."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+    references:
+      - "https://www.cisa.gov/insider-threat-mitigation"
+      - "https://www.sei.cmu.edu/our-work/insider-threat/"
+      - "https://attack.mitre.org/techniques/T1053/"
+      - "https://attack.mitre.org/techniques/T1070/"
+
+  - id: AEG-T414
+    name: "Credential Sharing and Account Lending"
+    category: insider_threat_patterns
+    description: >-
+      Shared credentials — one login used by several people, an admin lending
+      their account to a contractor, a generic 'admin' or shift account with
+      no attribution — are the insider-threat equivalent of turning off the
+      cameras: every downstream control (UEBA, audit, incident attribution)
+      depends on identity meaning one person. Sharing arises from convenience
+      (avoiding provisioning delays), operational pressure (24/7 coverage),
+      or deliberate obfuscation by the insider. Detection is analytic rather
+      than signature-based: impossible-travel, concurrent sessions from
+      disparate locations, activity at inhuman speed or across impossible
+      skill sets, and behavioral mismatch with the account owner's profile.
+    how_it_works: >-
+      The failure mode is attribution collapse. When two or more humans use
+      one identity, anomaly detection cannot baseline behavior, and incident
+      response cannot determine who acted. Sharing patterns defenders see:
+      (1) shift or team accounts with passwords distributed out-of-band;
+      (2) privileged lending — an admin shares credentials to 'get the
+      contractor unblocked'; (3) credential persistence — a departed
+      employee's still-valid account used by former colleagues. Each
+      multiplies risk: password changes break for everyone, MFA is weakened
+      or bypassed, and a compromise of one person compromises the shared
+      identity. Detection analytics look for concurrent active sessions from
+      geographically impossible locations, typing/behavioral mismatch, logins
+      during the owner's known absence (PTO, travel), and privilege use
+      inconsistent with the owner's role. The durable fix is eliminating the
+      need: fast provisioning, break-glass accounts with automatic
+      expiry and alerting, and named accounts for every human including
+      contractors.
+    variants:
+      - "Shift/team shared accounts: operational convenience accounts with distributed passwords."
+      - "Privileged lending: admins sharing elevated credentials to bypass provisioning or approval."
+      - "Orphaned-account reuse: departed users' still-active accounts adopted by others."
+    indicators:
+      - "Concurrent active sessions for one identity from geographically impossible locations (impossible travel)."
+      - "Login or privileged activity during the account owner's recorded absence (PTO, travel, off-shift)."
+      - "Behavioral mismatch: an account performing tasks far outside the owner's role or skill profile, or at inhuman speed."
+      - "Generic/shared account names (admin, operator, test, shift) with active privileged use and no named owner."
+    detection:
+      rule: detect_credential_sharing
+      patterns:
+        - '(?i)(concurrent.session|simultaneous.login|impossible.travel|geo.velocity|two.locations)'
+        - '(?i)(shared.{0,10}account|generic.{0,10}account|team.{0,10}login).*(password|credential|no.{0,5}owner|unattribut)'
+    severity: high
+    mitigations:
+      - "Named accounts for every human, including contractors and vendors; prohibit shared privileged credentials by policy with technical enforcement."
+      - "Fast, self-service provisioning and time-boxed break-glass accounts so sharing is never the path of least resistance."
+      - "Impossible-travel and concurrent-session analytics on all privileged and remote-access identities, with automatic session challenge or termination."
+      - "Phishing-resistant MFA bound to the individual (not shared tokens), which makes lending measurably harder."
+    examples:
+      - summary: "CERT's insider-threat research identifies shared and generic accounts as a recurring enabler across sabotage and theft cases — attribution collapse is what lets a second actor hide behind a legitimate identity."
+        reference: "https://www.sei.cmu.edu/our-work/insider-threat/"
+      - summary: "CISA insider-threat guidance lists identity and access management — including eliminating shared accounts — as a foundational control, because every behavioral analytic assumes one identity equals one person."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+    references:
+      - "https://www.cisa.gov/insider-threat-mitigation"
+      - "https://www.sei.cmu.edu/our-work/insider-threat/"
+      - "https://attack.mitre.org/techniques/T1078/"
+      - "https://attack.mitre.org/techniques/T1098/"
+
+  - id: AEG-T415
+    name: "Collusion Patterns"
+    category: insider_threat_patterns
+    description: >-
+      Collusion defeats separation of duties — the control that assumes no
+      single person can complete a fraud alone — by adding a second insider.
+      One employee creates the fraudulent vendor or payment request; a
+      colluding approver rubber-stamps it. Each participant's actions look
+      legitimate in isolation, which is why single-user anomaly detection
+      misses it. The discriminating signal is relational: repeated pairings
+      of the same requester and approver, approval chains that never rotate,
+      and social or financial links between participants. Detection requires
+      graph thinking — analyzing who approves whom, how often, and whether
+      maker-checker pairs are genuinely independent.
+    how_it_works: >-
+      Collusion typically follows a division of labor: (1) the originator
+      creates the fraudulent instrument (fake vendor, inflated invoice,
+      ghost employee, unauthorized refund); (2) the approver provides the
+      second signature, often exploiting approval thresholds (splitting
+      amounts to stay under review limits) or role conflicts; (3) proceeds
+      are split and the trail is normalized — real-looking documentation is
+      filed so audits see a complete packet. Variants include vendor-side
+      collusion (an external vendor conspires with an internal buyer —
+      kickbacks for inflated contracts) and IT collusion (a developer and an
+      operator jointly bypassing change control). Defensive controls attack
+      the pairing: enforced separation of duties with conflict matrices,
+      mandatory approver rotation, threshold-triggered independent review,
+      and analytics on requester-approver graphs that flag stable,
+      high-frequency pairs and self-approval paths. Procurement and payment
+      data are the primary hunting grounds.
+    variants:
+      - "Payment-fraud collusion: requester plus rubber-stamp approver diverting vendor or payroll payments."
+      - "Procurement collusion: buyer and vendor conspiring on inflated contracts or kickbacks."
+      - "IT change-control collusion: developer and operator jointly bypassing review for unauthorized changes."
+    indicators:
+      - "Stable, high-frequency requester-approver pairs that rarely involve a third party or rotation."
+      - "Approvals consistently just under review thresholds, or split transactions that together exceed them."
+      - "Vendor or payee records created and approved by socially or organizationally linked individuals."
+      - "Change-control or payment exceptions concentrated in one team or one manager's span."
+    detection:
+      rule: detect_collusion_pairing
+      patterns:
+        - '(?i)(separation.of.duties|sod|maker.checker|dual.control).*(conflict|violat|breach|exception)'
+        - '(?i)(approv|authoriz).*(self|same.user|same.pair|no.rotation|bypass)'
+    severity: high
+    mitigations:
+      - "Enforced separation-of-duties conflict matrices in ERP/payment systems — technical prevention, not policy aspiration — with mandatory approver rotation."
+      - "Requester-approver graph analytics: flag stable pairs, threshold-skirting approvals, and newly created vendor-payee links."
+      - "Independent review of high-value and first-time payees, with out-of-band verification of bank-detail changes."
+      - "Conflict-of-interest disclosure and vendor-creation controls (segregated vendor master-data maintenance)."
+    examples:
+      - summary: "CISA and NITTF insider-threat frameworks both treat collusion as a distinct threat class precisely because it defeats single-actor controls — the mitigation they prescribe is enforced separation of duties plus independent audit."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+      - summary: "CERT's case research on insider fraud documents repeated requester-approver pairing as the signature of collusive fraud, detectable only through relational analysis of transaction data rather than individual behavior."
+        reference: "https://www.sei.cmu.edu/our-work/insider-threat/"
+    references:
+      - "https://www.cisa.gov/insider-threat-mitigation"
+      - "https://www.sei.cmu.edu/our-work/insider-threat/"
+      - "https://attack.mitre.org/techniques/T1078/"
+      - "https://attack.mitre.org/techniques/T1136/"
+
+  - id: AEG-T416
+    name: "Shadow IT as Insider-Created Attack Surface"
+    category: insider_threat_patterns
+    description: >-
+      Shadow IT — unsanctioned SaaS, personal cloud storage, rogue OAuth
+      app grants, employee-built integrations — is insider-created attack
+      surface: data leaves governed systems through channels the security
+      team never approved and may not see. It is usually negligent rather
+      than malicious (an employee syncing work to a personal drive for
+      convenience), but the exfiltration outcome is identical to the
+      malicious case, and a malicious insider actively exploits the same
+      channels because they are unmonitored. Detection is a discovery
+      problem: CASB/SSE telemetry, OAuth-grant inventories, DNS and proxy
+      logs revealing first-seen SaaS, and data-flow mapping showing where
+      corporate data actually resides.
+    how_it_works: >-
+      The mechanism is governance bypass at the point of convenience: an
+      employee signs up for a SaaS tool with their corporate email, grants
+      it OAuth scopes to mail/drive/calendar, syncs project data, and shares
+      links externally — all outside the sanctioned stack. Malicious
+      variants use the same pattern deliberately: choosing unsanctioned
+      channels precisely because DLP and logging do not cover them. Risk
+      compounds through OAuth persistence (grants survive password changes),
+      over-scoped permissions, and third-party data processors with unknown
+      security postures. Defensive discovery combines cloud-access telemetry
+      (which SaaS is actually in use), OAuth-app inventories with
+      risk-scoring of granted scopes, and DLP policies that cover
+      sanctioned channels while discovery hunts the unsanctioned ones. The
+      constructive response is sanctioned alternatives plus frictionless
+      approval — shadow IT shrinks when the governed path is the easy path.
+    variants:
+      - "Rogue OAuth grants: third-party apps with mail/drive scopes authorized by employees, persisting past offboarding."
+      - "Personal-cloud sync: corporate data replicated to unsanctioned storage for convenience or exfiltration."
+      - "Employee-built integrations: unsanctioned automations and AI tools processing corporate data with unknown retention."
+    indicators:
+      - "First-seen SaaS domains in proxy/DNS logs receiving corporate data uploads from employee devices."
+      - "OAuth grants to unknown or high-risk third-party apps with broad mail, drive, or calendar scopes."
+      - "DLP alerts on sanctioned channels paired with continued data movement — the insider switched to an unmonitored path."
+      - "Corporate-email signups for external services that process or store company data."
+    detection:
+      rule: detect_shadow_it_channels
+      patterns:
+        - '(?i)(shadow.{0,5}it|unsanction.{0,10}(saas|app|cloud)|unapproved.{0,10}(service|integration))'
+        - '(?i)oauth.{0,20}(grant|consent|authorized).*(unknown|first.seen|high.risk|broad.scope)'
+    severity: medium
+    mitigations:
+      - "CASB/SSE discovery with an approved-app catalog and a fast, lightweight exception process — make the sanctioned path the easy path."
+      - "OAuth-app governance: inventory all grants, risk-score scopes, auto-revoke high-risk or unused grants, and tie revocation to offboarding."
+      - "DLP coverage extended to web uploads and a default-deny posture for personal cloud storage on managed devices."
+      - "Security-champions and awareness framing that treats shadow IT as a friction problem to solve, not only a policy violation to punish."
+    examples:
+      - summary: "CISA's insider-threat mitigation materials list unauthorized software and systems as an insider-risk vector, noting that ungoverned tools bypass the monitoring controls the rest of the program depends on."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+      - summary: "Rogue OAuth grants have become a standard persistence and exfiltration channel precisely because they survive credential rotation — discovery of unsanctioned grants is now a core insider-threat hunting task."
+        reference: "https://attack.mitre.org/techniques/T1136/"
+    references:
+      - "https://www.cisa.gov/insider-threat-mitigation"
+      - "https://www.sei.cmu.edu/our-work/insider-threat/"
+      - "https://attack.mitre.org/techniques/T1136/"
+      - "https://attack.mitre.org/techniques/T1567/"
+
+  - id: AEG-T417
+    name: "Third-Party and Contractor Insider Risk"
+    category: insider_threat_patterns
+    description: >-
+      Contractors, vendors, and managed-service staff are insiders with an
+      asterisk: they hold trusted access but sit outside the organization's
+      HR, culture, and monitoring norms — and their access frequently
+      outlives the engagement. The most consequential public case is Edward
+      Snowden, a Booz Allen contractor whose systems-administrator access
+      enabled the 2013 NSA disclosures; the lesson is structural, not
+      personal: contractor access is rarely scoped as tightly as employee
+      access and is reviewed less often. This technique is the
+      behavior-and-governance class — scope creep, dormant vendor accounts,
+      shared service credentials — distinct from the insider-access market
+      covered elsewhere; the fix is treating third-party identities as
+      first-class insider-threat subjects.
+    how_it_works: >-
+      Third-party risk accumulates through (1) over-scoped initial access —
+      vendors granted broad access 'to get the project moving'; (2) scope
+      creep as engagements expand without re-review; (3) persistence after
+      offboarding — contractor accounts, VPN credentials, and API keys that
+      are never revoked because no HRIS event fires for an external worker;
+      (4) transitive access — the vendor's own subcontractors and support
+      staff inheriting the trust. Malicious or compromised third parties
+      then operate with the same advantages as malicious employees, plus
+      weaker behavioral baselines (security teams know their employees'
+      patterns better than a vendor's). Defensive design gives every
+      third-party identity a named sponsor, a contract-bound expiry date, a
+      least-privilege scope, and the same UEBA/DLP monitoring as employees —
+      with access reviews owned by the sponsor and automatic suspension at
+      contract end.
+    variants:
+      - "Over-scoped vendor access: broad standing privileges granted for convenience and never narrowed."
+      - "Orphaned contractor accounts: credentials surviving the engagement and reused later."
+      - "Transitive/subcontractor access: fourth parties inheriting trust without the sponsor's knowledge."
+    indicators:
+      - "Vendor or contractor accounts with standing privileged access and no recorded sponsor or expiry date."
+      - "Third-party identities active after the contract end date, or dormant for months then reactivating."
+      - "Service or shared vendor credentials used from multiple locations or by multiple apparent humans."
+      - "Vendor access to systems outside the engagement's documented scope."
+    detection:
+      rule: detect_thirdparty_insider_risk
+      patterns:
+        - '(?i)(contractor|vendor|third.party|supplier).*(excess.{0,20}access|scope.creep|dormant|expired.contract|no.sponsor)'
+        - '(?i)(service.account|vendor.account).*(shared|no.{0,5}mfa|never.rotat|stale|orphan)'
+    severity: high
+    mitigations:
+      - "Named sponsor, contract-bound expiry, and least-privilege scope for every third-party identity; automatic suspension at contract end."
+      - "Include third-party identities in UEBA, DLP, and privileged-access monitoring — no monitoring exemptions for vendors."
+      - "Prohibit shared vendor credentials; require named accounts and phishing-resistant MFA for all remote third-party access."
+      - "Supply-chain security clauses: incident-notification obligations, right-to-audit, and access-log retention in vendor contracts."
+    examples:
+      - summary: "Edward Snowden was a Booz Allen Hamilton contractor, not an NSA employee — his systems-administrator access as a third party enabled the 2013 disclosures, the defining public case for contractor-insider risk."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+      - summary: "CISA insider-threat guidance explicitly extends insider-threat programs to contractors and business partners, prescribing the same access reviews and monitoring applied to the direct workforce."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+    references:
+      - "https://www.cisa.gov/insider-threat-mitigation"
+      - "https://www.sei.cmu.edu/our-work/insider-threat/"
+      - "https://attack.mitre.org/techniques/T1078/"
+      - "https://attack.mitre.org/techniques/T1199/"
+
+  - id: AEG-T418
+    name: "Negligent-Insider Patterns"
+    category: insider_threat_patterns
+    description: >-
+      Most insider incidents are not malicious: they are misconfigurations,
+      accidental exposures, clicked phishing links, and mishandled data by
+      well-meaning employees. Public history is full of negligent-insider
+      outcomes — publicly exposed cloud storage buckets configured by
+      employees, sensitive documents emailed to the wrong distribution
+      list, credentials committed to repositories. The defensive discipline
+      is detection without blame: the same telemetry that catches malice
+      (DLP, posture management, access analytics) catches negligence, but
+      the response must be correction and friction-reduction, not
+      investigation — because a blame culture drives incidents underground
+      and destroys the reporting the program depends on.
+    how_it_works: >-
+      Negligence follows predictable shapes: (1) misconfiguration —
+      storage, sharing links, or permissions set to public by default or by
+      mistake; (2) mishandling — sensitive data pasted into chat, personal
+      email, or AI tools; emailed to wrong recipients; left on shared
+      drives; (3) credential carelessness — secrets in code, shared in
+      tickets, photographed on whiteboards; (4) security fatigue —
+      clicked phishing, ignored update prompts, bypassed controls to meet
+      deadlines. Defenders detect these with posture management (public
+      exposures, over-permissive shares), DLP (sensitive data in the wrong
+      channel), and phishing-simulation telemetry — but the highest-value
+      control is making the secure path the default: safe defaults on
+      sharing, secret-scanning in the pipeline, just-in-time training at the
+      moment of the mistake. Incident data should feed usability fixes, not
+      punishment queues.
+    variants:
+      - "Accidental exposure: public buckets, over-shared links, wrong-recipient emails."
+      - "Credential mishandling: secrets in repos, tickets, chat, or screenshots."
+      - "Security-fatigue bypass: clicked phish, ignored patches, control workarounds under deadline pressure."
+    indicators:
+      - "Posture findings: publicly accessible storage, over-permissive share links, or sensitive repositories exposed."
+      - "DLP events for sensitive data in personal email, chat, or unsanctioned AI tools without malicious staging signals."
+      - "Secrets detected in code commits, tickets, or logs."
+      - "Repeat phishing-simulation failures or ignored security prompts by specific teams."
+    detection:
+      rule: detect_negligent_exposure
+      patterns:
+        - '(?i)(misconfig|accidental.{0,20}(expos|share|publish|leak)|public.{0,10}(bucket|link|share)|wrong.recipient)'
+        - '(?i)(secret|credential|api.key|token).*(commit|repo|ticket|chat|log|screenshot)'
+    severity: medium
+    mitigations:
+      - "Secure defaults: private-by-default sharing, blocked public buckets at the organization policy level, and least-privilege storage defaults."
+      - "Automated guardrails: secret scanning in CI, DLP with user coaching (warn-and-educate, not just block), and posture management with auto-remediation."
+      - "Just-in-time micro-training at the moment of a mistake, and blameless post-incident reviews that feed usability fixes."
+      - "Phishing-resistant MFA and safe-default tooling so a single negligent click cannot become a breach."
+    examples:
+      - summary: "Verizon's DBIR has for years attributed a large share of breaches to the human element — including misconfiguration and error — which is why the negligent insider is treated as a control-design problem, not a personnel problem."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+      - summary: "CERT's insider-threat work distinguishes the negligent insider from the malicious one explicitly: different motive, same telemetry — and a punitive response to negligence degrades the reporting culture the program needs."
+        reference: "https://www.sei.cmu.edu/our-work/insider-threat/"
+    references:
+      - "https://www.cisa.gov/insider-threat-mitigation"
+      - "https://www.sei.cmu.edu/our-work/insider-threat/"
+      - "https://attack.mitre.org/techniques/T1530/"
+      - "https://attack.mitre.org/techniques/T1039/"
+
+  - id: AEG-T419
+    name: "UEBA Detection Concepts for Insider Threat"
+    category: insider_threat_patterns
+    description: >-
+      User and Entity Behavior Analytics (UEBA) is the detection discipline
+      purpose-built for insiders: because the insider uses legitimate
+      credentials, there is no malware signature and no intrusion alert —
+      only behavior that deviates from the person's own baseline and their
+      peer group's. UEBA models normal patterns (login times, data volumes,
+      applications, hosts) per user and per peer group, then scores
+      deviations and chains weak signals into risk scores that drive
+      graduated response. This technique is the analytic layer the other
+      insider techniques assume: without behavioral baselining, departing-
+      employee collection, rogue-admin deviation, and credential sharing are
+      individually invisible.
+    how_it_works: >-
+      A UEBA pipeline has four stages defenders must get right. (1) Data
+      fusion: identity, authentication, endpoint, DLP, email, cloud, and HR
+      feeds joined on a single identity — the HR join is what makes
+      insider detection possible. (2) Baselining: per-user models of normal
+      (hours, volumes, peers, resources) plus peer-group models that catch
+      the user who is normal-for-themselves but anomalous-for-the-role.
+      (3) Scoring: individual anomalies (first-time mass download,
+      impossible travel, off-hours admin work) are chained and risk-scored
+      over a rolling window, suppressing single-event noise. (4) Graduated
+      response: low scores enrich analyst context, medium scores trigger
+      step-up authentication or manager notification, high scores trigger
+      containment. The failure modes are well known: poor identity
+      resolution (contractors, shared accounts) poisons baselines;
+      uncalibrated thresholds drown analysts; and scores without HR/legal
+      process produce surveillance without action. Lawful, proportionate
+      monitoring with documented purpose and retention is a prerequisite,
+      not an afterthought.
+    variants:
+      - "Peer-group analytics: detecting role-anomalous behavior the user's own baseline would miss."
+      - "Risk-score chaining: combining individually weak signals into investigation-grade cases."
+      - "Entity analytics: applying the same baselining to service accounts, agents, and devices."
+    indicators:
+      - "Risk-score spikes for a user driven by chained anomalies across multiple data sources."
+      - "Peer-group deviation: behavior normal for the individual but anomalous for the role or team."
+      - "First-time resource access at scale (new repositories, new data stores, new applications) by an established user."
+      - "Analytic coverage gaps: identities (contractors, service accounts) with no baseline — the blind spots insiders exploit."
+    detection:
+      rule: detect_ueba_insider_anomaly
+      patterns:
+        - '(?i)(ueba|behavior.{0,20}baselin|user.behavior).*(deviat|anomal|spike|risk.score)'
+        - '(?i)(peer.group|role.baselin).*(deviat|anomal|outlier)'
+    severity: medium
+    mitigations:
+      - "Deploy UEBA with HR-joined identity resolution and peer-group models; tune thresholds against labeled historical cases before alerting."
+      - "Document lawful basis, purpose limitation, and retention for behavioral monitoring; involve legal and employee representatives in program design."
+      - "Graduated response playbooks: enrich → step-up auth → manager engagement → containment, matched to risk score."
+      - "Close analytic blind spots first: contractors, service accounts, and shared identities need baselines or explicit compensating controls."
+    examples:
+      - summary: "CISA's insider-threat mitigation guidance positions behavioral monitoring and anomaly detection as core program capabilities, emphasizing that they must be paired with defined response procedures and legal review."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+      - summary: "CERT's insider-threat program research shows that most insider attacks exhibited observable concerning behaviors beforehand — the UEBA thesis is that those behaviors were visible in data but never chained into a case."
+        reference: "https://www.sei.cmu.edu/our-work/insider-threat/"
+    references:
+      - "https://www.cisa.gov/insider-threat-mitigation"
+      - "https://www.sei.cmu.edu/our-work/insider-threat/"
+      - "https://attack.mitre.org/techniques/T1078/"
+      - "https://attack.mitre.org/techniques/T1020/"
+
+  - id: AEG-T420
+    name: "Agent-as-Insider Parallels"
+    category: insider_threat_patterns
+    description: >-
+      A compromised AI agent — one steered by prompt injection, poisoned
+      tool output, or a hijacked session — is structurally an insider: it
+      holds legitimate standing credentials, operates inside the trust
+      boundary, knows the data landscape, and its malicious actions are
+      executed through authorized tools. This is the transfer insight of
+      the pack: every insider TTP in AEG-T411–T419 has an agent analogue
+      (bulk collection becomes anomalous tool-call volume; credential
+      sharing becomes session/token reuse; rogue-admin abuse becomes an
+      agent invoking admin tools off-baseline), so insider-detection
+      discipline — behavioral baselining, peer-group comparison across
+      agent fleets, HR-style lifecycle events for agents — applies directly
+      to agent fleets. Aegis exists for exactly this transfer.
+    how_it_works: >-
+      The mapping defenders use: (1) Standing access — the agent's service
+      account and tool grants are its 'employment'; inventory them like
+      user entitlements and apply least privilege. (2) Behavioral baseline
+      — model each agent's normal tool-call mix, data-access volume, and
+      operating hours; a coding agent suddenly bulk-reading HR shares is
+      the analogue of a departing employee's collection spike. (3) Lifecycle
+      events — agent deployment, prompt/config changes, permission grants,
+      and decommissioning are the agent equivalents of joiner/mover/leaver;
+      a prompt change shortly before anomalous behavior is the analogue of
+      a grievance event. (4) Peer comparison — agents of the same role
+      should behave alike; the outlier is the investigation target.
+      (5) Collusion watch — multi-agent workflows need the same
+      maker-checker separation as human payment chains. Detection reuses
+      the insider stack (UEBA, DLP on agent outputs, impossible-travel on
+      agent sessions) with agent-appropriate telemetry: tool-call logs,
+      prompt/config versioning, and instruction-provenance tracking that
+      distinguishes the operator's instructions from injected ones.
+    variants:
+      - "Injected-insider: prompt injection steering a trusted agent into exfiltration or sabotage via legitimate tools."
+      - "Over-permissioned agent: a benign agent whose standing grants let a small compromise become a large one."
+      - "Multi-agent collusion: cooperating agents bypassing maker-checker controls in agentic workflows."
+    indicators:
+      - "An agent's tool-call mix or data-access volume deviating sharply from its own baseline or its peer agents."
+      - "Agent activity correlated with a prompt/config change, permission grant, or tool-output anomaly (the 'grievance event' analogue)."
+      - "Agent sessions accessing data stores or tools outside the agent's declared role and task scope."
+      - "Instruction-provenance conflicts: tool outputs or retrieved content containing directives the operator never issued."
+    detection:
+      rule: detect_agent_insider_behavior
+      patterns:
+        - '(?i)(agent|ai.assistant|service.account|bot).*(prompt.{0,10}inject|jailbreak|instruction.{0,10}hijack|tool.output.{0,10}poison)'
+        - '(?i)(tool.call|api.call).*(baselin|deviat|anomal).*(agent|automation|service.account)'
+    severity: high
+    mitigations:
+      - "Least-privilege tool grants per agent with just-in-time elevation; inventory agent entitlements like human entitlements."
+      - "Behavioral baselining for agent fleets: per-agent and peer-group models over tool calls, data volumes, and hours."
+      - "Instruction provenance: track which directives came from the operator vs retrieved content, and alert on conflicts."
+      - "Agent lifecycle governance: versioned prompts/configs, change review, and decommissioning that revokes credentials — the joiner/mover/leaver program for agents."
+    examples:
+      - summary: "Prompt-injection research has repeatedly demonstrated trusted agents exfiltrating data through legitimate tools once steered — behaviorally indistinguishable from a malicious insider, which is why insider-detection transfers."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+      - summary: "CISA's insider-threat framing — trusted access misused — maps directly onto agentic systems: the agent's standing credentials are the trust, and injection is the compromise of the trusted party."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+    references:
+      - "https://www.cisa.gov/insider-threat-mitigation"
+      - "https://www.sei.cmu.edu/our-work/insider-threat/"
+      - "https://attack.mitre.org/techniques/T1078/"
+      - "https://attack.mitre.org/techniques/T1059/"
+
+  - id: AEG-T421
+    name: "Privileged-Access-Workstation and Just-in-Time Elevation Programs"
+    category: insider_threat_patterns
+    description: >-
+      If rogue administrators are the highest-impact insiders, the
+      privileged-access program is the highest-leverage mitigation: remove
+      standing privilege so there is less to abuse. Privileged Access
+      Workstations (PAWs) — hardened, dedicated hosts from which all admin
+      work is performed — plus just-in-time (JIT) elevation, where admin
+      rights exist only for a bounded, approved window, convert the
+      standing-target admin account into an ephemeral one. This technique
+      covers the program design (tiered admin model, PAW deployment, JIT
+      workflows, break-glass) as the structural answer to AEG-T412's
+      rogue-admin class, going beyond closing standing-privilege gaps into
+      how the privileged environment itself is architected and monitored.
+    how_it_works: >-
+      The program has three pillars. (1) Tiered administration: admin
+      credentials are segregated by tier (workstation, server, domain/IdP)
+      so a compromised lower tier cannot reach the higher; admins use
+      separate accounts per tier and never browse or read mail from a
+      privileged session. (2) PAWs: hardened hosts — no email, no web
+      browsing, application allowlisting, full disk encryption, hardware-
+      backed credentials — that are the only permitted origin of privileged
+      sessions; any admin action from a non-PAW host is itself an alert.
+      (3) JIT elevation: standing admin rights are removed; elevation is
+      requested, approved (often automatically against policy), time-boxed,
+      fully logged, and automatically revoked — with break-glass accounts
+      sealed, monitored, and alerting on any use. Defensive telemetry then
+      becomes simple and discriminating: privileged actions outside a JIT
+      window, from non-PAW hosts, or against tier boundaries are high-
+      fidelity alerts rather than baseline noise.
+    variants:
+      - "Tiered admin model: credential segregation across workstation, server, and identity tiers."
+      - "JIT elevation workflows: time-boxed, approved, auto-revoked privilege with full session logging."
+      - "Break-glass accounts: sealed emergency access with immediate alerting on use."
+    indicators:
+      - "Privileged sessions originating from non-PAW hosts or standard user workstations."
+      - "Admin actions occurring outside an approved JIT elevation window, or with standing (non-JIT) privileged rights."
+      - "Cross-tier credential use: a workstation-tier admin credential reaching identity-tier systems."
+      - "Break-glass account usage, or JIT elevation requests far outside the requester's normal scope."
+    detection:
+      rule: detect_privilege_program_violation
+      patterns:
+        - '(?i)(paw|privileged.{0,20}workstation|admin.{0,10}tier|secure.admin.host)'
+        - '(?i)(just.in.time|jit|ephemeral|time.box).*(elevation|privilege|admin|access)'
+    severity: medium
+    mitigations:
+      - "Deploy PAWs for all privileged work with technical enforcement: privileged sessions only accepted from PAW hosts."
+      - "Replace standing admin rights with JIT elevation: approved, time-boxed, logged, auto-revoked."
+      - "Enforce the tiered model: separate admin accounts per tier, no cross-tier credential reuse, no privileged sessions from user workstations."
+      - "Seal break-glass accounts with alerting on any use and mandatory post-use review."
+    examples:
+      - summary: "Microsoft's privileged-access guidance (upon which most enterprise PAW programs are modeled) treats standing privilege as the root cause class for admin compromise and insider abuse — JIT plus PAW is the reference architecture."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+      - summary: "CISA insider-threat mitigation explicitly prescribes least privilege and separation of duties for privileged users; the PAW/JIT program is the operational implementation of both."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+    references:
+      - "https://www.cisa.gov/insider-threat-mitigation"
+      - "https://www.sei.cmu.edu/our-work/insider-threat/"
+      - "https://attack.mitre.org/techniques/T1078/"
+      - "https://attack.mitre.org/techniques/T1098/"
+
+  - id: AEG-T422
+    name: "Whistleblower-vs-Malicious Discrimination for Triage"
+    category: insider_threat_patterns
+    description: >-
+      Insider-threat programs face a discrimination problem: an employee
+      copying documents to report wrongdoing (protected whistleblowing)
+      and an employee copying documents to sell them (malicious theft) can
+      look identical in DLP telemetry. Getting this wrong in either
+      direction is catastrophic — punishing a whistleblower invites legal
+      liability (Sarbanes-Oxley, Dodd-Frank, and sector whistleblower
+      protections) and destroys reporting culture, while waving through
+      theft as 'reporting' blinds the program. The defensive discipline is
+      triage design: protected reporting channels that are genuinely
+      separate from investigation, criteria that distinguish disclosure
+      (to proper authorities, proportionate scope) from exfiltration (to
+      competitors, media-for-profit, or broad indiscriminate collection),
+      and a legal-review step before any adverse action on a reporting-
+      adjacent case.
+    how_it_works: >-
+      Discrimination rests on destination, scope, and process — not on the
+      act of copying alone. Whistleblowing indicators: disclosure directed
+      to proper channels (compliance hotline, regulators, law enforcement),
+      scope proportionate to the alleged wrongdoing, and use of the
+      organization's protected reporting mechanisms. Malicious indicators:
+      transmission to competitors, foreign actors, or for personal gain;
+      collection far broader than any plausible report; attempts to conceal
+      the activity from compliance while claiming a reporting motive after
+      being caught. Program design keeps the two tracks separate: the
+      reporting channel (with anti-retaliation protections, confidentiality,
+      and independent oversight) must not be staffed by the same team that
+      investigates insider theft, and any case with a plausible reporting
+      nexus gets legal review before containment actions that could
+      constitute retaliation. Retaliation itself is a detectable event —
+      adverse actions following a protected report — and must be monitored
+      as its own insider-risk signal, because it is both unlawful and
+      corrosive to future reporting.
+    variants:
+      - "Regulatory disclosure: proportionate, channel-correct reporting of genuine wrongdoing — protected activity."
+      - "Theft disguised as reporting: broad collection or competitor-bound transfer with a post-hoc whistleblower claim."
+      - "Retaliation as insider risk: adverse actions against reporters, detectable and independently unlawful."
+    indicators:
+      - "Data movement to regulators, law enforcement, or the compliance hotline with scope proportionate to an allegation — handle as protected."
+      - "Broad, indiscriminate collection or transfer to competitors/media-for-profit paired with a late whistleblower claim."
+      - "Adverse employment actions (termination, demotion, access revocation) following a protected report — potential retaliation."
+      - "Use of protected reporting channels by an employee who is simultaneously under insider investigation — requires legal review, not automatic escalation."
+    detection:
+      rule: detect_reporting_vs_theft_triage
+      patterns:
+        - '(?i)(whistleblow|protected.{0,20}disclos|compliance.hotline|report.{0,15}channel)'
+        - '(?i)(retaliation|adverse.action).*(report|disclos|hotline|complaint)'
+    severity: medium
+    mitigations:
+      - "Maintain genuinely independent reporting channels with anti-retaliation protections, confidentiality, and oversight separate from the insider-investigation team."
+      - "Triage criteria written with legal counsel: destination, scope proportionality, and channel correctness as the discriminators — documented before cases arise."
+      - "Mandatory legal review before any adverse action in a reporting-adjacent case; monitor for retaliation as its own risk signal."
+      - "Communicate protections clearly to the workforce: a reporting culture is a detection asset — employees report the concerning behaviors UEBA alone misses."
+    examples:
+      - summary: "U.S. whistleblower frameworks (Sarbanes-Oxley, Dodd-Frank) protect disclosures to proper authorities — insider-threat programs that cannot distinguish these disclosures from theft create both legal exposure and a chilling effect on reporting."
+        reference: "https://www.cisa.gov/insider-threat-mitigation"
+      - summary: "CERT's insider-threat research notes that concerning behaviors are most often first observed by coworkers — a trusted reporting channel is therefore a primary detection sensor, and retaliation against reporters degrades it."
+        reference: "https://www.sei.cmu.edu/our-work/insider-threat/"
+    references:
+      - "https://www.cisa.gov/insider-threat-mitigation"
+      - "https://www.sei.cmu.edu/our-work/insider-threat/"
+      - "https://attack.mitre.org/techniques/T1020/"
+      - "https://attack.mitre.org/techniques/T1039/"
