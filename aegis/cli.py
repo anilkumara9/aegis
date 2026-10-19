@@ -122,6 +122,56 @@ def cmd_mcp(args) -> int:
     return 0
 
 
+def cmd_eval(args) -> int:
+    """`aegis eval [--json]`: run the guard eval battery (v0.6 proving ground).
+
+    Runs every evals/EVL-*.yaml scenario through the real AgentLoop +
+    real guard, prints a per-category table, writes docs/SCORECARD.md.
+    Exit 1 when any enforced scenario misses its expectation (CI signal).
+    """
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    from .eval_runner import render_scorecard, run_battery
+
+    try:
+        battery = run_battery()
+    except Exception as e:
+        print(f"eval: battery failed: {e}", file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(json.dumps(battery.to_dict(), indent=1, default=str))
+    else:
+        by_cat = battery.by_category()
+        print(f"{'category':<18}{'n':>3} {'caught':>7} {'missed':>7} "
+              f"{'allowed':>8} {'fp':>4} {'known_miss':>10}")
+        for cat in sorted(by_cat):
+            c = by_cat[cat]
+            print(f"{cat:<18}{c['scenarios']:>3} {c['caught']:>7} "
+                  f"{c['missed']:>7} {c['allowed']:>8} "
+                  f"{c['false_positive']:>4} {c['known_miss']:>10}")
+        fails = battery.enforced_failures()
+        print(f"\n{battery.kb_techniques} KB techniques / "
+              f"{battery.kb_packs} packs / {len(battery.results)} scenarios; "
+              f"{len(fails)} enforced failures")
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    scorecard = render_scorecard(battery, ts)
+    out = Path(__file__).resolve().parent.parent / "docs" / "SCORECARD.md"
+    out.write_text(scorecard, encoding="utf-8")
+    # --json keeps stdout pure machine-readable; the note goes to stderr.
+    print(f"scorecard written to {out}",
+          file=sys.stderr if args.json else sys.stdout)
+
+    fails = battery.enforced_failures()
+    for r in fails:
+        print(f"ENFORCED {r.scenario.expected.upper()} MISMATCH: "
+              f"{r.scenario.id} {r.scenario.name} -> {r.status} "
+              f"({r.detail})", file=sys.stderr)
+    return 1 if fails else 0
+
+
 def cmd_respond(args) -> int:
     if args.playbook == "timeline":
         from .respond import build_timeline
@@ -238,6 +288,11 @@ def build_parser() -> argparse.ArgumentParser:
     mc.add_argument("--args", default="{}", help="JSON object of tool arguments")
 
     sub.add_parser("version", help="print version")
+
+    ev = sub.add_parser("eval", help="run the guard eval battery "
+                                     "(v0.6 proving ground)")
+    ev.add_argument("--json", action="store_true",
+                    help="machine-readable JSON results on stdout")
     p.add_argument("--provider", default="", help="anthropic|openai|google|ollama|mock")
     p.add_argument("--model", default="", help="model name override")
     p.add_argument("--mode", default="", help="dev|plan (default: dev; AEGIS_MODE env)")
@@ -276,6 +331,8 @@ def main(argv=None) -> int:
         return cmd_graph(args)
     if cmd == "mcp":
         return cmd_mcp(args)
+    if cmd == "eval":
+        return cmd_eval(args)
     if cmd == "version":
         print(f"aegis {__version__}")
         return 0
