@@ -329,17 +329,28 @@ def cmd_eval(args) -> int:
         (repo_root / "docs" / "SCORECARD_CODING.md").write_text(
             coding_md, encoding="utf-8")
 
-    # Publish the scorecard: security section (v0.6's render, if run) with
-    # the coding section spliced in by marker. Never clobbers v0.6's file
-    # when only the coding suite ran — splice is marker-idempotent.
+    # Publish the scorecard: the suite(s) that ran get refreshed, the other
+    # suite's section is preserved, never clobbered. Security section is
+    # everything above the coding marker; the coding section is spliced
+    # by marker (idempotent).
     scorecard_path = repo_root / "docs" / "SCORECARD.md"
-    if coding_md and scorecard_path.exists():
+    _CODING_START = "<!-- CODING-EVAL-SECTION -->"
+    _CODING_END = "<!-- /CODING-EVAL-SECTION -->"
+    if security_md:
+        existing = (scorecard_path.read_text(encoding="utf-8")
+                    if scorecard_path.exists() else "")
+        coding_block = ""
+        if _CODING_START in existing:
+            coding_block = existing[
+                existing.index(_CODING_START):
+                existing.index(_CODING_END) + len(_CODING_END)]
+        scorecard_path.write_text(
+            security_md.rstrip() + "\n\n" + coding_block
+            + ("\n" if coding_block else ""),
+            encoding="utf-8")
+    if coding_md:
         scorecard_path.write_text(
             splice_coding_section(scorecard_path, coding_md),
-            encoding="utf-8")
-    elif coding_md and security_md:
-        scorecard_path.write_text(
-            splice_coding_section(scorecard_path, security_md + coding_md),
             encoding="utf-8")
 
     return 1 if failures else 0
