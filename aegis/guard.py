@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from . import config
+from . import secwrite
 from .audit import AuditLog
 from .detect import secrets as sec
 from .detect.engine import (
@@ -217,6 +218,47 @@ class GuardSession:
             if m:
                 return Verdict("deny", findings, {},
                                f"denied arg pattern matched: {m.group(0)[:80]}")
+
+        # 2b. secure-by-construction: screen the agent's OWN code
+        # writes/edits against the per-language vulnerability patterns
+        # BEFORE the write lands. High severity -> deny outright (the agent
+        # cannot write what Aegis would flag in a scan); medium -> the
+        # call is flagged with a warning (technique ids) and escalated for
+        # human approval. The deny/warning reason carries technique ids
+        # and rule names only — never raw code, so no secret material can
+        # leak through this output path.
+        if tool_l in WRITE_TOOLS:
+            sec_findings = secwrite.screen_tool_call(tool, args, self.kb)
+            if sec_findings:
+                findings.extend(secwrite.to_engine_findings(
+                    sec_findings, f"{tool}:{args.get('path', '')}"))
+                redacted_text, _ = sec.redact(args_text)
+                try:
+                    redacted_args: dict = json.loads(redacted_text)
+                    if not isinstance(redacted_args, dict):
+                        redacted_args = {"_raw": redacted_text}
+                except Exception:
+                    redacted_args = {"_raw": redacted_text}
+                hi = [f for f in sec_findings if f.severity == "high"]
+                if hi:
+                    ids = sorted({f.technique_id for f in hi})
+                    rules = sorted({f.rule for f in hi})
+                    return Verdict(
+                        "deny", findings, redacted_args,
+                        "secure-by-construction: write blocked — high-severity "
+                        f"vulnerability pattern(s) {', '.join(ids)} "
+                        f"({'; '.join(rules)}). Rewrite the code safely and "
+                        "try again.")
+                med = [f for f in sec_findings if f.severity == "medium"]
+                if med:
+                    ids = sorted({f.technique_id for f in med})
+                    rules = sorted({f.rule for f in med})
+                    return Verdict(
+                        "needs_approval", findings, redacted_args,
+                        "secure-by-construction warning — medium-severity "
+                        f"vulnerability pattern(s) {', '.join(ids)} "
+                        f"({'; '.join(rules)}). Approve to write anyway, or "
+                        "rewrite the code safely.")
 
         # 3. KB pattern scan on the call (pre-execution indicators)
         findings.extend(pattern_scan(f"{tool}\n{args_text}", self.kb))
