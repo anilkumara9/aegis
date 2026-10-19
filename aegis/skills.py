@@ -275,6 +275,7 @@ SKILLS = {
     "/scan": "Analyze a tool-call trace: /scan <trace.jsonl>",
     "/respond": "Emit an incident runbook: /respond <playbook> [detail]",
     "/kb": "Query the technique knowledge base: /kb <query>",
+    "/commit": "Commit from the real working tree: explicit paths only, message from the diff, secrets abort: /commit [paths...]",
     "/sessions": "List saved conversation sessions",
     "/resume": "Resume a conversation: /resume <n|id>",
     "/rename": "Rename the current conversation: /rename <title>",

@@ -10,11 +10,13 @@ with the same engine it offers others.
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from pathlib import Path
 from typing import Callable
 
 from . import config, guard as guard_mod
+from . import planning as planning_mod
 from . import session as session_mod
 from .audit import AuditLog
 from .detect import secrets as sec
@@ -100,7 +102,15 @@ class AgentLoop:
                  conversation_id: str | None = None,
                  history: list[dict] | None = None,
                  on_tool_start: Callable[[str, str], None] | None = None,
-                 on_tool_end: Callable[[str, str, float, str], None] | None = None):
+                 on_tool_end: Callable[[str, str, float, str], None] | None = None,
+                 # -- additive v0.7 Lane C reasoning hooks (all default off
+                 #    except verify_plans; existing callers unaffected) ------
+                 plan_approval_callback: Callable[[dict], bool] | None = None,
+                 auto_approve_plans: bool = False,
+                 progress_callback: Callable[[dict], None] | None = None,
+                 verify_plans: bool = True,
+                 verify_max_retries: int = 2,
+                 verify_command: str = ""):
         self.provider = provider
         self.kb = kb
         self.guard = guard_session
@@ -116,6 +126,15 @@ class AgentLoop:
         self.on_tool_start = on_tool_start or (lambda name, summary: None)
         self.on_tool_end = (on_tool_end or
                             (lambda name, verdict, ms, excerpt: None))
+        # v0.7 Lane C: enforced planning / verification / progress.
+        self.plan_approval_callback = plan_approval_callback
+        self.auto_approve_plans = auto_approve_plans
+        self.progress_callback = progress_callback
+        self.verify_plans = verify_plans
+        self.verify_max_retries = max(0, verify_max_retries)
+        self.verify_command = verify_command or ""
+        self.active_plan: planning_mod.TaskPlan | None = None
+        self.last_plan: planning_mod.TaskPlan | None = None
         # Conversation persistence: None = legacy stateless mode (each run()
         # starts fresh, exactly as before). Set conversation_id and/or
         # history to get multi-turn context with per-turn persistence.
@@ -165,6 +184,25 @@ class AgentLoop:
         else:
             self.history = stored
         self.conversation_id = conversation_id
+        # v0.7 Lane C: restore the persisted task plan so /resume keeps it.
+        # A plan caught mid-execution is marked interrupted — its pending
+        # steps survive and can be re-run, but nothing auto-resumes.
+        try:
+            pd = session_mod.load_plan(conversation_id)
+            self.active_plan = (planning_mod.TaskPlan.from_dict(pd)
+                                if pd else None)
+            if (self.active_plan is not None
+                    and self.active_plan.state == planning_mod.EXECUTING):
+                self.active_plan.state = planning_mod.INTERRUPTED
+                self.active_plan.note = (
+                    "interrupted: session resumed mid-execution; "
+                    "re-run the task to continue the pending steps")
+                for s in self.active_plan.steps:
+                    if s.status == planning_mod.ACTIVE:
+                        s.status = planning_mod.PENDING
+                self._persist_plan()
+        except Exception:
+            self.active_plan = None
         return True
 
     # -- single user turn ------------------------------------------------
@@ -239,46 +277,263 @@ class AgentLoop:
                           "purpose": str(s.get("purpose", ""))[:200]})
         return clean, ""
 
+    # -- v0.7 Lane C: enforced plan-then-execute ---------------------------
+    def _persist_plan(self) -> None:
+        if self.conversation_id and self.active_plan is not None:
+            try:
+                session_mod.save_plan(self.conversation_id,
+                                      self.active_plan.to_dict())
+            except Exception:
+                pass
+
+    def _approve_plan(self, plan: "planning_mod.TaskPlan") -> bool:
+        """Approval gate: no execution starts unapproved.
+
+        REPL wires an interactive prompt; CLI --yes sets auto_approve_plans.
+        Library default (no callback): auto-approve, preserving the v0.5
+        behavior that existing callers rely on.
+        """
+        if self.auto_approve_plans:
+            return True
+        cb = self.plan_approval_callback
+        if cb is None:
+            self.on_text("[plan-then-execute] no approval callback "
+                         "configured — auto-approving (library default).\n")
+            return True
+        try:
+            return bool(cb({"kind": "plan", "plan": plan.to_dict()}))
+        except Exception as e:
+            self.on_text(f"[plan-then-execute] approval callback failed "
+                         f"({e}) — treating as denied.\n")
+            return False
+
+    def _check_deviation(self, tc: ToolCall
+                     ) -> tuple[str | None, "planning_mod.PlanStep | None"]:
+        """Enforce no-deviation while a plan is EXECUTING.
+
+        Returns (block_message, approved_step). A tool call that is not the
+        active plan step is blocked unless the approval callback re-approves
+        it — the approved call is inserted into the plan as a real step so
+        the plan always reflects what ran.
+        """
+        plan = self.active_plan
+        if plan is None:
+            return None, None
+        report = plan.check_deviation(tc.name)
+        if report is None:
+            return None, None
+        allowed = False
+        cb = self.plan_approval_callback
+        if cb is not None and not self.auto_approve_plans:
+            try:
+                allowed = bool(cb(report))
+            except Exception:
+                allowed = False
+        elif self.auto_approve_plans:
+            allowed = True
+        planning_mod.emit(self.progress_callback, "deviation",
+                          plan_id=plan.id, tool=tc.name,
+                          expected=report["expected"], approved=allowed)
+        if not allowed:
+            self._audit(
+                tc, "deny", [],
+                f"plan deviation blocked: '{tc.name}' is not the active "
+                f"plan step (expected '{report['expected']}')")
+            return ("PLAN DEVIATION BLOCKED: this call is not part of the "
+                    f"approved plan (expected step tool "
+                    f"'{report['expected']}', got '{tc.name}'). Nothing was "
+                    "executed. Approve an updated plan to proceed."), None
+        step = plan.insert_step_after_active(tc.name, tc.args,
+                                             "approved mid-run deviation")
+        step.status = planning_mod.ACTIVE
+        self._persist_plan()
+        return None, step
+
+    def _run_verify_command(self, cmd: str) -> tuple[int, str]:
+        """Run the plan's verify command, guard-screened first.
+
+        The command comes from operator configuration (CLI flag /
+        constructor), never from the model — so an explicit --yes covers
+        the approval, an interactive session prompts, and anything else
+        fails the check honestly instead of running blind.
+        """
+        verdict = self.guard.check_call("bash", {"cmd": cmd})
+        if verdict.decision == "deny":
+            return 126, f"verify command denied by the guard: {verdict.reason}"
+        if verdict.decision == "needs_approval":
+            approved = (self.auto_approve_plans
+                        or self.guard.resolve(verdict))
+            if not approved:
+                return 126, ("verify command needs operator approval — run "
+                             "it yourself; verification cannot auto-pass")
+        try:
+            r = subprocess.run(cmd, shell=True, cwd=str(self.cwd),
+                               timeout=120, capture_output=True, text=True)
+            tail = (r.stdout + r.stderr)[-1500:]
+            return r.returncode, tail.strip() or "(no output)"
+        except subprocess.TimeoutExpired:
+            return 124, "verify command timed out after 120s"
+        except Exception as e:
+            return 127, f"verify runner error: {e}"
+
+    def _execute_plan_step(self, plan: "planning_mod.TaskPlan", index: int,
+                           tag: str, messages: list[dict]) -> str:
+        """Execute one plan step with status tracking + progress events."""
+        step = plan.steps[index]
+        plan.mark_step(index, planning_mod.ACTIVE)
+        self._persist_plan()
+        planning_mod.emit(self.progress_callback, "step", plan_id=plan.id,
+                          index=index + 1, total=len(plan.steps),
+                          status=planning_mod.ACTIVE, tool=step.tool,
+                          label=step.purpose)
+        tc = ToolCall(tag, step.tool, step.args)
+        result = self._guarded_execute(tc)
+        if (result.startswith("GUARD DENIED")
+                or result.startswith("PLAN DEVIATION BLOCKED")
+                or result.startswith("error:")):
+            plan.mark_step(index, planning_mod.FAILED, result[:300])
+            status = planning_mod.FAILED
+        else:
+            plan.mark_step(index, planning_mod.DONE)
+            status = planning_mod.DONE
+        self._persist_plan()
+        planning_mod.emit(self.progress_callback, "step", plan_id=plan.id,
+                          index=index + 1, total=len(plan.steps),
+                          status=status, tool=step.tool, label=step.purpose)
+        messages.append({"role": "tool", "tool_call_id": tc.id,
+                         "name": tc.name, "content": result})
+        return result
+
+    def _verify_with_retries(self, plan: "planning_mod.TaskPlan",
+                             messages: list[dict]) -> "planning_mod.VerificationResult":
+        """Verification loop: verify, and on failure re-run failed steps
+        (bounded by verify_max_retries) instead of claiming success."""
+        attempt = 0
+        result = None
+        while True:
+            attempt += 1
+            planning_mod.emit(self.progress_callback, "verify",
+                              plan_id=plan.id, status="start", attempt=attempt)
+            result = planning_mod.verify_plan(
+                plan, self.cwd, self.guard.audit.read_all(),
+                run_command=self._run_verify_command)
+            planning_mod.emit(
+                self.progress_callback, "verify", plan_id=plan.id,
+                status="pass" if result.ok else "fail", attempt=attempt,
+                checks=result.checks)
+            if result.ok or attempt > self.verify_max_retries:
+                break
+            failed = plan.failed_steps()
+            if failed:
+                self.on_text(f"[verification] attempt {attempt} failed — "
+                             f"re-running {len(failed)} failed step(s).\n")
+                for s in failed:
+                    self._execute_plan_step(plan, plan.steps.index(s),
+                                            f"plan-retry-{attempt}", messages)
+            else:
+                # No step failed but the checks did (e.g. a flaky test
+                # command): re-run the verification pass itself, bounded.
+                self.on_text(f"[verification] attempt {attempt} failed — "
+                             f"re-checking (attempt {attempt + 1}).\n")
+        return result
+
     def _run_plan_first(self, messages: list[dict], user_message: str) -> str:
         steps, error = self._propose_plan(user_message)
         if error or not steps:
             self.on_text(f"\n[plan-then-execute] planning failed ({error}); "
                          "falling back to a normal turn.\n")
             return self._run_turn(messages)
+        plan = planning_mod.TaskPlan(
+            user_message,
+            [planning_mod.PlanStep(s["tool"], s["args"], s["purpose"])
+             for s in steps],
+            verify_command=self.verify_command)
+        self.active_plan = plan
+        self._persist_plan()
+        planning_mod.emit(
+            self.progress_callback, "plan_proposed", plan_id=plan.id,
+            task=user_message,
+            steps=[{"tool": s.tool, "purpose": s.purpose}
+                   for s in plan.steps])
         # Guard screens the plan's shape before anything executes.
         screened = []
         blocked = False
         self.on_text("\n[plan-then-execute] proposed plan:\n")
-        for i, s in enumerate(steps, 1):
-            verdict = self.guard.check_call(s["tool"], s["args"])
+        for i, s in enumerate(plan.steps):
+            verdict = self.guard.check_call(s.tool, s.args)
             ok = self.guard.resolve(verdict)
-            screened.append((s, verdict, ok))
+            screened.append(ok)
             mark = "✓" if ok else "✗"
-            self.on_text(f"  {mark} step {i}: {s['tool']} — "
-                         f"{s['purpose'] or '(no purpose given)'} "
+            self.on_text(f"  {mark} step {i + 1}: {s.tool} — "
+                         f"{s.purpose or '(no purpose given)'} "
                          f"[{verdict.decision}]\n")
             if not ok:
                 blocked = True
         plan_note = ("Plan proposed and guard-screened: " +
-                     "; ".join(f"step{i} {s['tool']}={v.decision}"
-                               for i, (s, v, _) in enumerate(screened, 1)))
+                     "; ".join(f"step{i + 1} {s.tool}"
+                               for i, s in enumerate(plan.steps)))
         messages.append({"role": "assistant",
                          "content": f"[plan-then-execute] {plan_note}"})
         if blocked:
+            plan.state = planning_mod.BLOCKED
+            plan.note = "a plan step was denied by the guard"
+            self._persist_plan()
+            planning_mod.emit(self.progress_callback, "plan_blocked",
+                              plan_id=plan.id, reason=plan.note)
             self.on_text("[plan-then-execute] plan blocked by the guard — "
                          "nothing executed. Adjust the task and retry.\n")
+            self.last_plan = plan
             return ("Plan blocked by the guard; nothing was executed. "
                     "See the per-step verdicts above.")
+        # Approval gate: execution cannot start unapproved.
+        if not self._approve_plan(plan):
+            plan.state = planning_mod.REJECTED
+            plan.note = "operator did not approve the plan"
+            self._persist_plan()
+            planning_mod.emit(self.progress_callback, "plan_rejected",
+                              plan_id=plan.id)
+            self.on_text("[plan-then-execute] plan not approved — "
+                         "nothing executed.\n")
+            self.last_plan = plan
+            return "Plan not approved; nothing was executed."
+        plan.state = planning_mod.APPROVED
+        self._persist_plan()
+        planning_mod.emit(self.progress_callback, "plan_approved",
+                          plan_id=plan.id)
         # Execute approved steps sequentially; each is re-screened live.
+        plan.state = planning_mod.EXECUTING
+        self._persist_plan()
+        planning_mod.emit(self.progress_callback, "task", plan_id=plan.id,
+                          status="start", task=plan.task)
         outputs = []
-        for i, (s, _, _) in enumerate(screened, 1):
-            tc = ToolCall(f"plan-{i}", s["tool"], s["args"])
-            result = self._guarded_execute(tc)
-            outputs.append(f"--- step {i} ({s['tool']}) ---\n{result}")
-            messages.append({"role": "tool", "tool_call_id": tc.id,
-                             "name": tc.name, "content": result})
+        for i, s in enumerate(plan.steps):
+            result = self._execute_plan_step(plan, i, f"plan-{i + 1}",
+                                            messages)
+            outputs.append(f"--- step {i + 1} ({s.tool}) ---\n{result}")
         self.on_text("[plan-then-execute] all steps executed.\n")
-        return "\n\n".join(outputs)
+        # Verification loop: check real outcomes before declaring done.
+        verified: bool | None = None
+        if self.verify_plans:
+            vresult = self._verify_with_retries(plan, messages)
+            report = vresult.report()
+            self.on_text("\n" + report + "\n")
+            if vresult.ok:
+                plan.state = planning_mod.VERIFIED
+            else:
+                plan.state = planning_mod.PLAN_FAILED
+            plan.note = vresult.summary
+            verified = vresult.ok
+        else:
+            report = "[verification skipped]"
+            plan.state = planning_mod.VERIFIED
+            plan.note = "verification skipped (verify_plans=False)"
+        self._persist_plan()
+        planning_mod.emit(self.progress_callback, "task", plan_id=plan.id,
+                          status="failed" if verified is False else "done",
+                          task=plan.task)
+        self.last_plan = plan
+        self.active_plan = None
+        return "\n\n".join(outputs) + "\n\n" + report
 
     def _run_turn(self, messages: list[dict]) -> str:
         final_text: list[str] = []
@@ -334,6 +589,26 @@ class AgentLoop:
 
     # -- guarded execution -------------------------------------------------
     def _guarded_execute(self, tc: ToolCall) -> str:
+        # v0.7 Lane C: while a plan is executing, any tool call outside
+        # the approved plan is blocked (or re-approved) before the guard.
+        # An approved deviation becomes a real plan step whose outcome is
+        # tracked like any other step.
+        dev_block, dev_step = self._check_deviation(tc)
+        if dev_block is not None:
+            return dev_block
+        result = self._guarded_execute_inner(tc)
+        if dev_step is not None and self.active_plan is not None:
+            if (result.startswith("GUARD DENIED")
+                    or result.startswith("error:")):
+                dev_step.status = planning_mod.FAILED
+                dev_step.error = result[:300]
+            else:
+                dev_step.status = planning_mod.DONE
+            self.active_plan.touch()
+            self._persist_plan()
+        return result
+
+    def _guarded_execute_inner(self, tc: ToolCall) -> str:
         t0 = time.perf_counter()
         try:
             self.on_tool_start(tc.name, _summarize_args(tc.args))

@@ -13,6 +13,7 @@ from . import tui
 from .agent import AgentLoop
 from .guard import Policy
 from .kb import KB
+from .planning import task_looks_complex
 from .providers import get_provider
 from .skills import SKILLS, emulate, hunt, plan_attack_surface
 from .tools import safe_path
@@ -56,6 +57,69 @@ def interactive_approval(findings, tool="", args=None, cwd=None) -> bool:
     except (EOFError, KeyboardInterrupt):
         ans = "n"
     return ans == "y"
+
+
+# -- plan approval + progress display (v0.7 Lane C) ------------------------
+def _interactive_plan_approval(info: dict) -> bool:
+    """Approval callback for plan-then-execute: the operator approves the
+    proposed plan (or a mid-run deviation) before anything executes."""
+    if info.get("kind") == "deviation":
+        print(f"\n{tui.cyan('[!]')} PLAN DEVIATION: the agent wants to call "
+              f"'{info.get('tool')}' but the approved plan expects "
+              f"'{info.get('expected')}'.")
+        try:
+            ans = input("    Approve this deviation and add it to the plan? "
+                        "[y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return False
+        return ans == "y"
+    plan = info.get("plan", {})
+    print("\n[plan-then-execute] proposed plan — approve to execute:")
+    for i, s in enumerate(plan.get("steps", []), 1):
+        print(f"  {i}. {s.get('tool')} — "
+              f"{s.get('purpose') or '(no purpose given)'}")
+    try:
+        ans = input("    Execute this plan? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return ans == "y"
+
+
+def _print_progress(event: dict) -> None:
+    """Minimal progress rendering for plan-then-execute events.
+
+    Lane E owns the real UI — this stays plain text so the TUI lane can
+    replace it with rich widgets without touching the framework.
+    """
+    kind = event.get("kind")
+    if kind == "step" and event.get("status") == "active":
+        label = event.get("label") or event.get("tool", "")
+        print(f"\n{tui.cyan('▸')} step {event.get('index')}/"
+              f"{event.get('total')}: {label}…", flush=True)
+    elif kind == "plan_proposed":
+        print(f"[plan] proposed {len(event.get('steps', []))} step(s) — "
+              "awaiting approval")
+    elif kind == "plan_approved":
+        print("[plan] approved — executing")
+    elif kind == "plan_rejected":
+        print("[plan] rejected — nothing executed")
+    elif kind == "plan_blocked":
+        print(f"[plan] blocked: {event.get('reason')}")
+    elif kind == "verify":
+        status = event.get("status")
+        if status == "start":
+            print(f"[verify] checking outcomes "
+                  f"(attempt {event.get('attempt')})…")
+        else:
+            print(f"[verify] {status}")
+    elif kind == "deviation":
+        verdict = ("approved" if event.get("approved") else "BLOCKED")
+        print(f"[!] plan deviation: {event.get('tool')} "
+              f"(expected {event.get('expected')}) — {verdict}")
+    elif kind == "task":
+        print(f"[task] {event.get('status')}")
 
 
 # -- tool-call display blocks -------------------------------------------
@@ -173,6 +237,10 @@ def run_repl(provider_name: str = "", model: str = "",
                      conversation_id=conv["id"],
                      on_tool_start=_print_tool_start,
                      on_tool_end=_print_tool_end)
+    # v0.7 Lane C: enforced plan-then-execute — plans need the operator's
+    # approval before execution; progress events get minimal rendering.
+    loop.plan_approval_callback = _interactive_plan_approval
+    loop.progress_callback = _print_progress
     print(BANNER.format(__version__=__version__))
     print(tui.status_line(
         f"provider: {provider.name}  model: {getattr(provider, 'model', '?')}  "
@@ -202,7 +270,14 @@ def run_repl(provider_name: str = "", model: str = "",
         prev_on_text = loop.on_text
         loop.on_text = renderer.feed
         try:
-            loop.run(expand_mentions(line, cwd))
+            # v0.7 Lane C: complex tasks are routed through enforced
+            # plan-then-execute — the plan needs approval before it runs.
+            if task_looks_complex(line):
+                print("[complex task detected → routing through "
+                      "plan-then-execute; approve the plan to run it]")
+                loop.run(expand_mentions(line, cwd), plan_first=True)
+            else:
+                loop.run(expand_mentions(line, cwd))
         except guard_mod.SessionRevoked as e:
             print(f"\n[!] {e}\nSession killed. Restart aegis for a new session.")
             break
@@ -306,9 +381,14 @@ def _handle_slash(line: str, loop: AgentLoop,
     if cmd == "/planexec":
         if not rest:
             print("usage: /planexec <task> — the model proposes a step plan, "
-                  "the guard screens every step, then the approved plan runs")
+                  "the guard screens every step, you approve it, then the "
+                  "approved plan runs with verification")
         else:
             loop.run(rest, plan_first=True)
+        return False
+    if cmd == "/commit":
+        from . import gitcommit
+        print(gitcommit.commit_flow_repl(Path.cwd(), rest))
         return False
     if cmd == "/guard":
         sub = (rest or "status").lower()

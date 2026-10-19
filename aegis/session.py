@@ -105,6 +105,34 @@ def save_message(session_id: str, role: str, content: str,
     return rec
 
 
+def save_plan(session_id: str, plan: dict) -> None:
+    """Persist a task plan inside the conversation record so /resume
+    restores it alongside message history."""
+    rec = load_session(session_id)
+    if rec is None:
+        rec = new_session(session_id)
+    rec["plan"] = plan
+    rec["updated"] = time.time()
+    _write(rec)
+
+
+def load_plan(session_id: str) -> dict | None:
+    """Return the persisted plan dict, or None."""
+    rec = load_session(session_id)
+    if not rec:
+        return None
+    plan = rec.get("plan")
+    return plan if isinstance(plan, dict) else None
+
+
+def clear_plan(session_id: str) -> None:
+    rec = load_session(session_id)
+    if rec and "plan" in rec:
+        del rec["plan"]
+        rec["updated"] = time.time()
+        _write(rec)
+
+
 def rename_session(session_id: str, title: str) -> bool:
     rec = load_session(session_id)
     if rec is None:
