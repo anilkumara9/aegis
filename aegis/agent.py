@@ -116,6 +116,10 @@ class AgentLoop:
         self.on_tool_start = on_tool_start or (lambda name, summary: None)
         self.on_tool_end = (on_tool_end or
                             (lambda name, verdict, ms, excerpt: None))
+        # Set by _screen_response on every run(): True when the final model
+        # text tripped the output-boundary screen (secrets redacted and/or
+        # exfil-shaped URL flagged).
+        self.last_response_screened = False
         # Conversation persistence: None = legacy stateless mode (each run()
         # starts fresh, exactly as before). Set conversation_id and/or
         # history to get multi-turn context with per-turn persistence.
@@ -171,10 +175,16 @@ class AgentLoop:
     def run(self, user_message: str, plan_first: bool = False) -> str:
         base = list(self.history) if self.history is not None else []
         messages = base + [{"role": "user", "content": user_message}]
+        # The guard's user-supplied-secret carve-out needs the user's own
+        # words: data the user pasted is theirs to persist.
+        note = getattr(self.guard, "note_user_message", None)
+        if callable(note):
+            note(user_message)
         if plan_first:
             result = self._run_plan_first(messages, user_message)
         else:
             result = self._run_turn(messages)
+        result = self._screen_response(result)
         # Persist the turn (user + assistant + tool messages) into the
         # conversation store and into the in-memory history.
         turn = messages[len(base):]
@@ -188,6 +198,33 @@ class AgentLoop:
                                          m.get("role", ""), m.get("content", ""),
                                          extra=extra or None)
         return result
+
+    # -- response egress screening (v0.6) ------------------------------------
+    # The tool-call guard cannot intercept model TEXT. Screening the final
+    # response for secret-shaped content and exfil-shaped URLs closes that
+    # channel at the last boundary: secrets are redacted, and the run is
+    # flagged so harnesses (and operators) can see the intervention.
+    _EXFIL_URL_RE = None  # compiled lazily below
+
+    def _screen_response(self, text: str) -> str:
+        import re as _re
+        from .detect import secrets as _sec
+        self.last_response_screened = False
+        if not text:
+            return text
+        redacted, hits = _sec.redact(_sec.redact_encoded(text))
+        exfil_url = bool(_re.search(
+            r"!\[[^\]]*\]\(\s*https?://[^)\s]+[?&=][^)\s]*\)", text))
+        if hits or exfil_url:
+            self.last_response_screened = True
+            kinds = sorted({h.kind for h in hits})
+            note = ("\n[guard: response contained "
+                    + (f"secret-shaped content ({', '.join(kinds)})"
+                       if kinds else "an exfil-shaped URL")
+                    + " — redacted/flagged at the output boundary]")
+            self.on_text(note)
+            return redacted + note
+        return text
 
     # -- plan-then-execute ---------------------------------------------------
     # For complex tasks: the model proposes an explicit step plan, the guard

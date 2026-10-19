@@ -37,8 +37,11 @@ SECRET_PATTERNS: list[tuple[str, str]] = [
     ("bearer_token", r"(?i)bearer\s+(?P<secret>[A-Za-z0-9\-._~+/]{20,})"),
     ("url_credentials", r"://(?P<secret>[^/\s:@]+:[^/\s@]+)@"),
     ("key_assignment",
-     r"(?i)(?:api[_-]?key|secret|password|passwd|pwd|auth[_-]?token|access[_-]?token)"
-     r"\s*[:=]\s*['\"]?(?P<secret>[A-Za-z0-9\-._~+/]{12,})['\"]?"),
+     r"(?i)(?:api[\s_-]?key|secret|password|passwd|pwd|auth[_-]?token|access[_-]?token)"
+     r"\s*['\"]?\s*[:=]\s*['\"]?(?P<secret>[A-Za-z0-9\-._~+/]{12,})['\"]?"),
+    # "the api key is <value>" phrasing (natural-language disclosure).
+    ("key_phrase",
+     r"(?i)\bapi[\s_-]?key\b\s+(?:is\s+)?['\"]?(?P<secret>[A-Za-z0-9\-._~+/]{12,})['\"]?"),
 ]
 
 _COMPILED = [(kind, re.compile(rx)) for kind, rx in SECRET_PATTERNS]
@@ -80,13 +83,24 @@ def find_secrets(text: str) -> list[SecretHit]:
     hits: list[SecretHit] = []
     for kind, rx in _COMPILED:
         hits.extend(_spans_for(rx, kind, text))
-    # Whitespace-collapsed view catches split tokens ("sk-\n ant-...").
+    # Whitespace-collapsed view catches split tokens ("sk-\n ant-..."),
+    # including JSON-escaped newlines ("sk-test-\\nFAKE") as seen in
+    # serialized tool args.
     collapsed_chars: list[str] = []
     index_map: list[int] = []
-    for i, ch in enumerate(text):
-        if ch not in " \t\r\n":
-            collapsed_chars.append(ch)
-            index_map.append(i)
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch in " \t\r\n":
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < n and text[i + 1] in "nrt":
+            i += 2  # literal backslash-n/t/r escape: skip both chars
+            continue
+        collapsed_chars.append(ch)
+        index_map.append(i)
+        i += 1
     collapsed = "".join(collapsed_chars)
     if collapsed != text:
         for kind, rx in _COMPILED:
@@ -160,3 +174,74 @@ def _entropy(s: str) -> float:
     counts = Counter(s)
     n = len(s)
     return -sum((c / n) * math.log2(c / n) for c in counts.values())
+
+
+# -- escape-encoded exfiltration -------------------------------------------
+# Attackers hide secret-shaped payloads behind shell escapes (\ooo octal,
+# \xhh hex, \uXXXX unicode) so naive scans miss them. Decoding before the
+# secret scan closes that gap (EVL-176 class).
+
+_ESCAPE_RUN_RE = re.compile(r"(?:\\[0-7]{3}|\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}){2,}")
+
+
+def _decode_escape_run(run: str) -> str:
+    out: list[str] = []
+    i = 0
+    while i < len(run):
+        if run.startswith("\\u", i) and i + 6 <= len(run):
+            try:
+                out.append(chr(int(run[i + 2:i + 6], 16)))
+                i += 6
+                continue
+            except ValueError:
+                pass
+        if run.startswith("\\x", i) and i + 4 <= len(run):
+            try:
+                out.append(chr(int(run[i + 2:i + 4], 16)))
+                i += 4
+                continue
+            except ValueError:
+                pass
+        m = re.match(r"\\([0-7]{3})", run[i:])
+        if m:
+            try:
+                out.append(chr(int(m.group(1), 8)))
+                i += 4
+                continue
+            except ValueError:
+                pass
+        out.append(run[i])
+        i += 1
+    return "".join(out)
+
+
+def decode_escapes(text: str) -> str:
+    """Decode runs of octal/hex/unicode escapes; passthrough otherwise."""
+    if not text or "\\" not in text:
+        return text
+    return _ESCAPE_RUN_RE.sub(lambda m: _decode_escape_run(m.group(0)), text)
+
+
+def find_encoded_secrets(text: str) -> list[SecretHit]:
+    """Secrets visible only after escape-decoding. Coordinates are in the
+    decoded space — use for blocking decisions, not for redaction spans."""
+    if not text or "\\" not in text:
+        return []
+    decoded = decode_escapes(text)
+    if decoded == text:
+        return []
+    return [SecretHit(f"encoded_{h.kind}", h.value, h.start, h.end)
+            for h in find_secrets(decoded)]
+
+
+def redact_encoded(text: str) -> str:
+    """Redact escape-runs that decode to secret-bearing content, using the
+    ORIGINAL coordinates so redaction spans stay valid."""
+
+    def _repl(m: re.Match) -> str:
+        run = m.group(0)
+        if is_secret_bearing(_decode_escape_run(run)):
+            return "[REDACTED:encoded_secret]"
+        return run
+
+    return _ESCAPE_RUN_RE.sub(_repl, text or "")

@@ -1,0 +1,729 @@
+pack: fraud_bec_operations
+version: "1.0"
+techniques:
+  - id: AEG-T399
+    name: "BEC Kill-Chain: Reconnaissance to Payment Diversion"
+    category: fraud_bec_operations
+    description: >-
+      The end-to-end business email compromise kill-chain: attackers
+      reconnoiter the victim organization (org charts, vendor lists, invoice
+      cycles), compromise or impersonate a trusted mailbox, observe payment
+      workflows, then inject a fraudulent payment instruction at the moment
+      of least resistance. Unlike the single-technique view in
+      social_engineering T128, this technique maps every stage to a
+      defender breakpoint — mail-log telemetry, payment-policy controls,
+      and human verification gates — so each stage offers an independent
+      chance to stop the fraud before money moves.
+    how_it_works: >-
+      Stage 1, reconnaissance: harvesting of org charts, vendor names,
+      executive travel schedules, and invoice templates from public sources
+      and breached data. Stage 2, access: either mailbox compromise (via
+      credential phishing or token theft) or pure impersonation using
+      lookalike domains. Stage 3, observation: reading threads to learn
+      payment cadence, approver identities, and tone. Stage 4, injection:
+      the fraudulent instruction — a bank-detail change, an urgent wire —
+      timed to coincide with a real payment event. Stage 5, concealment:
+      mailbox rules hide the evidence (see AEG-T400) and the actor keeps
+      the mule chain warm (see cybercrime_economy T340 for the money-out
+      layer, referenced here only as downstream). Detectable tells:
+      reconnaissance-stage spikes in people-search and domain
+      registrations naming the victim's vendors; access-stage auth
+      anomalies and first-seen forwarding rules; observation-stage
+      dormant mailboxes with fresh IMAP/OAuth app registrations;
+      injection-stage payment instructions whose beneficiary, amount, or
+      timing deviates from the thread baseline.
+    variants:
+      - "Vendor-invoice variant: detail-change email on a real invoice thread, timed to the payment run."
+      - "CEO/executive-fraud variant: authority-pressure wire request, usually bypassing the normal approvers."
+      - "Data-theft variant: W-2/tax-form harvest as a precursor to further fraud."
+    indicators:
+      - "Newly registered lookalike domains referencing the victim's vendor or executive names (certificate-transparency and registration-age signals)."
+      - "First-seen sender or reply-to domain injecting payment instructions into an aged invoice thread."
+      - "Payment beneficiary account whose name, country, or bank differs from the vendor's historical records."
+      - "Auth anomalies on the compromised identity: impossible travel, legacy-protocol logins, new OAuth app grants."
+    detection:
+      rule: detect_bec_killchain_stages
+      patterns:
+        - '(?i)(change|update|revise).{0,40}(bank|account|wire|payment).{0,40}(detail|information|instruction|remit)'
+        - '(?i)(urgent|immediate|asap|today).{0,30}(wire|transfer|payment).{0,30}(ceo|cfo|president|executive|confidential)'
+        - '(?i)(do.not.call|don.t.call|no.phone|keep.this).{0,40}(between|confidential|discreet)'
+    severity: critical
+    mitigations:
+      - "Out-of-band verification for every payment-instruction change: a phone call to a known number, never the number in the email."
+      - "Dual authorization on all wires plus amount/baseline anomaly review before release."
+      - "DMARC at enforcement (reject), lookalike-domain monitoring with rapid takedown, and display-name spoofing policies."
+      - "Mail-log telemetry: alert on forwarding-rule creation, reply-to changes, and OAuth app grants on finance identities."
+    examples:
+      - summary: "The FBI IC3 reports BEC as one of the most financially damaging online crimes, with nearly $55.5 billion in global exposed losses from October 2013 through December 2023."
+        reference: "https://www.ic3.gov/Media/Y2024/PSA241204"
+      - summary: "A documented vendor-impersonation campaign swapped bank details on legitimate invoices, causing seven-figure wire losses before the out-of-band verification gap was closed."
+        reference: "https://www.fbi.gov/how-can-we-help-you/more-fbi-services-and-information/history/podcasts/radio/business-email-compromise"
+    references:
+      - "https://www.ic3.gov/Media/Y2024/PSA241204"
+      - "https://www.cisa.gov/news-events/alerts/2019/05/10/business-email-compromise"
+      - "https://attack.mitre.org/techniques/T1566/002/"
+
+  - id: AEG-T400
+    name: "Mailbox Rule Manipulation for Fraud Concealment"
+    category: fraud_bec_operations
+    description: >-
+      After compromising a mailbox, fraud operators create inbox rules that
+      auto-forward, auto-delete, or mark-as-read the messages that would
+      expose them: vendor replies questioning a bank-detail change, finance
+      asking for confirmation, or out-of-office challenges. The rules buy
+      the dwell time needed for payment diversion and erase the paper
+      trail. Because rules are created through legitimate mailbox APIs and
+      rarely reviewed, this tradecraft is invisible to users who only
+      watch their inbox — detection must come from mailbox-rule telemetry.
+    how_it_works: >-
+      Common rule shapes: (a) forward-to-external — copies of inbound mail
+      containing keywords like "invoice", "wire", "payment", "verify" are
+      forwarded to an attacker-controlled address so the operator reads
+      victim threads in real time; (b) delete-on-keyword — matching
+      messages are moved to Deleted or purged so the victim never sees
+      vendor confirmations; (c) mark-read-and-archive — neutralizes alerts
+      without deleting them, defeating "I never saw it" suspicion; (d)
+      reply-from-compromised-identity — outgoing replies are soft-deleted
+      so the victim never finds the fraud thread in Sent Items. Variants
+      span server-side transport rules, client rules synced via MAPI/EWS,
+      and Sweep-style rules on consumer mail. Detectable tells: rule
+      creation events within hours of an auth anomaly; forwarding to
+      first-seen external addresses; keyword-triggered rules on finance or
+      executive mailboxes; rules created via legacy protocols (EWS/basic
+      auth) or from impossible-travel sessions.
+    variants:
+      - "Forward-to-external: real-time exfiltration of thread content to an attacker address."
+      - "Delete/mark-read on keywords: hides vendor confirmations and finance queries."
+      - "Soft-delete of sent fraud replies: erases evidence from Sent Items."
+    indicators:
+      - "New inbox rule forwarding mail to an external address that has never appeared in the organization's correspondence."
+      - "Keyword-triggered rules (invoice, wire, payment, verify) appearing on finance, AP, or executive mailboxes."
+      - "Rule created from a session flagged for impossible travel, legacy-protocol auth, or a newly registered device."
+      - "Sent-Items gaps: vendor threads where the victim's replies exist in recipient logs but not in the victim's Sent folder."
+    detection:
+      rule: detect_mailbox_rule_abuse
+      patterns:
+        - '(?i)(forward|redirect).{0,30}(to|address).{0,30}(external|gmail|outlook|yahoo|proton|mail\.ru)'
+        - '(?i)(rule|filter).{0,20}(created|added|modified).{0,30}(delete|purge|mark.read|move.to|forward)'
+        - '(?i)(invoice|wire|payment|verify|bank.detail).{0,20}(subject|keyword|contains).{0,20}(rule|filter)'
+    severity: high
+    mitigations:
+      - "Alert on any forwarding rule to an external address; require security-team approval for external forwarding on finance mailboxes."
+      - "Periodic audit of inbox rules on high-risk mailboxes (finance, AP, executives, HR) and alerting on rule creation via legacy protocols."
+      - "Disable or gate external auto-forwarding tenant-wide; enforce modern auth and conditional access to shrink compromise paths."
+      - "Include mailbox-rule review in incident response: assume a compromised finance mailbox has concealment rules."
+    examples:
+      - summary: "CISA's BEC guidance notes that compromised accounts are routinely used with forwarding and deletion rules to hide fraudulent payment threads from the legitimate owner."
+        reference: "https://www.cisa.gov/news-events/alerts/2019/05/10/business-email-compromise"
+      - summary: "Microsoft threat research documents business email compromise actors creating inbox rules to evade detection while diverting legitimate email threads."
+        reference: "https://www.microsoft.com/en-us/security/blog/2023/03/24/dev-1101-enables-foxx-industries-victimization-by-fraudulent-activity/"
+    references:
+      - "https://www.cisa.gov/news-events/alerts/2019/05/10/business-email-compromise"
+      - "https://attack.mitre.org/techniques/T1137/"
+      - "https://www.microsoft.com/en-us/security/blog/2023/03/24/dev-1101-enables-foxx-industries-victimization-by-fraudulent-activity/"
+
+  - id: AEG-T401
+    name: "Invoice and Vendor Bank-Detail-Change Fraud"
+    category: fraud_bec_operations
+    description: >-
+      The single most damaging BEC variant: a convincing message — from a
+      compromised vendor mailbox or a lookalike domain — instructs accounts
+      payable to update the vendor's bank details, then a legitimate
+      invoice arrives and the payment is wired to the criminal's account.
+      Because the invoice itself is real and the change looks like routine
+      vendor administration, it defeats invoice-matching controls. Defense
+      is purely procedural: out-of-band confirmation of every
+      detail-change, dual control on master-data edits, and anomaly review
+      of first-time beneficiaries.
+    how_it_works: >-
+      Variants: (a) thread-hijack — the compromised vendor mailbox replies
+      inside a real invoice thread with "updated remittance details"; (b)
+      fresh-lure — a lookalike domain sends a stand-alone detail-change
+      notice ahead of the invoice; (c) attachment-swap — a "corrected"
+      invoice PDF with the same line items but new bank details replaces
+      the original. The fraud succeeds when the AP master record is edited
+      before the out-of-band check happens. Detectable tells: detail-change
+      requests arriving outside the vendor's normal communication pattern
+      or from a first-seen domain; beneficiary name/country/bank
+      mismatches against the vendor master record; urgency framing to
+      compress the verification window; and invoice PDFs whose metadata
+      or banking block differs from historical invoices from the same
+      vendor.
+    variants:
+      - "Thread-hijack detail change: reply inside a real invoice thread from the compromised vendor mailbox."
+      - "Fresh-lure notice: lookalike-domain email announcing new banking details ahead of an invoice."
+      - "Attachment-swap: corrected invoice PDF with identical line items but altered remittance block."
+    indicators:
+      - "Bank-detail-change request from a first-seen domain or an address subtly different from the vendor's registered contact."
+      - "Beneficiary account name, IBAN country code, or bank BIC inconsistent with the vendor's master record and payment history."
+      - "Urgency language compressing verification time ('payment due today, use the new details')."
+      - "Invoice PDF metadata (author, creation tool, banking block) differing from prior invoices from the same vendor."
+    detection:
+      rule: detect_invoice_detail_change_fraud
+      patterns:
+        - '(?i)(updated|new|revised|changed).{0,30}(bank|remit|payment).{0,30}(detail|instruction|account|iban)'
+        - '(?i)(kindly|please).{0,20}(update|amend|change).{0,30}(our|vendor|supplier).{0,20}(bank|account|remit)'
+        - '(?i)(disregard|ignore).{0,20}(previous|old).{0,20}(bank|account|detail).{0,20}(use|new)'
+    severity: critical
+    mitigations:
+      - "Mandatory out-of-band verification of every bank-detail change using a pre-registered vendor contact number — never the number in the change request."
+      - "Dual control: one person edits the vendor master record, a second independently verifies with the vendor."
+      - "First-time-beneficiary review: any payment to an account never previously used for that vendor is held and escalated."
+      - "Vendor master-data hygiene: registered contacts, change logs, and aging of unverified records."
+    examples:
+      - summary: "The FBI's 2023 IC3 report documented BEC complaints driving billions in exposed losses, with vendor bank-detail-change fraud among the most reported variants."
+        reference: "https://www.ic3.gov/Media/PDF/AnnualReport/2023_IC3Report.pdf"
+      - summary: "The U.S. Treasury's FinCEN advisories describe business email compromise schemes in which fraudsters impersonate vendors to divert invoice payments to criminal-controlled accounts."
+        reference: "https://www.fincen.gov/news/news-releases/fincen-advisory-business-email-compromise-email-account-compromise-fraud"
+    references:
+      - "https://www.ic3.gov/Media/PDF/AnnualReport/2023_IC3Report.pdf"
+      - "https://www.fincen.gov/news/news-releases/fincen-advisory-business-email-compromise-email-account-compromise-fraud"
+      - "https://www.cisa.gov/news-events/alerts/2019/05/10/business-email-compromise"
+
+  - id: AEG-T402
+    name: "Payroll-Diversion Fraud"
+    category: fraud_bec_operations
+    description: >-
+      Fraud operators impersonate employees to get HR or payroll to change
+      direct-deposit details, diverting salary payments to mule accounts.
+      The attack abuses employee self-service portals, HR helpdesk ticket
+      workflows, and the trust placed in "from the employee" requests.
+      Because payroll runs on fixed schedules, a single compromised change
+      can recur every pay period until caught. Detection hinges on change
+      velocity, identity verification discipline, and payee-account
+      anomaly review — the same controls as invoice fraud, applied to HR.
+    how_it_works: >-
+      Variants: (a) helpdesk-social-engineering — an "employee" emails or
+      calls the HR helpdesk asking to update direct deposit, providing
+      just enough personal data (harvested from breaches or social media)
+      to pass weak verification; (b) self-service takeover — the
+      compromised employee portal or email account is used to submit the
+      change directly; (c) bulk-change abuse — a compromised HR account
+      alters multiple employees' records at once. The fraud is timed to
+      land shortly before a pay run so the change rides the next cycle.
+      Detectable tells: direct-deposit changes clustered just before pay
+      runs; changes made through unusual channels (email instead of
+      self-service, or a channel different from the employee's history);
+      new accounts at banks with no prior relationship to the employer;
+      and requests that resist or deflect identity verification.
+    variants:
+      - "Helpdesk social engineering: impersonated employee requests a deposit change via email or phone."
+      - "Self-service takeover: compromised employee account submits the change directly."
+      - "Bulk-change abuse: compromised HR account alters many employees' records at once."
+    indicators:
+      - "Direct-deposit change requests clustering in the days immediately before a scheduled pay run."
+      - "Change submitted through an unusual channel (personal email, phone) for an employee with a history of self-service changes."
+      - "New destination account at a bank or in a geography with no prior payroll relationship to the organization."
+      - "Employee reports not receiving expected pay, or duplicate change requests for the same employee."
+    detection:
+      rule: detect_payroll_diversion
+      patterns:
+        - '(?i)(update|change|modify).{0,25}(direct.deposit|payroll|salary).{0,25}(account|bank|detail)'
+        - '(?i)(payroll|hr).{0,20}(request|ticket).{0,20}(deposit|payment).{0,20}(new.account|change)'
+        - '(?i)(unable|can.t).{0,20}(access|login).{0,20}(portal|self.service).{0,20}(update|change)'
+    severity: high
+    mitigations:
+      - "Out-of-band identity verification for every direct-deposit change: callback to a known employee number or in-person confirmation."
+      - "Cooling-off period: new deposit details take effect only after one pay cycle, with employee notification to the old contact channels."
+      - "Anomaly review before each pay run: flag first-time accounts, clustered changes, and changes near the pay-run cutoff."
+      - "Harden self-service portals with phishing-resistant MFA and step-up authentication for banking-detail edits."
+    examples:
+      - summary: "The FBI has warned that payroll-diversion schemes, in which fraudsters impersonate employees to redirect direct deposits, are a growing BEC-adjacent fraud category targeting HR departments."
+        reference: "https://www.ic3.gov/Media/Y2018/PSA180912"
+      - summary: "The U.K. National Cyber Security Centre's guidance on payment diversion notes payroll fraud as a recurring business-process fraud pattern defeated by verification controls."
+        reference: "https://www.ncsc.gov.uk/guidance/mitigating-malware-and-ransomware-attacks"
+    references:
+      - "https://www.ic3.gov/Media/Y2018/PSA180912"
+      - "https://www.cisa.gov/news-events/alerts/2019/05/10/business-email-compromise"
+      - "https://attack.mitre.org/techniques/T1566/002/"
+
+  - id: AEG-T403
+    name: "Vendor Email Compromise with Long Dwell"
+    category: fraud_bec_operations
+    description: >-
+      Unlike smash-and-grab impersonation, vendor email compromise (VEC)
+      with long dwell means the operator sits silently inside a real
+      vendor mailbox for weeks or months — reading threads, learning
+      invoice cycles, tone, and approver habits — before striking once
+      with a perfectly timed bank-detail change. The mail is
+      authentication-clean (SPF/DKIM/DMARC all pass) because it comes
+      from the genuine account, defeating lookalike-domain defenses. The
+      defender's only reliable signals are behavioral: anomalous mailbox
+      access patterns, long-dormant OAuth grants, and payment requests
+      that deviate from the established thread baseline.
+    how_it_works: >-
+      The operator compromises the vendor's mailbox (credential phishing,
+      token theft, or password-spray against weak vendor security) and
+      then does nothing overt: they read, search for payment threads, and
+      may set concealment rules (AEG-T400). The strike comes at the
+      highest-value moment — a large invoice about to be paid — as a
+      natural-sounding "updated remittance details" message in the
+      vendor's own voice, often referencing real internal details learned
+      during dwell. Because the message is genuine-sender, email-auth
+      controls pass and content-based filters see nothing anomalous.
+      Detectable tells live in access telemetry: logins from new
+      geographies or ASNs on the vendor's mailbox, legacy-protocol access
+      (IMAP/POP/EWS) appearing where the vendor normally uses modern
+      clients, OAuth app grants the vendor cannot explain, and searches
+      for payment keywords across long thread histories. On the buyer
+      side: a detail-change email whose tone matches the vendor but whose
+      beneficiary data breaks the historical pattern.
+    variants:
+      - "Silent observation: months of thread-reading, then one high-value detail-change strike."
+      - "Multi-victim vendor: the same compromised vendor mailbox is used to defraud several of the vendor's customers."
+      - "Rule-assisted dwell: concealment rules (AEG-T400) keep the vendor blind to the fraud thread."
+    indicators:
+      - "Vendor mailbox accessed from new geographies, ASNs, or via legacy protocols inconsistent with the vendor's normal client profile."
+      - "OAuth application grants on the vendor's mailbox that the vendor's IT cannot attribute."
+      - "Long-running threads where the vendor's 'voice' is right but beneficiary banking data suddenly changes."
+      - "Vendor confirms they never sent the detail-change message after a payment has already been released."
+    detection:
+      rule: detect_long_dwell_vec
+      patterns:
+        - '(?i)(remittance|banking|payment).{0,25}(detail|instruction|information).{0,25}(updated|changed|new).{0,20}(effective|going.forward)'
+        - '(?i)(our|the).{0,15}(finance|accounts).{0,20}(department|team).{0,20}(has|have).{0,15}(moved|changed|updated)'
+        - '(?i)(please|kindly).{0,15}(note|be.advised).{0,25}(new|updated).{0,15}(account|bank|remit)'
+    severity: critical
+    mitigations:
+      - "Out-of-band verification for every vendor bank-detail change, using a pre-registered vendor contact — genuine-sender mail must still be verified."
+      - "Ask vendors about their security posture in onboarding: MFA on mail, no legacy-protocol access, OAuth-grant hygiene."
+      - "Monitor inbound thread anomalies: detail-change messages arriving from threads with recent access anomalies on the vendor side."
+      - "Payment recall readiness: time-boxed review windows after first payments to new beneficiary accounts."
+    examples:
+      - summary: "The FBI's IC3 2024 PSA on business email compromise highlights long-dwell vendor compromise as a driver of high-loss incidents, where genuine-sender mail defeats authentication-based defenses."
+        reference: "https://www.ic3.gov/Media/Y2024/PSA241204"
+      - summary: "Agari and subsequent vendor research documented vendor email compromise campaigns with months of dwell, striking multiple customers of the same vendor with timed payment-diversion messages."
+        reference: "https://www.agari.com/insights/whitepapers/vendor-email-compromise/"
+    references:
+      - "https://www.ic3.gov/Media/Y2024/PSA241204"
+      - "https://www.agari.com/insights/whitepapers/vendor-email-compromise/"
+      - "https://attack.mitre.org/techniques/T1566/002/"
+
+  - id: AEG-T404
+    name: "Conversation Hijacking Inside Legitimate Threads"
+    category: fraud_bec_operations
+    description: >-
+      Conversation hijacking injects the fraud into an already-trusted
+      email thread — a reply that inherits the thread's history,
+      participants, and trust. Whether sent from a compromised mailbox or
+      forged to blend into the thread, the hijack inherits the
+      relationship capital the thread built, so recipients lower their
+      guard precisely where the fraud needs them to. Detection must
+      correlate thread anomalies (new participant, shifted tone, broken
+      threading headers) with the one signal that matters: a payment
+      instruction appearing where none belonged.
+    how_it_works: >-
+      Variants: (a) compromised-thread hijack — the operator replies from a
+      genuinely compromised participant mailbox, so headers and
+      authentication are perfect; (b) forged-thread hijack — the attacker
+      replays the thread's subject, quoting history, and participant list
+      from a lookalike domain, counting on recipients not checking
+      addresses mid-thread; (c) injected-participant hijack — a new
+      "colleague" or "new finance contact" is CC'd or introduced, and the
+      fraud is laundered through the newcomer's authority. The payment
+      request is always the payload: a bank-detail change, a wire
+      instruction, a "corrected" invoice. Detectable tells: threading
+      header breaks (In-Reply-To/References mismatch), a participant whose
+      address subtly differs from the historical one, tone or formatting
+      shifts within the thread, a payment instruction appearing in a
+      thread that never discussed payments, and time-of-day or client
+      anomalies on the replying participant.
+    variants:
+      - "Compromised-thread hijack: genuine mailbox, genuine headers, fraudulent payment reply."
+      - "Forged-thread hijack: lookalike domain replaying the thread with the fraud appended."
+      - "Injected-participant hijack: a new 'finance contact' introduced to launder the payment instruction."
+    indicators:
+      - "A payment instruction appearing in a thread whose prior history never discussed payments or banking."
+      - "Threading-header anomalies: In-Reply-To/References pointing to messages outside the known thread."
+      - "A participant's address differing subtly from the address used in the rest of the thread (lookalike domain)."
+      - "Tone, signature block, or send-time anomalies in a reply from a long-standing thread participant."
+    detection:
+      rule: detect_thread_hijack_payment
+      patterns:
+        - '(?i)(reply|re|fwd?).{0,10}:.{0,40}(updated|new).{0,20}(bank|payment|wire|remit).{0,20}(detail|instruction)'
+        - '(?i)(looping.in|adding|introducing).{0,30}(finance|account|payment|colleague).{0,30}(bank|wire|detail)'
+        - '(?i)(per|as).{0,20}(discussed|agreed).{0,30}(below|thread).{0,30}(wire|transfer|payment).{0,20}(new|updated)'
+    severity: critical
+    mitigations:
+      - "Thread-aware verification: any payment instruction in a thread — however trusted — still requires out-of-band confirmation."
+      - "Mail-client and gateway controls that surface address changes within threads and flag first-time sender domains on aged threads."
+      - "Threading-integrity telemetry: alert on In-Reply-To/References breaks and participant-address drift."
+      - "User training specifically on thread trust: threads inherit trust, so payment requests must break out of the thread for verification."
+    examples:
+      - summary: "FBI IC3 reporting documents conversation-hijack BEC variants in which fraudsters reply inside legitimate threads to redirect payments, exploiting the trust the thread established."
+        reference: "https://www.ic3.gov/Media/Y2024/PSA241204"
+      - summary: "CISA's alert on business email compromise describes threat actors using compromised accounts to insert themselves into existing email threads and request fraudulent transfers."
+        reference: "https://www.cisa.gov/news-events/alerts/2019/05/10/business-email-compromise"
+    references:
+      - "https://www.ic3.gov/Media/Y2024/PSA241204"
+      - "https://www.cisa.gov/news-events/alerts/2019/05/10/business-email-compromise"
+      - "https://attack.mitre.org/techniques/T1566/002/"
+
+  - id: AEG-T405
+    name: "Deepfake Voice and Video in Live Fraud Operations"
+    category: fraud_bec_operations
+    description: >-
+      Fraud operators now deploy synthetic voice and video in live
+      interactions: a "CEO" on a video call ordering an urgent transfer, a
+      "vendor" confirming new bank details by phone, or a cloned voice
+      defeating a callback verification step. Beyond the single-technique
+      view of social_engineering T138, this technique covers the
+      *operational* employment — how deepfakes are inserted into fraud
+      workflows, what verification protocols survive them, and which
+      artifact signals (audio/visual tells) analysts can still use.
+      Discussion here is detection-and-policy only: artifact analysis and
+      verification design, never generation guidance.
+    how_it_works: >-
+      Operational patterns: (a) executive-order video calls — short,
+      poor-quality calls where the "executive" gives an urgent payment
+      order and deflects questions; (b) callback subversion — the
+      fraudster supplies a phone number "for verification" that routes to
+      a voice clone of the real contact; (c) vendor-confirmation calls —
+      synthetic voice confirming a bank-detail change that arrived by
+      email, completing the out-of-band check the victim attempted. AI
+      scaling multiplies this: voice cloning needs only seconds of
+      source audio (earnings calls, social media), and real-time
+      face-swap pipelines run on commodity hardware. Detectable tells are
+      shifting as quality improves, but operational frictions persist:
+      refusal to use a known number, resistance to challenge questions,
+      call-quality anomalies and lip-sync artifacts, and — most reliably —
+      procedural breaks, i.e. the caller needs you to skip the normal
+      verification workflow. The durable defense is not artifact
+      detection but verification *protocol*: pre-shared secrets, known
+      channels, and dual authorization that no single call can override.
+    variants:
+      - "Executive-order video call: synthetic executive issues an urgent payment directive live."
+      - "Callback subversion: fraudster-supplied number routes to a voice clone of the real contact."
+      - "Vendor-confirmation call: synthetic voice validates a fraudulent bank-detail change."
+    indicators:
+      - "Urgent payment directive delivered over a live call, with pressure to act before normal approval completes."
+      - "The caller provides a new callback number instead of using the pre-registered contact number."
+      - "Audio/visual artifacts: unnatural blinking, lip-sync drift, flat prosody, or the caller refusing on-camera interaction."
+      - "Procedural breaks: requests to skip dual authorization, secrecy framing, or refusal of challenge questions."
+    detection:
+      rule: detect_deepfake_fraud_operation
+      patterns:
+        - '(?i)(video|voice|audio|call).{0,30}(ai.generated|synthetic|deepfake|cloned).{0,30}(suspect|anomaly|artifact)'
+        - '(?i)(ceo|cfo|executive|vendor).{0,20}(call|video).{0,25}(urgent|immediate).{0,20}(wire|transfer|payment)'
+        - '(?i)(don.t.use|do.not.use).{0,20}(old|previous|known).{0,20}(number|contact).{0,20}(call|reach).{0,15}(this|new)'
+    severity: critical
+    mitigations:
+      - "Verification protocols that survive deepfakes: pre-registered callback numbers only, pre-shared challenge phrases for executives, and dual authorization no single call can waive."
+      - "Policy: live calls never constitute payment authorization by themselves; the payment workflow's written approvals still apply."
+      - "Train finance staff on deepfake-aware verification: known channels, challenge questions, and escalation paths for suspicious calls."
+      - "Retain call recordings and metadata for post-incident artifact analysis; report synthetic-media fraud to IC3 and industry sharing groups."
+    examples:
+      - summary: "In a widely reported 2024 case, a finance worker transferred approximately $25 million after a video call in which every participant except the victim was AI-generated — the canonical deepfake-BEC operation."
+        reference: "https://www.cnn.com/2024/02/04/asia/deepfake-cfo-scam-hong-kong-intl-hnk/index.html"
+      - summary: "The FBI's May 2024 PSA warned that criminals are using AI-generated audio to impersonate executives and family members in fraud schemes, including business payment fraud."
+        reference: "https://www.ic3.gov/Media/Y2024/PSA240515-2"
+    references:
+      - "https://www.ic3.gov/Media/Y2024/PSA240515-2"
+      - "https://www.cnn.com/2024/02/04/asia/deepfake-cfo-scam-hong-kong-intl-hnk/index.html"
+      - "https://www.cisa.gov/news-events/alerts/2023/09/12/fbi-warns-ai-deepfakes-financial-fraud"
+
+  - id: AEG-T406
+    name: "Account Takeover for Fraud versus Espionage"
+    category: fraud_bec_operations
+    description: >-
+      Not every mailbox compromise serves fraud: the same access can feed
+      espionage, and defenders waste response effort when they misread
+      which objective they face. Fraud-driven takeover optimizes for
+      payment workflows — thread reading near invoice cycles,
+      concealment rules, forwarding to external addresses — while
+      espionage-driven takeover optimizes for data collection — broad
+      mailbox searches, export of intellectual property, quiet long-term
+      persistence. This technique gives defenders the discriminating
+      indicators to classify a compromise quickly and route it to the
+      right response playbook.
+    how_it_works: >-
+      Fraud-oriented takeover behavior: targeted searches for payment
+      keywords (invoice, wire, remit, PO), creation of forwarding and
+      deletion rules around finance threads, short high-intensity dwell
+      timed to payment runs, and outbound mail containing bank-detail
+      changes or wire instructions. Espionage-oriented takeover behavior:
+      broad searches across R&D, M&A, and executive mail; large-volume
+      mailbox exports or eDiscovery-style collection; persistence via
+      OAuth apps and alternate auth methods rather than inbox rules; and
+      exfiltration-shaped traffic rather than payment-shaped traffic.
+      Hybrid cases exist — data theft that later enables fraud (W-2
+      harvesting feeding tax fraud) — so classification is a
+      preponderance judgment, not a binary. Detectable tells are found in
+      the search-query logs, rule-creation telemetry, export volumes, and
+      the content classes of outbound mail in the first 72 hours after
+      compromise.
+    variants:
+      - "Fraud-dominant: payment-keyword searches, concealment rules, wire instructions within days of compromise."
+      - "Espionage-dominant: broad collection, large exports, long quiet persistence with no payment activity."
+      - "Hybrid: data theft staged first, fraud monetization follows (e.g. tax-form theft then refund fraud)."
+    indicators:
+      - "Search-query logs dominated by payment keywords (invoice, wire, remit, bank) versus broad R&D/executive keyword sweeps."
+      - "Concealment and forwarding rules (fraud pattern) versus OAuth persistence and mailbox export jobs (espionage pattern)."
+      - "Dwell shape: short, payment-cycle-timed intensity versus long, low-and-slow collection."
+      - "Outbound mail content: payment instructions and detail changes versus bulk data movement."
+    detection:
+      rule: detect_takeover_objective_fraud
+      patterns:
+        - '(?i)(search|query).{0,25}(invoice|wire|remit|purchase.order|bank.detail).{0,25}(mailbox|folder|export)'
+        - '(?i)(export|download|archive).{0,20}(mailbox|pst|ost).{0,20}(large|bulk|full).{0,20}(volume|gb)'
+        - '(?i)(oauth|app).{0,20}(grant|consent|registration).{0,25}(mail|exchange|graph).{0,20}(persistent|unattended)'
+    severity: high
+    mitigations:
+      - "Classify early: build the first-72-hour access profile (searches, rules, exports) into the compromise triage checklist."
+      - "Fraud-path containment: freeze payment workflows touching the compromised identity, notify finance, and audit recent beneficiary changes."
+      - "Espionage-path containment: preserve forensic images, scope data access, and engage the insider/espionage response playbook."
+      - "Shared baseline: revoke sessions and tokens, reset credentials with phishing-resistant MFA, and review OAuth grants in both cases."
+    examples:
+      - summary: "Microsoft's DEV-1101 reporting showed compromised accounts used for pure financial fraud — thread monitoring and payment diversion with no data-exfiltration component."
+        reference: "https://www.microsoft.com/en-us/security/blog/2023/03/24/dev-1101-enables-foxx-industries-victimization-by-fraudulent-activity/"
+      - summary: "CISA's account-takeover guidance distinguishes financially motivated mailbox abuse from broader compromise, directing different containment priorities for each."
+        reference: "https://www.cisa.gov/news-events/alerts/2019/05/10/business-email-compromise"
+    references:
+      - "https://www.microsoft.com/en-us/security/blog/2023/03/24/dev-1101-enables-foxx-industries-victimization-by-fraudulent-activity/"
+      - "https://www.cisa.gov/news-events/alerts/2019/05/10/business-email-compromise"
+      - "https://attack.mitre.org/techniques/T1114/002/"
+
+  - id: AEG-T407
+    name: "Pig-Butchering and Romance-Investment Fraud Operations"
+    category: fraud_bec_operations
+    description: >-
+      Pig-butchering (sha zhu pan) is long-game fraud: operators build
+      weeks or months of trust — often a romantic relationship — then
+      introduce a fake investment platform where the victim "profits"
+      until the final large deposit, which is stolen. AI now scales every
+      stage: synthetic personas with generated photos, scripted but
+      personalized conversation at volume, and fake trading dashboards
+      with convincing market data. Defense is victim-facing: reporting
+      pipelines, platform detection of the fake-investment infrastructure,
+      and bank-side intervention when victims wire to first-time crypto
+      or offshore beneficiaries.
+    how_it_works: >-
+      Operational stages: (a) contact — wrong-number texts, dating apps,
+      or social media outreach with an AI-generated persona; (b) fattening
+      — sustained daily conversation building rapport, entirely scripted
+      but personalized with details the victim volunteers; (c) the pitch —
+      introduction of a "profitable" trading platform, often a cloned or
+      lookalike site with a rigged dashboard showing growing balances;
+      (d) the slaughter — escalating deposits encouraged until the victim
+      tries to withdraw and the platform vanishes or demands "taxes".
+      Variants include employment-task scams and crypto-romance hybrids.
+      Detectable tells for platforms and banks: lookalike trading domains
+      with fresh registrations and copied branding; victims making first-
+      time large transfers to crypto exchanges or offshore accounts with a
+      romance/investment narrative; and device/IP clustering across many
+      seemingly unrelated victim conversations. Defenders never engage
+      the operators; the work is infrastructure takedown, victim
+      outreach, and transaction interception.
+    variants:
+      - "Romance-investment: dating-app contact, fake trading platform, escalating deposits."
+      - "Wrong-number text: 'accidental' message that becomes a friendship and then an investment pitch."
+      - "Task-scam hybrid: fake employment tasks that segue into investment deposits."
+    indicators:
+      - "Victim reports of a romantic or friendly online contact introducing an investment platform with unusually consistent returns."
+      - "Lookalike trading/investment domains with fresh registration, copied branding, and no regulatory footprint."
+      - "First-time large transfers by the victim to crypto on-ramps or offshore beneficiaries, narrated as investments."
+      - "Multiple victim conversations originating from the same device, IP, or persona-image clusters."
+    detection:
+      rule: detect_pigbutchering_infrastructure
+      patterns:
+        - '(?i)(guaranteed|risk.free|assured).{0,25}(return|profit|gain).{0,25}(crypto|forex|trading|investment)'
+        - '(?i)(wrong.number|accidental|mistaken).{0,20}(text|message).{0,30}(investment|trading|crypto).{0,20}(opportunity|platform)'
+        - '(?i)(withdraw|withdrawal).{0,20}(tax|fee|deposit).{0,25}(required|needed|before).{0,20}(release|process)'
+    severity: high
+    mitigations:
+      - "Victim-reporting pipelines: banks, dating platforms, and telcos need low-friction fraud reporting that reaches investigators fast."
+      - "Platform detection: monitor for lookalike investment domains, copied brand assets, and persona-image reuse across accounts."
+      - "Bank-side intervention: flag first-time large transfers to crypto/offshore beneficiaries with romance-investment narratives; apply cooling-off holds."
+      - "Public awareness: pig-butchering education emphasizing that the platform dashboard is fabricated and withdrawals are the tell."
+    examples:
+      - summary: "The FBI's IC3 2023 report identified investment fraud — dominated by pig-butchering-style crypto schemes — as the costliest reported cybercrime category, at over $4.5 billion in losses."
+        reference: "https://www.ic3.gov/Media/PDF/AnnualReport/2023_IC3Report.pdf"
+      - summary: "U.S. Treasury FinCEN analysis describes pig-butchering operations run from organized scam compounds, with AI now scaling persona creation and victim outreach."
+        reference: "https://www.fincen.gov/news/news-releases/fincen-issues-alert-pig-butchering-scams"
+    references:
+      - "https://www.ic3.gov/Media/PDF/AnnualReport/2023_IC3Report.pdf"
+      - "https://www.fincen.gov/news/news-releases/fincen-issues-alert-pig-butchering-scams"
+      - "https://www.interpol.int/en/Crimes/Financial-crime"
+
+  - id: AEG-T408
+    name: "Payment-Fraud Detection Controls"
+    category: fraud_bec_operations
+    description: >-
+      The defensive core of this pack: the wire, SWIFT, and ACH controls
+      that catch payment fraud regardless of how the instruction arrived.
+      No lure or deepfake survives a control stack built on
+      beneficiary verification, dual authorization, and behavioral anomaly
+      review. This technique catalogs the control set — what each control
+      catches, where it sits in the payment workflow, and the telemetry
+      that proves the control is working — so defenders can audit their
+      payment pipeline as a system rather than trusting any single check.
+    how_it_works: >-
+      Control layers: (a) beneficiary verification — confirmation-of-payee
+      checks, IBAN-name matching, and first-time-beneficiary holds catch
+      detail-change fraud at release time; (b) dual authorization — two
+      independent approvers with no shared reporting line defeat single-
+      point social engineering; (c) amount and velocity anomaly review —
+      wires deviating from vendor baselines, round-number wires, and
+      just-under-threshold structuring trigger holds; (d) SWIFT/ACH
+      message validation — verifying message integrity, ordering-party
+      fields, and correspondent-chain anomalies; (e) out-of-band
+      confirmation — the procedural backstop for any instruction change.
+      AI amplifies both sides: anomaly models catch subtle deviations,
+      while fraudsters use AI to make deviations subtler — so controls
+      must be layered, with no single point of bypass. Telemetry that
+      proves controls work: hold-and-release logs, verification
+      completion rates, override justifications, and near-miss records
+      (stopped frauds) reviewed as seriously as losses.
+    variants:
+      - "Beneficiary-verification controls: confirmation of payee, IBAN-name matching, first-time-beneficiary holds."
+      - "Authorization controls: dual approval, amount-tiered sign-off, no-override-during-travel policies."
+      - "Anomaly controls: baseline deviation, velocity, structuring-pattern detection on outbound payments."
+    indicators:
+      - "Payment instructions whose beneficiary fails confirmation-of-payee or IBAN-name matching."
+      - "Wires with amounts deviating sharply from the vendor's historical baseline or clustered just under approval thresholds."
+      - "Authorization workflows with missing, rushed, or single-person approvals on high-value transfers."
+      - "Overrides and exceptions to payment controls rising without documented business justification."
+    detection:
+      rule: detect_payment_control_gaps
+      patterns:
+        - '(?i)(first.time|new).{0,20}(beneficiary|payee|recipient).{0,25}(no|without).{0,15}(verif|hold|review)'
+        - '(?i)(single|one).{0,15}(approv|authoriz).{0,25}(wire|transfer|payment).{0,20}(above|exceed|over)'
+        - '(?i)(just.under|below).{0,15}(threshold|limit).{0,25}(multiple|several|repeated).{0,15}(wire|transfer)'
+    severity: high
+    mitigations:
+      - "Deploy the full control stack: beneficiary verification, dual authorization, anomaly review, and out-of-band confirmation — never rely on one layer."
+      - "Log and review near-misses: stopped frauds are the highest-value signal for control tuning."
+      - "Prohibit control overrides by the same person who initiated the payment; require documented justification for every exception."
+      - "Tabletop-test the payment pipeline against the techniques in this pack (AEG-T399 through AEG-T404) annually."
+    examples:
+      - summary: "The 2016 Bangladesh Bank SWIFT heist — $81 million stolen via fraudulent SWIFT messages — remains the canonical case for payment-message validation and correspondent-banking controls."
+        reference: "https://www.reuters.com/article/us-usa-fed-bangladesh-idUSKCN0YA0CH"
+      - summary: "SWIFT's Customer Security Programme (CSP) mandates controls on payment environments precisely because message-level fraud bypasses perimeter defenses."
+        reference: "https://www.swift.com/about-us/financial-crime-cyber-security/customer-security-programme-csp"
+    references:
+      - "https://www.swift.com/about-us/financial-crime-cyber-security/customer-security-programme-csp"
+      - "https://www.fincen.gov/news/news-releases/fincen-advisory-business-email-compromise-email-account-compromise-fraud"
+      - "https://www.bis.org/cpmi/publ/d146.htm"
+
+  - id: AEG-T409
+    name: "Fraud-Mule Network Detection from the Victim-Enterprise Side"
+    category: fraud_bec_operations
+    description: >-
+      Money-mule networks are the cash-out layer of fraud operations: the
+      accounts that receive diverted wires and forward the funds onward.
+      While cybercrime_economy T340 covers mule *recruitment economics*,
+      this technique covers *detection from the victim enterprise's side*
+      — the beneficiary-side signals a payer can see before and after
+      releasing funds: account-age and behavior anomalies, rapid onward
+      movement, and mule-account clustering. The goal is to catch the
+      destination as fraudulent before the wire is irreversible, and to
+      feed mule intelligence back into payment controls.
+    how_it_works: >-
+      Mule-account behavior from the payer's viewpoint: the destination
+      account is often newly opened or newly repurposed, receives a large
+      inbound wire inconsistent with its history, and forwards funds
+      onward within hours — sometimes split across several next-hop
+      accounts (layering). Business-email-compromise mules skew toward
+      personal accounts at major retail banks; larger frauds use shell-
+      company accounts. Detectable tells available to the victim
+      enterprise: beneficiary accounts with no prior payment history at
+      the organization; account-holder names that do not match any known
+      vendor principal; wires followed by rapid beneficiary-side
+      movement reported by the receiving bank during recall attempts; and
+      cross-incident clustering — the same beneficiary account appearing
+      in multiple victims' fraud reports. Defenders should treat every
+      confirmed fraud beneficiary as intelligence: report it to the
+      receiving bank, law enforcement (IC3), and industry sharing groups
+      so the mule network degrades across victims.
+    variants:
+      - "Personal-account mules: retail bank accounts receiving business wires with no commercial rationale."
+      - "Shell-company mules: newly formed entities whose accounts exist only to receive and forward fraud proceeds."
+      - "Layering chains: rapid onward transfers splitting proceeds across multiple next-hop accounts."
+    indicators:
+      - "Beneficiary account with no prior payment history at the victim organization receiving a high-value wire."
+      - "Account-holder name inconsistent with the vendor's registered principals or business name."
+      - "Post-fraud recall attempts revealing funds already moved onward within hours of receipt."
+      - "The same beneficiary account or name appearing in fraud reports from multiple unrelated victims."
+    detection:
+      rule: detect_mule_beneficiary
+      patterns:
+        - '(?i)(beneficiar|payee|recipient).{0,25}(no.history|first.payment|new.account|unknown.vendor)'
+        - '(?i)(personal|individual|retail).{0,20}(account|bank).{0,25}(business|corporate|invoice|vendor).{0,15}(wire|payment)'
+        - '(?i)(shell|newly.formed|recently.registered).{0,20}(compan|entit|llc|ltd).{0,25}(account|beneficiar)'
+    severity: high
+    mitigations:
+      - "First-time-beneficiary controls: hold, verify out-of-band, and release only after confirmation — the primary mule-catching control."
+      - "Beneficiary intelligence sharing: report confirmed mule accounts to receiving banks, IC3, and industry fraud-sharing groups."
+      - "Recall readiness: initiate payment recall within hours of suspected fraud; mule funds move fast and recall windows are short."
+      - "Post-incident beneficiary review: audit all payments to the fraudulent beneficiary and adjacent accounts for related fraud."
+    examples:
+      - summary: "The FBI's money-mule PSA describes how fraud proceeds are funneled through mule accounts and warns that mules themselves face criminal liability — the enforcement lever behind mule-network disruption."
+        reference: "https://www.fbi.gov/news/press-releases/fbi-warns-of-money-mule-schemes"
+      - summary: "Europol's annual money-mule operations (EMMA) identify thousands of mules across Europe, demonstrating the scale of the cash-out layer behind BEC and invoice fraud."
+        reference: "https://www.europol.europa.eu/media-press/newsroom/news/european-money-mule-action-leads-to-1-803-arrests"
+    references:
+      - "https://www.fbi.gov/news/press-releases/fbi-warns-of-money-mule-schemes"
+      - "https://www.europol.europa.eu/media-press/newsroom/news/european-money-mule-action-leads-to-1-803-arrests"
+      - "https://www.ic3.gov/Media/Y2024/PSA241204"
+
+  - id: AEG-T410
+    name: "Business-Process Controls as Primary Defense"
+    category: fraud_bec_operations
+    description: >-
+      The capstone technique of this pack: fraud is defeated by process,
+      not by products. Every fraud workflow in AEG-T399 through AEG-T409
+      breaks against the same small set of business-process controls —
+      out-of-band verification, separation of duties, payment-policy
+      design, and regular fraud tabletop exercises. This technique is the
+      defender's design guide: how to build payment and HR workflows
+      that are fraud-resistant by construction, how to measure control
+      effectiveness, and how to keep the controls alive as fraud tactics
+      evolve.
+    how_it_works: >-
+      Control-design principles: (a) verify out-of-band — every payment-
+      instruction change is confirmed through a pre-registered channel,
+      with the verification step owned by someone outside the payment
+      chain; (b) separate duties — initiation, approval, and release are
+      never held by one person, and master-data edits are independently
+      verified; (c) design for friction at the right points — cooling-off
+      periods on new beneficiaries, hold-and-review on anomalies, and
+      no-override rules for the highest-risk actions; (d) exercise
+      regularly — fraud tabletop exercises walk finance, HR, and
+      executives through current fraud scenarios (including the
+      deepfake-call scenario in AEG-T405) so the controls are muscle
+      memory, not policy text. Effectiveness measurement: near-miss
+      tracking, verification-completion rates, control-override audits,
+      and time-to-detect on simulated fraud. Organizational tells that
+      controls are decaying: rising overrides, verification steps
+      skipped "for speed", and tabletop exercises that never test the
+      current fraud techniques.
+    variants:
+      - "Payment-policy design: beneficiary verification, dual control, and anomaly holds built into the AP workflow."
+      - "HR-process design: identity verification and cooling-off periods for payroll and deposit changes."
+      - "Fraud tabletop exercises: scenario-driven rehearsal with finance, HR, executives, and security."
+    indicators:
+      - "Rising control overrides or exceptions without documented business justification."
+      - "Verification steps routinely skipped or compressed under time pressure."
+      - "Tabletop exercises that recycle old scenarios and never test current fraud techniques (deepfake calls, thread hijacks)."
+      - "No near-miss records: an organization that never stops a fraud attempt is not measuring its controls."
+    detection:
+      rule: detect_process_control_decay
+      patterns:
+        - '(?i)(override|bypass|skip).{0,20}(verif|approval|control).{0,25}(wire|payment|transfer).{0,15}(justif|documented)'
+        - '(?i)(verif|confirm).{0,20}(skipped|waived|not.done).{0,25}(time|urgent|deadline|speed)'
+        - '(?i)(single|one).{0,15}(person|approver).{0,25}(initiat|approv|releas).{0,20}(payment|wire)'
+    severity: medium
+    mitigations:
+      - "Codify the controls in payment and HR policy: out-of-band verification, separation of duties, cooling-off periods, and no-override rules."
+      - "Run fraud tabletop exercises at least annually, using current scenarios from this pack; include executives, not just finance."
+      - "Measure control health: track near-misses, verification completion, override rates, and time-to-detect on simulated fraud."
+      - "Maintain a fraud-response runbook: who freezes payments, who calls the bank, who reports to IC3 — with names and numbers current."
+    examples:
+      - summary: "NIST SP 800-53's control families (including separation of duties and least privilege) provide the formal basis for the business-process controls that defeat payment fraud."
+        reference: "https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final"
+      - summary: "The Association of Certified Fraud Examiners' Report to the Nations consistently finds that internal controls — not technology alone — are the primary factor in fraud detection and loss reduction."
+        reference: "https://www.acfe.com/report-to-the-nations/2024/"
+    references:
+      - "https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final"
+      - "https://www.acfe.com/report-to-the-nations/2024/"
+      - "https://www.cisa.gov/news-events/alerts/2019/05/10/business-email-compromise"
