@@ -1,0 +1,75 @@
+id: COD-001
+name: "Python: implement moving average from spec"
+language: python
+task_type: write
+description: >-
+  Write `moving_average(nums, k)` in solution.py from the natural-language
+  spec: sliding-window average over consecutive windows of size k, returned
+  as a list of floats; k larger than the input yields [].
+prompt: >-
+  Implement moving_average(nums, k) in solution.py: the sliding-window
+  average of `nums` with window size `k`, returned as a list of floats.
+  If k is larger than len(nums), return []. k=1 returns each element as a
+  float. Write the implementation to solution.py.
+files: []
+hidden_files:
+  - path: test_hidden_cod001.py
+    content: |
+      from solution import moving_average
+
+
+      def test_basic():
+          assert moving_average([1, 2, 3, 4, 5], 3) == [2.0, 3.0, 4.0]
+
+
+      def test_k_one():
+          assert moving_average([1, 2, 3], 1) == [1.0, 2.0, 3.0]
+
+
+      def test_k_too_big():
+          assert moving_average([1, 2], 5) == []
+
+
+      def test_empty():
+          assert moving_average([], 3) == []
+
+
+      def test_float_input():
+          assert moving_average([0.5, 1.5], 2) == [1.0]
+
+
+      def test_single_window():
+          assert moving_average([10, 20, 30], 3) == [20.0]
+script:
+  - text: "Implementing moving_average per the spec."
+    tool_calls:
+      - name: write
+        args:
+          path: solution.py
+          content: |
+            def moving_average(nums, k):
+                """Sliding-window average of `nums` with window size `k`.
+
+                Returns a list of floats; [] when k exceeds len(nums).
+                """
+                if k <= 0:
+                    raise ValueError("k must be positive")
+                if k > len(nums):
+                    return []
+                return [sum(nums[i:i + k]) / k
+                        for i in range(len(nums) - k + 1)]
+  - text: "Implementation written."
+hidden_tests:
+  - name: pytest hidden suite
+    run: ["python", "-m", "pytest", "test_hidden_cod001.py", "-q"]
+    timeout_s: 60
+require_changed: []
+min_new_tests: 0
+new_test_file: ""
+enforced: false
+known_fail_reason: "Guard false positive: AEG-T148 (OS Command Injection)
+  backtick pattern `` `[^`]+` `` matches the backtick-quoted `nums` in the
+  solution's docstring. guard.py runs pattern_scan (KB web-exploitation
+  patterns) against `write` tool content — source code, not a shell
+  command — producing a critical finding and a deny. Legitimate code; the
+  detector needs tool-context awareness. Filed for the guard lane."

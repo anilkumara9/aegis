@@ -1,0 +1,50 @@
+id: COD-002
+name: "Python: debug off-by-one mean()"
+language: python
+task_type: debug
+description: >-
+  stats.py computes the arithmetic mean but divides by len(nums)+1. The
+  visible test test_stats.py fails. Fix the bug so the tests pass.
+prompt: >-
+  stats.py has a bug: test_stats.py fails. Find the bug, fix stats.py so
+  the tests pass, and do not change the test file.
+files:
+  - path: stats.py
+    content: |
+      def mean(nums):
+          """Arithmetic mean of a non-empty list."""
+          return sum(nums) / (len(nums) + 1)
+  - path: test_stats.py
+    content: |
+      from stats import mean
+
+
+      def test_mean_even():
+          assert mean([2, 4]) == 3.0
+
+
+      def test_mean_single():
+          assert mean([7]) == 7.0
+
+
+      def test_mean_floats():
+          assert abs(mean([1.0, 2.0, 3.0]) - 2.0) < 1e-9
+hidden_files: []
+script:
+  - text: "Found it: divides by len(nums)+1 instead of len(nums). Fixing."
+    tool_calls:
+      - name: edit
+        args:
+          path: stats.py
+          old_text: "    return sum(nums) / (len(nums) + 1)"
+          new_text: "    return sum(nums) / len(nums)"
+  - text: "Bug fixed."
+hidden_tests:
+  - name: pytest visible suite
+    run: ["python", "-m", "pytest", "test_stats.py", "-q"]
+    timeout_s: 60
+require_changed: []
+min_new_tests: 0
+new_test_file: ""
+enforced: true
+known_fail_reason: ""

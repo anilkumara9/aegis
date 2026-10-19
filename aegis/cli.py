@@ -122,56 +122,6 @@ def cmd_mcp(args) -> int:
     return 0
 
 
-def cmd_eval(args) -> int:
-    """`aegis eval [--json]`: run the guard eval battery (v0.6 proving ground).
-
-    Runs every evals/EVL-*.yaml scenario through the real AgentLoop +
-    real guard, prints a per-category table, writes docs/SCORECARD.md.
-    Exit 1 when any enforced scenario misses its expectation (CI signal).
-    """
-    from datetime import datetime, timezone
-    from pathlib import Path
-
-    from .eval_runner import render_scorecard, run_battery
-
-    try:
-        battery = run_battery()
-    except Exception as e:
-        print(f"eval: battery failed: {e}", file=sys.stderr)
-        return 2
-
-    if args.json:
-        print(json.dumps(battery.to_dict(), indent=1, default=str))
-    else:
-        by_cat = battery.by_category()
-        print(f"{'category':<18}{'n':>3} {'caught':>7} {'missed':>7} "
-              f"{'allowed':>8} {'fp':>4} {'known_miss':>10}")
-        for cat in sorted(by_cat):
-            c = by_cat[cat]
-            print(f"{cat:<18}{c['scenarios']:>3} {c['caught']:>7} "
-                  f"{c['missed']:>7} {c['allowed']:>8} "
-                  f"{c['false_positive']:>4} {c['known_miss']:>10}")
-        fails = battery.enforced_failures()
-        print(f"\n{battery.kb_techniques} KB techniques / "
-              f"{battery.kb_packs} packs / {len(battery.results)} scenarios; "
-              f"{len(fails)} enforced failures")
-
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    scorecard = render_scorecard(battery, ts)
-    out = Path(__file__).resolve().parent.parent / "docs" / "SCORECARD.md"
-    out.write_text(scorecard, encoding="utf-8")
-    # --json keeps stdout pure machine-readable; the note goes to stderr.
-    print(f"scorecard written to {out}",
-          file=sys.stderr if args.json else sys.stdout)
-
-    fails = battery.enforced_failures()
-    for r in fails:
-        print(f"ENFORCED {r.scenario.expected.upper()} MISMATCH: "
-              f"{r.scenario.id} {r.scenario.name} -> {r.status} "
-              f"({r.detail})", file=sys.stderr)
-    return 1 if fails else 0
-
-
 def cmd_respond(args) -> int:
     if args.playbook == "timeline":
         from .respond import build_timeline
@@ -288,6 +238,111 @@ def cmd_planexec(args) -> int:
     if plan.state == PLAN_FAILED:
         return 1
     return 2
+def cmd_eval(args) -> int:
+    """`aegis eval [--json] [--suite security|coding|all]` (v0.7 Lane D).
+
+    MERGE NOTE (docs/EVAL_CODING_MERGE.md): v0.6 Lane A added an `eval`
+    subcommand backed by aegis.eval_runner. This is the SUPERSET version —
+    at merge, KEEP this cmd_eval (with --suite) and DROP v0.6's original
+    cmd_eval. The security branch imports v0.6's eval_runner lazily: on
+    this branch (pre-merge) it is absent, so the command runs the coding
+    suite only with a clear stderr notice.
+
+    Exit 1 when any enforced task/scenario misses its expectation (CI
+    signal); exit 2 on harness failure.
+    """
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    from .eval_coding import (
+        render_coding_section,
+        run_coding_battery,
+        splice_coding_section,
+    )
+
+    suite = getattr(args, "suite", "all")
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    repo_root = Path(__file__).resolve().parent.parent
+    failures = 0
+
+    security_md = ""
+    if suite in ("security", "all"):
+        try:
+            from .eval_runner import render_scorecard, run_battery
+        except ImportError:
+            print("eval: security suite unavailable in this tree "
+                  "(v0.6 eval_runner not merged yet); running coding suite "
+                  "only", file=sys.stderr)
+        else:
+            try:
+                battery = run_battery()
+            except Exception as e:
+                print(f"eval: security battery failed: {e}", file=sys.stderr)
+                return 2
+            if args.json:
+                print(json.dumps({"security": battery.to_dict()},
+                                 indent=1, default=str))
+            else:
+                by_cat = battery.by_category()
+                print("== security suite ==")
+                print(f"{'category':<18}{'n':>3} {'caught':>7} "
+                      f"{'missed':>7} {'allowed':>8} {'fp':>4} "
+                      f"{'known_miss':>10}")
+                for cat in sorted(by_cat):
+                    c = by_cat[cat]
+                    print(f"{cat:<18}{c['scenarios']:>3} {c['caught']:>7} "
+                          f"{c['missed']:>7} {c['allowed']:>8} "
+                          f"{c['false_positive']:>4} {c['known_miss']:>10}")
+                fails = battery.enforced_failures()
+                print(f"\n{battery.kb_techniques} KB techniques / "
+                      f"{battery.kb_packs} packs / {len(battery.results)} "
+                      f"scenarios; {len(fails)} enforced failures")
+                failures += len(fails)
+            security_md = render_scorecard(battery, ts)
+
+    coding_md = ""
+    if suite in ("coding", "all"):
+        try:
+            cbattery = run_coding_battery()
+        except Exception as e:
+            print(f"eval: coding battery failed: {e}", file=sys.stderr)
+            return 2
+        if args.json:
+            print(json.dumps({"coding": cbattery.to_dict()},
+                             indent=1, default=str))
+        else:
+            print("== coding suite ==")
+            by_lang = cbattery.by_language()
+            print(f"{'language':<12}{'n':>3} {'pass':>6} {'fail':>6} "
+                  f"{'timeout':>8} {'skipped':>8} {'error':>6}")
+            for lang in sorted(by_lang):
+                c = by_lang[lang]
+                print(f"{lang:<12}{c['tasks']:>3} {c['pass']:>6} "
+                      f"{c['fail']:>6} {c['timeout']:>8} "
+                      f"{c['skipped']:>8} {c['error']:>6}")
+            fails = cbattery.enforced_failures()
+            print(f"\n{len(cbattery.results)} coding tasks; "
+                  f"{len(fails)} enforced failures")
+            failures += len(fails)
+        coding_md = render_coding_section(cbattery, ts)
+        # Always stage the standalone coding section (merge input).
+        (repo_root / "docs" / "SCORECARD_CODING.md").write_text(
+            coding_md, encoding="utf-8")
+
+    # Publish the scorecard: security section (v0.6's render, if run) with
+    # the coding section spliced in by marker. Never clobbers v0.6's file
+    # when only the coding suite ran — splice is marker-idempotent.
+    scorecard_path = repo_root / "docs" / "SCORECARD.md"
+    if coding_md and scorecard_path.exists():
+        scorecard_path.write_text(
+            splice_coding_section(scorecard_path, coding_md),
+            encoding="utf-8")
+    elif coding_md and security_md:
+        scorecard_path.write_text(
+            splice_coding_section(scorecard_path, security_md + coding_md),
+            encoding="utf-8")
+
+    return 1 if failures else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -373,10 +428,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("version", help="print version")
 
-    ev = sub.add_parser("eval", help="run the guard eval battery "
-                                     "(v0.6 proving ground)")
+    # v0.7 Lane D: superset of v0.6's `eval` (adds --suite). Merge note in
+    # cmd_eval / docs/EVAL_CODING_MERGE.md.
+    ev = sub.add_parser("eval", help="run the eval proving ground "
+                                     "(security + coding suites)")
     ev.add_argument("--json", action="store_true",
                     help="machine-readable JSON results on stdout")
+    ev.add_argument("--suite", default="all",
+                    choices=("all", "security", "coding"),
+                    help="which eval suite to run (default: all)")
+
     p.add_argument("--provider", default="", help="anthropic|openai|google|ollama|mock")
     p.add_argument("--model", default="", help="model name override")
     p.add_argument("--mode", default="", help="dev|plan (default: dev; AEGIS_MODE env)")

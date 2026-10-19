@@ -1,0 +1,56 @@
+id: COD-011
+name: "C: debug off-by-one sum_n()"
+language: c
+task_type: debug
+description: >-
+  sum.c sums 1..n but the loop stops at i < n, dropping the last term.
+  The visible test driver test_sum.c fails. Fix sum.c so the driver
+  passes.
+prompt: >-
+  sum.c has a bug: the test driver test_sum.c fails. Fix sum.c so the
+  driver passes, without changing test_sum.c.
+files:
+  - path: sum.c
+    content: |
+      int sum_n(int n) {
+          int s = 0;
+          for (int i = 1; i < n; i++) s += i;
+          return s;
+      }
+  - path: test_sum.c
+    content: |
+      #include <assert.h>
+      #include <stdio.h>
+
+      int sum_n(int n);
+
+      int main(void) {
+          assert(sum_n(100) == 5050);
+          assert(sum_n(1) == 1);
+          assert(sum_n(10) == 55);
+          printf("all sum tests passed\n");
+          return 0;
+      }
+hidden_files: []
+script:
+  - text: "Found it: loop uses i < n instead of i <= n. Fixing."
+    tool_calls:
+      - name: edit
+        args:
+          path: sum.c
+          old_text: "    for (int i = 1; i < n; i++) s += i;"
+          new_text: "    for (int i = 1; i <= n; i++) s += i;"
+  - text: "Bug fixed."
+hidden_tests:
+  - name: gcc compile + run visible driver
+    run: ["sh", "-c", "gcc -O1 -Wall -o tprog test_sum.c sum.c && ./tprog"]
+    timeout_s: 60
+require_changed: []
+min_new_tests: 0
+new_test_file: ""
+enforced: false
+known_fail_reason: |
+  Guard false positive: the AEG-T148 shell-metachar pattern
+  `[;&|]{1,2}\s*\w` matches `; i` in the C for-loop
+  `for (int i = 1; i <= n; i++)` inside an `edit` call. Shell-metachar
+  patterns applied to source code. Filed for the guard lane.
