@@ -31,48 +31,122 @@ Type /help for skills. Every tool call is guard-screened and audit-logged.
 
 
 def interactive_approval(findings, tool="", args=None, cwd=None) -> bool:
-    print("\n[!] GUARD: high-severity match — human approval required")
-    print(f"    tool: {tool}")
-    # File modifications: show the operator a unified diff BEFORE the prompt.
+    _pause_card_for_approval()
+    print()
+    print(tui.bold("[!] GUARD: high-severity match — human approval required"))
+    if tool:
+        print(f"    tool: {tui.cyan(tool)}")
+    if isinstance(args, dict) and args:
+        if tool == "bash" and args.get("cmd"):
+            # Show the EXACT command being approved (redacted, truncated).
+            print("    command:")
+            for ln in tui._redact(str(args["cmd"])).splitlines()[:10]:
+                print(f"      {tui.yellow(ln[:300])}")
+        elif tool not in ("write", "edit"):
+            print(f"    args: {tui.dim(tui._redact(repr(args)[:300]))}")
+    # File modifications: show the operator a colored unified diff with
+    # line numbers BEFORE the prompt. diffx emits plain text (color=False
+    # avoids its own isatty probe); tui.render_diff adds color + numbers.
     if cwd is not None and isinstance(args, dict) and tool in ("write", "edit"):
         try:
             from . import diffx
             if tool == "write" and "path" in args:
-                print(diffx.diff_for_write(args.get("path", ""),
-                                          args.get("content", ""), Path(cwd)))
+                raw = diffx.diff_for_write(args.get("path", ""),
+                                           args.get("content", ""),
+                                           Path(cwd), color=False)
             elif tool == "edit" and "path" in args:
-                print(diffx.diff_for_edit(args.get("path", ""),
+                raw = diffx.diff_for_edit(args.get("path", ""),
                                           args.get("old_text", ""),
-                                          args.get("new_text", ""), Path(cwd)))
+                                          args.get("new_text", ""),
+                                          Path(cwd), color=False)
+            else:
+                raw = ""
+            if raw:
+                print(tui.render_diff(raw))
         except Exception as e:
             print(f"    (diff preview unavailable: {e})")
     for f in findings:
         d = f.to_dict() if hasattr(f, "to_dict") else f
-        print(f"    [{d.get('severity', '?').upper()}] "
+        print(f"    {tui.red('[' + str(d.get('severity', '?')).upper() + ']')} "
               f"{d.get('technique_id', '?')} {d.get('technique_name', '?')}")
-        print(f"      evidence: {str(d.get('evidence', ''))[:200]}")
+        print(f"      evidence: {tui.dim(str(d.get('evidence', ''))[:200])}")
     try:
-        ans = input("    Approve this call? [y/N] ").strip().lower()
+        ans = input(tui.bold("    Approve this call? [y/N] ")).strip().lower()
     except (EOFError, KeyboardInterrupt):
+        print()
         ans = "n"
+    _resume_card()
     return ans == "y"
 
 
-# -- tool-call display blocks -------------------------------------------
+# -- usage tracking (status bar) ------------------------------------------
+class UsageTracker:
+    """Provider wrapper: accumulates ("usage", ...) events, passes all
+    others through untouched. Lets the status bar count tokens without
+    touching AgentLoop. Attribute access proxies to the wrapped provider.
+    """
+
+    def __init__(self, provider):
+        object.__setattr__(self, "_provider", provider)
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.estimated = False
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, "_provider"), name)
+
+    def stream(self, messages, tools, system):
+        for kind, payload in self._provider.stream(messages, tools, system):
+            if kind == "usage" and isinstance(payload, dict):
+                self.input_tokens += int(payload.get("input_tokens", 0) or 0)
+                self.output_tokens += int(payload.get("output_tokens", 0) or 0)
+                self.estimated = (self.estimated
+                                  or bool(payload.get("estimated")))
+            yield kind, payload
+
+
+# -- tool-call display cards ----------------------------------------------
+# AgentLoop calls _print_tool_start/_print_tool_end around every tool
+# execution (signatures are its contract — keep them). The active card is
+# tracked so approval prompts can freeze/resume its spinner.
+_active_card: tui.ToolCard | None = None
+
+
+def _pause_card_for_approval() -> None:
+    if _active_card is not None:
+        _active_card.pause_for_approval()
+
+
+def _resume_card() -> None:
+    if _active_card is not None:
+        _active_card.resume()
+
+
+def _stop_active_card() -> None:
+    global _active_card
+    card, _active_card = _active_card, None
+    if card is not None:
+        card.abort()
+
+
 def _print_tool_start(name: str, args_summary: str) -> None:
-    print(f"\n{tui.cyan('⏺')} {tui.bold(name)}({tui.dim(args_summary)})",
-          flush=True)
+    global _active_card
+    _active_card = tui.ToolCard(name, args_summary)
+    _active_card.start()
 
 
 def _print_tool_end(name: str, verdict: str, duration_ms: float,
                     output_excerpt: str) -> None:
-    ms = f"{duration_ms:.0f}"
-    if verdict in ("allow", "approved"):
-        print(tui.green(f"✓ {verdict}") + tui.dim(f" {ms}ms"))
-    elif verdict == "deny":
-        print(tui.red("✗ DENIED") + f": {output_excerpt[:220]}")
-    else:
-        print(tui.red(f"✗ DENIED ({verdict})") + f": {output_excerpt[:220]}")
+    global _active_card
+    card, _active_card = _active_card, None
+    if card is None:
+        # Defensive fallback: never lose the verdict line.
+        ms = f"{duration_ms:.0f}"
+        mark = (tui.green("✓") if verdict in ("allow", "approved")
+                else tui.red("✗"))
+        print(f"{mark} {name}: {verdict} {tui.dim(ms + 'ms')}")
+        return
+    card.finish(verdict, duration_ms, output_excerpt)
 
 
 # -- @-file mentions ------------------------------------------------------
@@ -112,17 +186,32 @@ def _show_palette(filt: str, loop: AgentLoop,
                   session: guard_mod.GuardSession, kb: KB) -> bool:
     """Numbered slash-command palette (dumb-terminal friendly).
 
-    Returns True to exit the REPL.
+    Fuzzy-filters on "name + description"; descriptions are aligned in a
+    column. Returns True to exit the REPL.
     """
-    filt = (filt or "").strip().lower()
-    items = [(k, v) for k, v in SKILLS.items()
-             if not filt or filt in k.lower() or filt in v.lower()]
+    items = [(k, v) for k, v in SKILLS.items()]
+    filt = (filt or "").strip()
+    if filt:
+        # Name matches rank before description matches.
+        ranked = []
+        for kv in items:
+            sn = tui.fuzzy_score(filt, kv[0])
+            if sn is not None:
+                ranked.append(((0, sn), kv))
+                continue
+            sd = tui.fuzzy_score(filt, kv[0] + " " + kv[1])
+            if sd is not None:
+                ranked.append(((1, sd), kv))
+        ranked.sort(key=lambda p: p[0])
+        items = [kv for _, kv in ranked]
     if not items:
         print(f"no commands match '{filt}'. /help for skills.")
         return False
+    width = max(len(k) for k, _ in items)
     print("\nSlash commands:")
     for i, (k, v) in enumerate(items, 1):
-        print(f"  {i:2d}. {k:10s} {v}")
+        print(f"  {tui.dim(f'{i:2d}.')} {tui.cyan(k.ljust(width))}  "
+              f"{tui.dim(v)}")
     try:
         pick = input("pick # (Enter cancels): ").strip().lower()
     except (EOFError, KeyboardInterrupt):
@@ -136,6 +225,51 @@ def _show_palette(filt: str, loop: AgentLoop,
     chosen = items[int(pick) - 1][0]
     print(f"> {chosen}")
     return _handle_slash(chosen, loop, session, kb)
+
+
+# -- keyboard: multiline input, bracketed paste ---------------------------
+_PASTE_START = "\x1b[200~"
+_PASTE_END = "\x1b[201~"
+
+
+def _enable_bracketed_paste() -> None:
+    """Ask the terminal to bracket pastes (best effort, TTY only)."""
+    try:
+        if sys.stdout.isatty():
+            sys.stdout.write("\x1b[?2004h")
+            sys.stdout.flush()
+    except Exception:
+        pass
+
+
+def _disable_bracketed_paste() -> None:
+    try:
+        if sys.stdout.isatty():
+            sys.stdout.write("\x1b[?2004l")
+            sys.stdout.flush()
+    except Exception:
+        pass
+
+
+def _read_user_line(prompt: str) -> str:
+    """Read one logical input line.
+
+    Backslash-continuation: a trailing ``\\`` joins the next line.
+    Bracketed-paste markers are stripped. Raises EOFError /
+    KeyboardInterrupt from input() unchanged.
+    """
+    chunks: list[str] = []
+    p = prompt
+    while True:
+        line = input(p)
+        line = line.replace(_PASTE_START, "").replace(_PASTE_END, "")
+        if line.endswith("\\") and not line.endswith("\\\\"):
+            chunks.append(line[:-1])
+            p = "... "
+            continue
+        chunks.append(line)
+        break
+    return "\n".join(chunks)
 
 
 # -- REPL -----------------------------------------------------------------
@@ -167,15 +301,20 @@ def run_repl(provider_name: str = "", model: str = "",
                     mode=mode)
     session = guard_mod.create_session(policy, kb)
     conv = session_mod.new_session(session.id)
-    loop = AgentLoop(provider, kb, session, cwd=cwd,
+    tracked = UsageTracker(provider)
+    loop = AgentLoop(tracked, kb, session, cwd=cwd,
                      approval_callback=approval_cb,
                      on_text=lambda s: (sys.stdout.write(s), sys.stdout.flush()),
                      conversation_id=conv["id"],
                      on_tool_start=_print_tool_start,
                      on_tool_end=_print_tool_end)
+    status = tui.SessionStatus(
+        model=getattr(tracked, "model", "?") or "?",
+        session_id=conv["id"],
+        provider_name=getattr(tracked, "name", ""))
     print(BANNER.format(__version__=__version__))
     print(tui.status_line(
-        f"provider: {provider.name}  model: {getattr(provider, 'model', '?')}  "
+        f"provider: {tracked.name}  model: {status.model}  "
         f"mode: {loop.mode}"))
     if loop.mode == "plan":
         print("PLAN mode: read-only. Writes, edits and command execution are "
@@ -183,35 +322,51 @@ def run_repl(provider_name: str = "", model: str = "",
     print(f"session: {session.id}  audit: {session.audit.path}")
     print(f"KB: {kb.count()} techniques across {len(kb.packs())} packs")
     _print_recent_sessions(conv["id"])
+    print(status.render())
     print()
 
-    while True:
-        try:
-            line = input(f"aegis[{loop.mode}]> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nbye.")
-            break
-        if not line:
-            continue
-        if line.startswith("/"):
-            if _handle_slash(line, loop, session, kb):
+    _enable_bracketed_paste()
+    try:
+        while True:
+            try:
+                line = _read_user_line(f"aegis[{loop.mode}]> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\nbye.")
                 break
-            continue
-        print()
-        renderer = tui.StreamingRenderer()
-        prev_on_text = loop.on_text
-        loop.on_text = renderer.feed
-        try:
-            loop.run(expand_mentions(line, cwd))
-        except guard_mod.SessionRevoked as e:
-            print(f"\n[!] {e}\nSession killed. Restart aegis for a new session.")
-            break
-        except Exception as e:
-            print(f"\n[agent error: {e}]")
-        finally:
-            loop.on_text = prev_on_text
-            renderer.flush()
-        print()
+            if not line:
+                continue
+            if line.startswith("/"):
+                if _handle_slash(line, loop, session, kb):
+                    break
+                continue
+            print()
+            renderer = tui.StreamingRenderer()
+            prev_on_text = loop.on_text
+            loop.on_text = renderer.feed
+            try:
+                loop.run(expand_mentions(line, cwd))
+            except KeyboardInterrupt:
+                # Graceful interrupt: cancel the turn, keep the session.
+                _stop_active_card()
+                print("\n[cancelled — turn interrupted, session kept]")
+            except guard_mod.SessionRevoked as e:
+                _stop_active_card()
+                print(f"\n[!] {e}\nSession killed. "
+                      "Restart aegis for a new session.")
+                break
+            except Exception as e:
+                _stop_active_card()
+                print(f"\n[agent error: {e}]")
+            finally:
+                loop.on_text = prev_on_text
+                renderer.flush()
+            status.sync(tracked.input_tokens, tracked.output_tokens,
+                        tracked.estimated)
+            status.bump_iteration()
+            print(status.render())
+            print()
+    finally:
+        _disable_bracketed_paste()
     return 0
 
 
@@ -241,8 +396,9 @@ def _handle_slash(line: str, loop: AgentLoop,
     if cmd not in SKILLS:
         return _show_palette(cmd[1:], loop, session, kb)
     if cmd == "/help":
+        width = max(len(k) for k in SKILLS)
         for k, v in SKILLS.items():
-            print(f"  {k:10s} {v}")
+            print(f"  {tui.cyan(k.ljust(width))}  {tui.dim(v)}")
         return False
     if cmd == "/kb":
         if not rest:
