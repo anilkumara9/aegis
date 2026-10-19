@@ -205,6 +205,15 @@ def cmd_hunt(args) -> int:
     return 0
 
 
+def cmd_review(args) -> int:
+    from .secwrite import review_report
+    report = review_report(args.path, _kb())
+    print(report)
+    if report.startswith("refused:") or report.startswith("usage:"):
+        return 2
+    return 0
+
+
 def cmd_emulate(args) -> int:
     from .emulate import EmulateError, emulate_dir
     try:
@@ -256,6 +265,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     h = sub.add_parser("hunt", help="audit your own local codebase")
     h.add_argument("path")
+
+    rv = sub.add_parser("review", help="security code review of your own "
+                                      "local code, with fix suggestions "
+                                      "(local paths only)")
+    rv.add_argument("path", help="local file or directory to review")
 
     w = sub.add_parser("watch", help="continuous defensive monitoring (SOC-in-a-box)")
     w.add_argument("watch_args", nargs=argparse.REMAINDER,
@@ -325,6 +339,8 @@ def main(argv=None) -> int:
         return cmd_kb(args)
     if cmd == "hunt":
         return cmd_hunt(args)
+    if cmd == "review":
+        return cmd_review(args)
     if cmd == "emulate":
         return cmd_emulate(args)
     if cmd == "graph":
