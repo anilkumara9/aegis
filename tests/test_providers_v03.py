@@ -293,16 +293,17 @@ def test_get_provider_ollama_empty_model_yields_clear_error(monkeypatch):
                                "(ollama pull <name> first)")]
 
 
-def test_get_provider_unknown_lists_all_five():
+def test_get_provider_unknown_lists_all_providers():
     with pytest.raises(ValueError) as exc:
         get_provider("wat", "x")
-    assert "anthropic|openai|google|ollama|mock" in str(exc.value)
+    assert "anthropic|openai|google|ollama|openrouter|mock" in str(exc.value)
 
 
 # -- config env behaviour (isolated subprocesses) --------------------------
 
 _CONFIG_ENV_KEYS = ("GOOGLE_API_KEY", "GEMINI_API_KEY", "AEGIS_OLLAMA_URL",
-                    "AEGIS_PROVIDER", "AEGIS_MODEL")
+                    "AEGIS_PROVIDER", "AEGIS_MODEL", "OPENROUTER_API_KEY",
+                    "AEGIS_ALLOW_PAID")
 
 
 def _config_attr(overrides: dict, attr: str) -> str:
