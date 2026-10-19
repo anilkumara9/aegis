@@ -54,6 +54,83 @@ against a real model, blocks a planted prompt-injection + exfiltration attempt
 LIVE inside the loop (test with a mock provider), and the audit log captures
 every tool call.
 
+## v0.7 scope — "Polyglot" (founder goal 2026-10-19)
+
+GOAL (founder, non-negotiable): Aegis out-codes every coding agent on the
+internet (Claude Code, Codex, OpenCode) — incredibly good at every programming
+language, strong logical thinking, able to do the work of an entire company
+team.
+
+HONEST CEILING (stated once): raw coding intelligence is bounded by the model
+plugged in — no framework out-thinks its own brain. Aegis wins as the best
+agent HARNESS: elite coding workflows + secure-by-construction + the proving
+ground. The crown it can take outright: the coding agent that is also the
+godfather of hacking — writes the code AND makes it unhackable. Nobody else
+owns that intersection.
+
+**Lane A — Coding skill system:** polyglot toolchain detection and management
+(python/node/go/rust/java/c++/… — detect project language, ensure build/test/
+lint available); skills `/build /test /fix /refactor`; test-driven loop
+(write → run tests → fix until green); project intelligence (repo map, build
+system detection, dependency awareness).
+
+**Lane B — Secure-by-construction:** every file write screened against the
+vulnerability KB in the language being written (SQLi/XSS/RCE/SSRF patterns per
+language); new `aegis review` command — security code review of the user's own
+code with fix suggestions; insecure code blocked or flagged before it lands.
+
+**Lane C — Reasoning upgrades:** enforced plan-then-execute on complex tasks;
+verification loops (agent checks its own work against checklists); multi-step
+decomposition with progress tracking.
+
+**Lane D — Coding proving ground:** extend `aegis eval` with coding tasks
+across languages (write function from spec, debug failing code, refactor,
+add tests) — scored pass/fail, published alongside the security scorecard.
+
+**Lane E — Claude-Code-class UI (founder order 2026-10-19):** terminal UI at
+the level of Claude Code / Codex for every coding interaction — rich streaming
+markdown with syntax-highlighted code blocks; tool execution cards (command +
+args, live spinner, timing, collapsible output); unified diff rendering with
+color for every edit; status bar (model, session, live token/cost counter);
+task progress display during multi-step planexec runs; polished slash palette
+and permission prompts; clean keyboard handling (multiline input, graceful
+interrupt). Every coding command must *feel* as good as the tools it replaces.
+
+Hard boundary: defensive only, unchanged. Coding features never weaken the
+guard — the guard screens the agent's own code writes too.
+
+## v0.6 scope — "Unmatched" (founder goal 2026-10-19)
+
+GOAL (founder, non-negotiable): no AI hacking agent stands against Aegis —
+trained so enormously on every technique and every single thing in the hacking
+world, and proven so rigorously, that no adversary AI can beat it. Two
+engines, one loop:
+
+**Engine 1 — Proving ground** (`aegis eval` + `docs/SCORECARD.md`): an
+adversarial eval harness that attacks Aegis with hundreds of scripted hostile
+scenarios (prompt injections, exfil attempts, tool poisonings, jailbreaks,
+multi-stage campaigns — mapped to KB technique IDs) and measures caught vs
+missed, PLUS benign negative controls (a guard that blocks everything is
+useless — false positives measured too). Runs in CI on every build, no
+network. Every release publishes its scorecard. Scenarios are scripted mock
+turns against the agent's own guard — defensive testing only, never live
+exploits.
+
+**Engine 2 — Training wave 2:** a second specialist panel expands the KB into
+new domains (dedupe against all 31 existing packs; candidates: ICS/OT concepts,
+mobile attacks, crypto-attack techniques, firmware/hardware concepts, model
+serialization attacks, vuln-research methodology for defenders, C2
+infrastructure detection, insider threats, wipers, fraud operations — panel
+picks 6–8 with the coordinator). Same depth bar, same defensive boundary.
+
+**The loop (integration lane):** run proving ground → take every MISS →
+train/fill the gap → re-run → publish final scorecard. Knowledge and proof
+sharpen each other until nothing stands against it.
+
+Hard boundary (all work): defensive only — TTP/detection level knowledge;
+scenarios test the agent's own defenses; no payloads, no offensive tooling,
+no attack guides.
+
 ## v0.4 scope — "Godfather Program" (founder order 2026-10-18)
 
 The real project begins: make Aegis the godfather of hacking — the supreme
