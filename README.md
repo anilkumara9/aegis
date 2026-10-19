@@ -1,6 +1,7 @@
 # Aegis — the defensive hacking agent
 
 > Godfather-level hacking knowledge, pointed entirely at defense.
+> The coding agent that's also the godfather of hacking: it writes the code *and* makes it unhackable.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
@@ -18,6 +19,18 @@ Aegis is a Claude-Code-class terminal agent that knows how hackers think, work, 
 
 *Above: a real session. The agent hunts a workspace for exposed secrets — then a planted instruction tries to make it exfiltrate them, and the guard denies the call before anything executes.*
 
+## Proof, not promises
+
+Every Aegis release is attacked by its own proving ground — hundreds of scripted hostile scenarios (prompt injections, exfiltrations, tool poisonings, jailbreaks, multi-stage campaigns) plus benign controls, all driving the real agent loop. Results are published, misses included:
+
+| Suite | Result |
+|---|---|
+| Security battery | **237/242 hostile caught (97.9%)**, 0 false positives on 64 benign controls |
+| Coding battery | **11/11 tasks pass** (Python, JavaScript, C — scored by executing hidden tests) |
+| Unit tests | **878/878 green** |
+
+Full methodology and the 5 honest residual misses: [`docs/SCORECARD.md`](docs/SCORECARD.md). Run it yourself: `aegis eval`.
+
 ## 60-second quickstart
 
 **Install** — one command, no manual venv steps (isolated venv at `~/.aegis/venv`, `aegis` linked into `~/.local/bin`):
@@ -29,7 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/anilkumara9/aegis/master/install.sh
 **Verify:**
 
 ```bash
-aegis version   # -> aegis 0.5.0
+aegis version   # -> aegis 0.7.0
 ```
 
 **Bring a model** — pick one provider (or run fully local/offline):
@@ -63,6 +76,8 @@ aegis watch --once ~/my-project              # continuous monitoring pass + aler
 aegis emulate --target ~/my-project          # purple-team campaign emulation
 aegis graph ~/my-project                     # ranked attack paths + breaking defenses
 aegis respond rotate-keys openai             # incident runbooks (operator-executed)
+aegis eval                                   # attack the agent itself: security + coding scorecard
+aegis review ~/my-project                    # security code review with fix suggestions
 ```
 
 ## Features
@@ -71,6 +86,12 @@ aegis respond rotate-keys openai             # incident runbooks (operator-execu
 - **In-loop guard** — every tool call passes through allowlist/denylist, dangerous-argument patterns (fork bombs, `rm -rf /`, reverse shells, LOLBin download cradles…), secret redaction on args *and* outputs, egress domain control, and approval escalation — *before* execution. Session taint tracking escalates outbound calls made after sensitive files were read, and multi-step attack chains are caught live, not just in post-mortems.
 - **482-technique knowledge base** (`aegis kb "<query>"`) — 39 packs: agent-attack techniques, dark-web threat intel, APT tradecraft from public reporting, ransomware playbooks, web exploitation, C2 operations, cloud attacks, AI-agent attacks, the hacker-tools catalog, attack methodologies, and the hacker-mindset doctrine that shapes the agent's own reasoning.
 - **Watch** (`aegis watch --once|--interval|--schedule <dir>`, `aegis watch --triage`) — SOC-in-a-box: change-detected rescans, secret + pattern detection, alert banners, and a severity-ranked, deduped finding queue.
+- **Proving ground** (`aegis eval`, `docs/SCORECARD.md`) — the agent attacks itself: 306 scripted hostile scenarios + 64 benign controls through the real loop, scored and published every release. 237/242 hostile caught, 0 false positives; the 5 misses are documented with honest reasons, not hidden.
+- **Polyglot coding skills** (`/build`, `/test`, `/fix`, `/refactor`) — toolchain auto-detection across Python/Node/Rust/Go/Java/C++/C#, test-driven write→run→fix loops that report "stuck" honestly instead of pretending, and repo maps for grounding.
+- **Secure by construction** — every line the agent writes is screened against 58 per-language vulnerability patterns *before* it lands; the agent cannot write code it would flag in a scan. `aegis review <dir>` gives your own code the same treatment, with fix suggestions.
+- **Codebase indexing** (`/index`) — incremental symbol/import index with a file watcher; only changed files re-indexed, retrieved per-request so large repos stay fast. Tradeoffs: `docs/INDEXING.md`.
+- **Plugin system** — `~/.aegis/plugins/` + `plugins.yaml` discovery, error-isolated (a broken plugin can't crash the core), with a working example (`examples/plugins/todo_scan.py`).
+- **Claude-Code-class terminal UI** — streaming syntax-highlighted markdown, tool execution cards with live timing, color diffs in approvals, token/cost status bar, fuzzy command palette.
 - **Emulate** (`aegis emulate --target <dir>`, `/emulate`) — purple-team adversary emulation: chains KB techniques into multi-stage campaign narratives against your own systems, then verifies each stage would be caught. Plan-level only — nothing is executed, markers are inert.
 - **Graph** (`aegis graph <dir>`) — ranked attack paths an adversary would take through your system, each annotated with the defense that breaks it.
 - **MCP client** (`aegis mcp list|call`) — connect MCP servers over stdio; every MCP tool call is guard-screened exactly like a native tool. Config: `~/.aegis/mcp.json` (see `docs/MCP_CLIENT.md`).
@@ -79,7 +100,7 @@ aegis respond rotate-keys openai             # incident runbooks (operator-execu
 
 ## Knowledge base
 
-`aegis/kb/` holds 31 YAML packs and 386 techniques. Every technique is a condensed threat-intel note: how the attack works, its variants, real-world examples from public incident reports (with references), concrete detection patterns the engine executes, and mitigations. Eight domain specialists (the v0.4 training panel) each deepened one domain: APT campaigns, web attack flows, C2 operations, initial access, cloud attacks, AI-agent attacks, lateral movement, and the cybercrime economy — plus 38 hacker-mindset doctrine notes that teach the agent to reason like an attacker and act like a defender.
+`aegis/kb/` holds 39 YAML packs and 482 techniques. Every technique is a condensed threat-intel note: how the attack works, its variants, real-world examples from public incident reports (with references), concrete detection patterns the engine executes, and mitigations. Two specialist training panels deepened every domain: APT campaigns, web attack flows, C2 operations, initial access, cloud attacks, AI-agent attacks, lateral movement, the cybercrime economy, ML serialization attacks, fraud/BEC operations, insider threats, ICS/OT attacks, wipers, mobile attacks, cryptographic attacks, and firmware/hardware attacks — plus 38 hacker-mindset doctrine notes that teach the agent to reason like an attacker and act like a defender.
 
 Strict schema validation runs on every load (bad packs refuse to load), and a binary cache makes startup instant after the first load. The boundary is absolute: TTP/detection level — how attacks work, what they look like, how to detect and kill them. No payloads, no exploit code, no tool-usage instructions, no access guides. Ever.
 
@@ -115,17 +136,17 @@ Strict schema validation runs on every load (bad packs refuse to load), and a bi
         ▼                  ▼           ▼           ▼                  ▼
   ┌───────────┐     ┌─────────────┐ ┌────────┐ ┌──────────┐    ┌────────────┐
   │  Tools    │     │  Audit log  │ │ Redact │ │ Providers│    │  KB (482)  │
-  │ bash, read│     │ JSONL, every│ │ at EVERY│ │Anthropic │    │ 31 packs,  │
+  │ bash, read│     │ JSONL, every│ │ at EVERY│ │Anthropic │    │ 39 packs,  │
   │ write/edit│     │ call, args+ │ │ return │ │OpenAI    │    │ cached,    │
   │ ps, hash, │     │ output      │ │boundary│ │Google    │    │ validated  │
   │ netconns, │     │ redacted    │ │        │ │Ollama    │    └────────────┘
-  │ search,   │     └─────────────┘ └────────┘ │mock      │
-  │ webfetch, │     ┌─────────────┐            └──────────┘
-  │ kb_query, │     │ Subsystems  │
+  │ search,   │     └─────────────┘ └────────┘ │OpenRouter│
+  │ webfetch, │     ┌─────────────┐            │mock      │
+  │ kb_query, │     │ Subsystems  │            └──────────┘
   │ scan_trace│     │ scan/hunt/  │
   │ respond,  │     │ watch/      │
   │ MCP tools │     │ emulate/    │
-  └───────────┘     │ graph       │
+  └───────────┘     │ graph/eval  │
                     └─────────────┘
 ```
 
@@ -147,9 +168,10 @@ Strict schema validation runs on every load (bad packs refuse to load), and a bi
 | v0.3.0 — model-agnostic + one command | ✅ done | Google + Ollama providers, dev/plan modes, polished TUI, `install.sh` single-command setup, 291 tests |
 | v0.4.0 — Godfather Program | ✅ done | 8-specialist training panel → 386 techniques (31 packs); `aegis emulate`, `aegis graph`, MCP client; 576 tests |
 | v0.5.0 — god-level power | ✅ done | Inspection arsenal (ps/netconns/hash/search), plan-then-execute, guard hardening (taint + live chains + reverse-shell rules), KB binary cache, 600 tests |
-| v0.6.0 — "Unmatched" | ✅ done (current) | Proving ground: `aegis eval` — 306 hostile scenarios + 64 benign controls, public scorecard (237/242 caught, 0 FP); training wave 2 → 482 techniques (39 packs); guard gap-fill loop |
+| v0.6.0 — "Unmatched" | ✅ done | Proving ground: `aegis eval` — 306 hostile scenarios + 64 benign controls, public scorecard (237/242 caught, 0 FP); training wave 2 → 482 techniques (39 packs); guard gap-fill loop |
+| v0.7.0 — "Polyglot" | ✅ done (current) | The coding agent that's also the godfather of hacking: polyglot skills (`/build` `/test` `/fix` `/refactor`), secure-by-construction (58 per-language vuln patterns, `aegis review`), coding proving ground 11/11, Claude-Code-class UI, plugin system, file-watcher indexing, OpenRouter free-models provider; 878 tests |
 
-Progress to 1.0: ██████████░░░░░░░░ — the agent is real, tested, and installs with one command. Stars and contributors below are the fuel for what comes next.
+Progress to 1.0: ████████████░░░░░░ — the agent is real, measured, and installs with one command. Stars and contributors below are the fuel for what comes next.
 
 ## Development
 
