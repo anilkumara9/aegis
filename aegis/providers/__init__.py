@@ -6,8 +6,14 @@ Internal message format:
   {"role": "tool", "tool_call_id": str, "name": str, "content": str}
 
 Events yielded by stream(): ("text", str) | ("tool_call", ToolCall) |
+("usage", {"input_tokens": int, "output_tokens": int, "estimated": bool}) |
 ("done", None) | ("error", str). Network via stdlib urllib (SSE parsed by
 hand); no third-party SDK needed.
+
+The "usage" event is emitted only when token counts are known: providers
+surface it when the wire protocol reports usage (exact, estimated=False);
+the mock provider emits a chars/4 heuristic (estimated=True). Consumers
+must tolerate its absence — it is informational, never required.
 """
 
 from __future__ import annotations
@@ -112,6 +118,7 @@ class AnthropicProvider(Provider):
         tc_id = tc_name = ""
         arg_buf: list[str] = []
         in_tool = False
+        usage_in = usage_out = 0
         for event, data in _sse_events(resp):
             if data == "[DONE]":
                 continue
@@ -119,7 +126,14 @@ class AnthropicProvider(Provider):
                 obj = json.loads(data)
             except Exception:
                 continue
-            if event == "content_block_start":
+            if event == "message_start":
+                u = obj.get("message", {}).get("usage", {})
+                usage_in += int(u.get("input_tokens", 0) or 0)
+                usage_out += int(u.get("output_tokens", 0) or 0)
+            elif event == "message_delta":
+                u = obj.get("usage", {})
+                usage_out += int(u.get("output_tokens", 0) or 0)
+            elif event == "content_block_start":
                 block = obj.get("content_block", {})
                 if block.get("type") == "tool_use":
                     if in_tool:  # flush previous
@@ -140,6 +154,10 @@ class AnthropicProvider(Provider):
                 break
         if in_tool:
             yield ("tool_call", ToolCall(tc_id, tc_name, _safe_args("".join(arg_buf))))
+        if usage_in or usage_out:
+            yield ("usage", {"input_tokens": usage_in,
+                             "output_tokens": usage_out,
+                             "estimated": False})
         yield ("done", None)
 
 
@@ -196,6 +214,7 @@ class OpenAIProvider(Provider):
 
     def _parse(self, resp) -> Iterator[Event]:
         calls: dict[int, dict] = {}
+        usage_in = usage_out = 0
         for _event, data in _sse_events(resp):
             if data == "[DONE]":
                 break
@@ -203,6 +222,10 @@ class OpenAIProvider(Provider):
                 obj = json.loads(data)
             except Exception:
                 continue
+            u = obj.get("usage")
+            if isinstance(u, dict):
+                usage_in += int(u.get("prompt_tokens", 0) or 0)
+                usage_out += int(u.get("completion_tokens", 0) or 0)
             for choice in obj.get("choices", []):
                 delta = choice.get("delta", {})
                 if delta.get("content"):
@@ -218,6 +241,10 @@ class OpenAIProvider(Provider):
             if slot["name"]:
                 yield ("tool_call", ToolCall(slot["id"], slot["name"],
                                             _safe_args(slot["args"])))
+        if usage_in or usage_out:
+            yield ("usage", {"input_tokens": usage_in,
+                             "output_tokens": usage_out,
+                             "estimated": False})
         yield ("done", None)
 
 
@@ -279,6 +306,7 @@ class GoogleProvider(Provider):
     def _parse(self, resp) -> Iterator[Event]:
         calls: list[tuple[str, object]] = []
         n = 0
+        usage_in = usage_out = 0
         for _event, data in _sse_events(resp):
             if data == "[DONE]":
                 continue
@@ -286,6 +314,13 @@ class GoogleProvider(Provider):
                 obj = json.loads(data)
             except Exception:
                 continue
+            um = obj.get("usageMetadata")
+            if isinstance(um, dict):
+                # usageMetadata repeats cumulatively per chunk: keep the max.
+                usage_in = max(usage_in,
+                               int(um.get("promptTokenCount", 0) or 0))
+                usage_out = max(usage_out,
+                                int(um.get("candidatesTokenCount", 0) or 0))
             for cand in obj.get("candidates", []):
                 for part in cand.get("content", {}).get("parts", []):
                     if part.get("text"):
@@ -298,6 +333,10 @@ class GoogleProvider(Provider):
         for cid, cname, cargs in calls:
             yield ("tool_call", ToolCall(cid, cname,
                                          cargs if isinstance(cargs, dict) else {}))
+        if usage_in or usage_out:
+            yield ("usage", {"input_tokens": usage_in,
+                             "output_tokens": usage_out,
+                             "estimated": False})
         yield ("done", None)
 
 
@@ -357,6 +396,7 @@ class OllamaProvider(Provider):
 
     def _parse(self, resp) -> Iterator[Event]:
         calls: list[tuple[str, dict]] = []
+        usage_in = usage_out = 0
         for raw in resp:
             line = raw.decode("utf-8", "ignore").strip()
             if not line:
@@ -366,6 +406,11 @@ class OllamaProvider(Provider):
             except Exception:
                 continue
             if obj.get("done"):
+                # The final done:true line carries the eval counts.
+                usage_in = max(usage_in,
+                               int(obj.get("prompt_eval_count", 0) or 0))
+                usage_out = max(usage_out,
+                                int(obj.get("eval_count", 0) or 0))
                 break
             msg = obj.get("message", {})
             if msg.get("content"):
@@ -379,6 +424,10 @@ class OllamaProvider(Provider):
                               args if isinstance(args, dict) else {}))
         for i, (cname, cargs) in enumerate(calls, 1):
             yield ("tool_call", ToolCall(f"oll-{i}", cname, cargs))
+        if usage_in or usage_out:
+            yield ("usage", {"input_tokens": usage_in,
+                             "output_tokens": usage_out,
+                             "estimated": False})
         yield ("done", None)
 
 
@@ -403,6 +452,7 @@ class MockProvider(Provider):
         self.received.append(messages)
         if not self.script:
             yield ("text", "done.")
+            yield from self._estimated_usage(messages, "done.")
             yield ("done", None)
             return
         turn = self.script.pop(0)
@@ -417,7 +467,16 @@ class MockProvider(Provider):
         for i, tc in enumerate(turn.get("tool_calls", [])):
             yield ("tool_call", ToolCall(tc.get("id", f"mock-{self.calls}-{i}"),
                                         tc["name"], tc.get("args", {})))
+        yield from self._estimated_usage(messages, text)
         yield ("done", None)
+
+    @staticmethod
+    def _estimated_usage(messages, text):
+        """Rough chars/4 token heuristic, honestly flagged estimated=True."""
+        in_chars = sum(len(str(m.get("content", ""))) for m in messages)
+        yield ("usage", {"input_tokens": max(1, in_chars // 4),
+                         "output_tokens": max(1, len(str(text)) // 4),
+                         "estimated": True})
 
 
 def _safe_args(raw: str) -> dict:
