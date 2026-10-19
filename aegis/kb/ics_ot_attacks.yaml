@@ -1,0 +1,594 @@
+pack: ics_ot_attacks
+version: "1.0"
+techniques:
+  - id: AEG-T423
+    name: "Purdue Model and IT/OT Boundary Concepts"
+    category: ics_ot_attacks
+    description: >-
+      The Purdue Enterprise Reference Architecture models an industrial site as
+      stacked levels (0–5) — physical process, basic control, site operations,
+      site business planning, enterprise — and defenders treat the boundary
+      between level 3 (site operations) and level 4/5 (enterprise IT) as the
+      critical trust line, typically enforced with an industrial DMZ
+      (often called level 3.5) where historians, jump hosts, and update
+      servers sit. Attacks against OT almost always cross this boundary, so
+      the boundary itself is the primary detection surface.
+    how_it_works: >-
+      Adversaries path: compromise enterprise IT (level 4/5), pivot through
+      the industrial DMZ, then reach level 2/3 OT systems (HMIs, historians,
+      engineering workstations, domain controllers shared with OT). The DMZ
+      is intended to broker all IT↔OT traffic — data replication outbound,
+      patch/update traffic inbound — so any session that bypasses it (a
+      dual-homed host, a misconfigured firewall rule, a vendor VPN landing
+      directly on the control network) is anomalous by design. Defenders map
+      every permitted conduit (which zones may talk, over which protocols,
+      initiated from which side) and alert on anything outside that map.
+      The Volt Typhoon pre-positioning pattern (see AEG-T253) is the
+      canonical example of this boundary being held and probed from the IT
+      side. Monitoring treats *new* IT→OT authentication or discovery
+      attempts — not just known-bad traffic — as the high-value signal.
+    indicators:
+      - "Network sessions or authentication attempts from enterprise IT subnets directly to OT control-network subnets, bypassing the industrial DMZ"
+      - "Dual-homed hosts with interfaces in both corporate and OT address ranges, especially engineering or historian servers"
+      - "Firewall rules permitting inbound connections from IT to OT (the permitted direction should be OT-initiated outbound replication only)"
+      - "DNS or asset-discovery traffic from IT systems naming OT assets (PLC hostnames, historian servers, HMI stations)"
+    detection:
+      rule: detect_it_ot_boundary_violation
+      patterns:
+        - '(purdue|level[\s_-]?3[.\s]?5|industrial[\s_-]?dmz).{0,60}(bypass|direct|misconfig)'
+        - '(dual[\s_-]?homed|multi[\s_-]?homed).{0,40}(ot|ics|control|scada)'
+        - '(it|corporate|enterprise).{0,30}(to|into).{0,30}(ot|operational|ics|scada).{0,40}(auth|login|session|smb|rdp|ssh)'
+    severity: high
+    mitigations:
+      - "Enforce a real industrial DMZ: no direct routing between enterprise and OT networks; all cross-boundary traffic brokered through data diodes, historians, or jump hosts."
+      - "Document every permitted IT/OT conduit (zones, protocols, direction) per IEC 62443 zone-and-conduit design and alert on deviations."
+      - "Eliminate dual-homed hosts; scan continuously for hosts with interfaces in both IT and OT ranges."
+      - "Segment and monitor vendor remote-access paths so they land in the DMZ, never directly on the control network."
+    references:
+      - "https://attack.mitre.org/matrices/ics/"
+      - "https://www.nist.gov/news-events/news/2023/09/nist-publishes-guide-operational-technology-ot-security"
+
+  - id: AEG-T424
+    name: "OT Protocol Abuse (Modbus / DNP3 / OPC UA) at Detection Level"
+    category: ics_ot_attacks
+    description: >-
+      Legacy OT protocols (Modbus, DNP3, IEC 60870-5-104, OPC UA) were
+      designed decades ago for isolated serial networks and generally lack
+      authentication, encryption, or authorization: any host on the segment
+      that speaks the protocol can issue read, write, and control commands
+      that field devices obey. Attackers abuse this by acting as a rogue
+      master — issuing control commands or altering setpoints — and
+      defenders detect it by watching for protocol behavior that no
+      legitimate master would produce.
+    how_it_works: >-
+      In the observed tradecraft, an intruder who has reached the OT network
+      enumerates controllers by sending benign read/identify requests, then
+      escalates to write and control commands that manipulate breakers,
+      valves, or setpoints. Industroyer (Kyiv, Dec 2016) did exactly this
+      against power-grid substations, driving IEC-104 commands to circuit
+      breakers and protection relays using the protocols precisely as
+      designed. PIPEDREAM/INCONTROLLER was built as a modular framework to
+      perform this class of interaction across multiple vendor device
+      families. For defenders, the detection substrate is passive OT network
+      monitoring: new masters appearing on the segment, function codes that
+      legitimate HMIs never use (unauthenticated writes, diagnostic/restar
+      style commands), command bursts at inhuman speed, and control traffic
+      originating from non-engineering hosts. OPC UA deployments add
+      certificate and session telemetry to watch.
+    variants:
+      - "Rogue-master command injection on Modbus/DNP3/IEC-104 segments (Industroyer pattern, Dec 2016 Kyiv)"
+      - "Setpoint and control-command manipulation to drive unsafe process states"
+      - "Multi-protocol frameworks (PIPEDREAM/INCONTROLLER class) automating device discovery and control"
+    indicators:
+      - "A new or unrecognized master/client IP issuing control or write commands on an OT protocol segment"
+      - "Protocol function codes outside the site's legitimate baseline (writes, control operations, diagnostic commands never used by the HMI)"
+      - "Control-command bursts at machine speed or outside maintenance windows"
+      - "OT protocol traffic sourced from hosts that are not authorized engineering workstations or HMIs"
+    detection:
+      rule: detect_ot_protocol_abuse
+      patterns:
+        - '(modbus|dnp3|iec[.\s_-]?104|opc[.\s_-]?ua).{0,50}(rogue|unauthorized|anomal|abuse)'
+        - '(rogue|unknown|new)[\s_-]?master.{0,40}(modbus|dnp3|iec|opc)'
+        - '(unauthenticated|unexpected)[\s_-]?(write|control|command).{0,40}(plc|rtu|breaker|relay|controller)'
+    severity: critical
+    mitigations:
+      - "Deploy passive OT network monitoring with a protocol-aware baseline; alert on new masters and out-of-baseline function codes."
+      - "Segment OT protocols by zone so a compromise in one cell cannot issue commands plant-wide; never route raw OT protocols across the IT/OT boundary."
+      - "Where vendor support exists, enable OPC UA security modes (signed/encrypted, certificate-pinned) and DNP3 Secure Authentication."
+      - "Maintain an asset inventory mapping every authorized master/client so rogue sources are immediately distinguishable."
+    examples:
+      - summary: "ESET's analysis of Industroyer found it directly controlled substation switches and circuit breakers via standard industrial protocols (IEC-101/104, IEC 61850, OPC DA), calling it the most dangerous ICS malware since Stuxnet; it was implicated in the December 2016 Kyiv blackout."
+        reference: "https://www.eset.com/int/about/newsroom/press-releases/research/eset-researchers-discover-industroyer-the-biggest-threat-to-industrial-control-systems-since-stuxne-2/"
+    references:
+      - "https://www.eset.com/int/about/newsroom/press-releases/research/eset-researchers-discover-industroyer-the-biggest-threat-to-industrial-control-systems-since-stuxne-2/"
+      - "https://attack.mitre.org/matrices/ics/"
+      - "https://www.forescout.com/blog/since-stuxnet-a-brief-history-of-critical-infrastructure-attacks/"
+
+  - id: AEG-T425
+    name: "Engineering Workstation (EWS) Targeting"
+    category: ics_ot_attacks
+    description: >-
+      Engineering workstations — the Windows hosts that run the vendor
+      software used to program PLCs, RTUs, and safety controllers — are the
+      crown jewels of OT intrusions: they hold project files, controller
+      credentials, and the trusted software path to reprogram the process
+      itself. TRITON was delivered through a compromised SIS engineering
+      workstation, and the PIPEDREAM tooling included a component to
+      compromise Windows-based engineering workstations, making EWS
+      compromise the single most reliable precursor signal of an impending
+      OT impact operation.
+    how_it_works: >-
+      Intruders reach the EWS from the IT side (stolen credentials,
+      vendor-VPN abuse, or malware staged through the DMZ) and then use the
+      workstation's legitimate position: its installed engineering tools
+      already speak the proprietary controller protocols, and its project
+      files document the entire process. Observed behaviors include new
+      processes spawned by engineering software outside maintenance windows,
+      project files copied off the host, controller-upload/download
+      sessions initiated by accounts that never program, and driver-level
+      implants (the PIPEDREAM case used a vulnerable signed motherboard
+      driver to reach the Windows kernel beneath EDR visibility). For
+      defenders, the EWS deserves workstation-grade EDR plus OT-specific
+      monitoring: every controller-programming session should be logged,
+      attributed to a named engineer, and correlated with an approved
+      change ticket.
+    indicators:
+      - "Engineering software (vendor IDEs, project tools) launching processes or network sessions outside approved maintenance windows"
+      - "Project files or controller backups copied from the EWS to removable media or exfiltrated to IT/DMZ hosts"
+      - "Controller upload/download sessions initiated by accounts or hosts with no programming role"
+      - "Kernel-driver loads or driver-level persistence on an EWS (the PIPEDREAM AsrDrv103.sys pattern) beneath normal EDR visibility"
+    detection:
+      rule: detect_ews_compromise
+      patterns:
+        - '(engineering|ews)[\s_-]?workstation.{0,60}(compromise|malware|unauthor|implant)'
+        - '(project.file|controller.backup|logic.file).{0,40}(exfil|copied|stolen|upload)'
+        - '(asrdrv103|vulnerable[\s_-]?driver).{0,40}(kernel|ews|engineering)'
+    severity: critical
+    mitigations:
+      - "Harden EWS as privileged-access workstations: application allowlisting so only vendor engineering tools execute, no email or web browsing."
+      - "Log every controller programming session (who, what controller, what changed) and require an approved change ticket for logic changes."
+      - "Never dual-home EWS to IT and OT; restrict vendor remote access to EWS through the DMZ with session recording."
+      - "Deploy EDR on EWS with kernel-visibility and alert on unsigned/vulnerable driver loads."
+    examples:
+      - summary: "In the TRITON incident, the attacker gained remote access to an SIS engineering workstation and used it to deploy the framework that reprogrammed Triconex safety controllers."
+        reference: "https://www.techtarget.com/searchsecurity/news/450431965/Triton-framework-used-in-industrial-control-attacks"
+    references:
+      - "https://www.techtarget.com/searchsecurity/news/450431965/Triton-framework-used-in-industrial-control-attacks"
+      - "https://www.xonasystems.com/2022/04/pipedream-malware-targets-ics-what-critical-infrastructure-owners-need-to-know/"
+      - "https://www.nist.gov/news-events/news/2023/09/nist-publishes-guide-operational-technology-ot-security"
+
+  - id: AEG-T426
+    name: "Safety Instrumented System (SIS) Attack Concepts"
+    category: ics_ot_attacks
+    description: >-
+      Safety instrumented systems are the last line of defense in a plant:
+      independent controllers whose only job is to drive the process to a
+      safe state when parameters go dangerous. Attacking the SIS is the
+      highest-severity OT tradecraft because a compromised safety system can
+      silently permit a physical catastrophe. TRITON (2017) is the only
+      publicly documented framework built specifically to reprogram SIS
+      controllers, and its behavior defines the defender's detection model.
+    how_it_works: >-
+      At behavior level, SIS attacks require the intruder to already hold an
+      engineering workstation with the vendor's safety-programming software,
+      then abuse the proprietary engineering protocol to read, alter, or
+      replace the safety logic. TRITON's observed behavior: enumerate SIS
+      controllers, inject an attacker program into the controller's
+      execution table while leaving legitimate programs in place, and
+      attempt to keep the controller running so the compromise stays
+      invisible. The attack was discovered because SIS controllers entered
+      a failed-safe state — redundant processing units failed a validation
+      check — which shut the process down and triggered investigation.
+      Defenders therefore watch for exactly these signals: SIS logic
+      changes outside planned safety reviews, engineering-protocol sessions
+      to SIS controllers from unexpected hosts, and SIS diagnostic/fault
+      states (failed-safe, validation failures) that have no maintenance
+      explanation. Key-switch position changes on safety controllers are a
+      first-class audit event.
+    indicators:
+      - "Safety-controller logic or program-table changes outside a scheduled safety review or MOC (management of change) window"
+      - "Engineering-protocol sessions to SIS controllers sourced from hosts other than the designated SIS engineering workstation"
+      - "SIS controllers entering failed-safe states or raising redundancy/validation diagnostic faults without a maintenance cause"
+      - "Physical key-switch on a safety controller moved to PROGRAM outside an approved programming event, or left in PROGRAM persistently"
+    detection:
+      rule: detect_sis_tampering
+      patterns:
+        - '(sis|safety[\s_-]?instrumented|triconex).{0,50}(reprogram|logic[\s_-]?change|tamper|triton)'
+        - '(failed[\s_-]?safe|validation[\s_-]?fail|mp[\s_-]?diagnostic).{0,40}(sis|safety|controller)'
+        - '(key[\s_-]?switch|program[\s_-]?mode).{0,40}(sis|safety|triconex)'
+    severity: critical
+    mitigations:
+      - "Segregate safety-system networks from process-control and IT networks; SIS engineering workstations must not be dual-homed."
+      - "Use physical key-switch controls: safety controllers stay in RUN; PROGRAM mode only during scheduled, ticketed programming events with key-position auditing."
+      - "Implement change management for all SIS logic with independent verification; alert on any SIS program modification."
+      - "Monitor SIS diagnostic and fault telemetry as a security feed, not just a reliability feed."
+    examples:
+      - summary: "Mandiant's TRITON analysis found the attack framework could read/write SIS programs and query controller state; the intruder persisted over multiple attempts to deliver functioning safety-controller logic, and the compromise surfaced only when controllers entered a failed-safe state."
+        reference: "https://cyber-peace.org/wp-content/uploads/2017/12/triton.pdf"
+    references:
+      - "https://www.techtarget.com/searchsecurity/news/450431965/Triton-framework-used-in-industrial-control-attacks"
+      - "https://cyber-peace.org/wp-content/uploads/2017/12/triton.pdf"
+      - "https://attack.mitre.org/matrices/ics/"
+
+  - id: AEG-T427
+    name: "OT Persistence via Controller Logic Modification"
+    category: ics_ot_attacks
+    description: >-
+      In OT environments, persistence does not require malware on a
+      workstation: modifying a controller's program or tasking achieves
+      persistence that survives reboots, reimaging, and even network
+      eviction, because the malicious logic lives inside the PLC/RTU/DCS
+      controller itself. MITRE ATT&CK for ICS captures this as Modify
+      Program / Modify Controller Tasking, and defenders treat every
+      controller-logic change as a persistence-relevant event.
+    how_it_works: >-
+      Once an intruder can speak the engineering protocol (typically via a
+      compromised EWS, see AEG-T425), they upload altered control logic:
+      extra rungs, modified setpoints, timers that activate later, or
+      reporting logic that masks the true process state from the HMI (the
+      Stuxnet-class concealment behavior). Because controllers execute from
+      non-volatile memory and are rarely reimaged, the change persists
+      indefinitely and is invisible to IT-centric EDR. Detection is
+      change-control based: cryptographic or hash baselines ("golden
+      images") of every controller program, automated diffing on each
+      download/upload cycle, and alerting on any program modification that
+      lacks an approved change ticket. Firmware-level modification is the
+      deeper variant, caught by firmware attestation where the vendor
+      supports it.
+    indicators:
+      - "Controller program checksums differing from the golden-image baseline with no matching change ticket"
+      - "Upload/download sessions to controllers outside maintenance windows or from non-EWS hosts"
+      - "HMI displays disagreeing with independent sensor readings (possible reporting-logic manipulation)"
+      - "Firmware version or attestation mismatches on controllers that report successful update cycles"
+    detection:
+      rule: detect_controller_logic_persistence
+      patterns:
+        - '(plc|rtu|dcs|controller)[\s_-]?(logic|program|firmware).{0,50}(modif|tamper|unauthor|mismatch)'
+        - '(golden[\s_-]?image|baseline).{0,40}(mismatch|diff|changed).{0,30}(plc|controller|rtu)'
+        - '(modify[\s_-]?program|modify[\s_-]?controller[\s_-]?tasking).{0,40}(detect|alert)'
+    severity: high
+    mitigations:
+      - "Maintain cryptographically hashed golden images of every controller program and firmware; verify on a schedule and after every maintenance event."
+      - "Require management-of-change approval for all logic modifications, with automated diff review of the actual uploaded program."
+      - "Restrict controller programming to designated EWS hosts; alert on programming sessions from any other source."
+      - "Where supported, enable controller firmware signing/attestation and disable remote firmware update paths."
+    references:
+      - "https://attack.mitre.org/matrices/ics/"
+      - "https://www.nist.gov/news-events/news/2023/09/nist-publishes-guide-operational-technology-ot-security"
+
+  - id: AEG-T428
+    name: "ICS Malware Family Behaviors (HAVEX / TRITON-class)"
+    category: ics_ot_attacks
+    description: >-
+      Publicly analyzed ICS malware families share a recognizable
+      behavior profile that defenders can detect without knowing any
+      specific sample: ICS-protocol reconnaissance, OPC server enumeration,
+      engineering-workstation staging, and controller interaction using
+      native industrial protocols. HAVEX (Dragonfly, 2013–2014) mapped
+      control systems by abusing the OPC standard; TRITON (2017) targeted
+      safety controllers; PIPEDREAM (2022) generalized the pattern into a
+      modular multi-vendor framework. The behaviors, not the binaries, are
+      the detection target.
+    how_it_works: >-
+      The common lifecycle defenders observe: (1) an IT foothold, often via
+      trojanized vendor software or watering holes (HAVEX's delivery);
+      (2) quiet OPC/ICS-protocol discovery — enumerating OPC servers,
+      device identifiers, and network topology using the same queries
+      legitimate engineering tools make; (3) staging on an engineering
+      workstation; (4) controller interaction via native protocols. What
+      distinguishes this from IT malware in telemetry is the *vocabulary*:
+      OPC browse/enumeration calls at scale, DNP3/Modbus device-identify
+      sweeps, and engineering-protocol sessions to devices that never
+      receive them in normal operations. HAVEX notably exfiltrated ICS
+      device and process details back to C2, so OT-originated outbound
+      sessions to unknown infrastructure are part of the profile.
+    variants:
+      - "OPC-enumeration reconnaissance for control-system mapping (HAVEX/Dragonfly pattern)"
+      - "Safety-controller targeting via proprietary engineering protocols (TRITON pattern)"
+      - "Modular multi-vendor ICS frameworks with device scan/compromise/control stages (PIPEDREAM/INCONTROLLER pattern)"
+    indicators:
+      - "OPC server enumeration or ICS device-identify sweeps at a scale or cadence no engineering tool produces"
+      - "Engineering-protocol sessions from IT-network hosts to controllers, historians, or OPC servers"
+      - "Outbound connections from OT/DMZ hosts to unknown external infrastructure following ICS reconnaissance"
+      - "Trojanized or unexpectedly modified vendor software installers and updates on EWS hosts"
+    detection:
+      rule: detect_ics_malware_behaviors
+      patterns:
+        - '(opc|havex|dragonfly).{0,50}(enumerat|recon|scan).{0,40}(server|device)'
+        - '(ics|scada|ot).{0,30}(malware|framework).{0,40}(triton|incontroller|pipedream|industroyer|havex|stuxnet)'
+        - '(device[\s_-]?identif|topology)[\s_-]?sweep.{0,40}(modbus|dnp3|opc|profinet|s7)'
+    severity: high
+    mitigations:
+      - "Baseline legitimate OPC and engineering-protocol traffic; alert on enumeration-scale deviations."
+      - "Verify integrity of vendor software and updates before they reach EWS hosts (hash checks, vendor signatures)."
+      - "Deny OT-originated outbound internet sessions by default; log and alert on any that occur."
+      - "Map detections to MITRE ATT&CK for ICS techniques to keep family-agnostic coverage as new families appear."
+    references:
+      - "https://attack.mitre.org/matrices/ics/"
+      - "https://www.forescout.com/blog/since-stuxnet-a-brief-history-of-critical-infrastructure-attacks/"
+      - "https://www.incibe.es/en/incibe-cert/publications/cybersecurity-highlights/incontrollerpipedream-malware-targeting-icsscada-devices"
+
+  - id: AEG-T429
+    name: "OT Process-Variable Anomaly Detection (Physics-Aware Monitoring)"
+    category: ics_ot_attacks
+    description: >-
+      The defender's home-field advantage in OT is physics: industrial
+      processes obey mass, energy, and timing laws, so sensor readings that
+      violate physical plausibility reveal either equipment failure or
+      malicious manipulation — even when the attacker controls what the HMI
+      displays. Historian-backed process-variable baselining turns the
+      plant's own telemetry into an intrusion-detection sensor, catching
+      attacks whose network tradecraft was otherwise clean.
+    how_it_works: >-
+      Defenders build baselines from historian data: normal ranges,
+      rates of change, and cross-sensor correlations for each process
+      variable (temperatures, pressures, flows, valve positions). Detection
+      models — statistical envelopes or physics-based digital twins —
+      flag deviations such as a valve commanded open while its flow reads
+      zero, a temperature rising faster than the process allows, or
+      correlated sensors diverging (the signature of reporting-logic
+      manipulation that hides the true state from operators, as in the
+      Stuxnet class). This layer complements network monitoring: it fires
+      when the *process* misbehaves regardless of how the attacker got in,
+      and it is the primary control against insider or supply-chain actors
+      who use legitimate credentials and tools.
+    indicators:
+      - "Process variables moving outside physically plausible envelopes or historical baselines"
+      - "Cross-sensor disagreement: correlated measurements diverging in ways the process physics cannot explain"
+      - "Commanded actuator states inconsistent with measured outcomes (valve commanded open, no flow)"
+      - "Historian gaps or backfilled data coinciding with process anomalies (possible telemetry manipulation)"
+    detection:
+      rule: detect_process_variable_anomaly
+      patterns:
+        - '(process[\s_-]?variable|historian|sensor).{0,50}(anomal|deviat|implausible|out[\s_-]?of[\s_-]?range)'
+        - '(valve|pump|breaker|actuator).{0,30}command.{0,40}(mismatch|no[\s_-]?(flow|response|effect))'
+        - '(physics|digital[\s_-]?twin|mass[\s_-]?balance).{0,40}(violat|deviat|alarm)'
+    severity: medium
+    mitigations:
+      - "Feed historian data into anomaly-detection models with physics-based plausibility checks, not just statistical thresholds."
+      - "Protect historian integrity: append-only storage, access controls, and alerting on gaps or retroactive edits."
+      - "Cross-validate critical measurements with independent/diverse sensors so reporting-logic manipulation is detectable."
+      - "Integrate process-anomaly alerts into the SOC so OT physics events get security triage, not just operations triage."
+    references:
+      - "https://www.nist.gov/news-events/news/2023/09/nist-publishes-guide-operational-technology-ot-security"
+      - "https://attack.mitre.org/matrices/ics/"
+
+  - id: AEG-T430
+    name: "Remote-Access Jump-Host Abuse into OT"
+    category: ics_ot_attacks
+    description: >-
+      Nearly every modern plant grants remote access — vendor support
+      tunnels, integrator VPNs, and operator remote-desktop paths — and
+      these converge on jump hosts in the industrial DMZ. Attackers abuse
+      this legitimate channel with stolen credentials or hijacked vendor
+      sessions, arriving inside the OT trust boundary without touching a
+      firewall rule. Because the access is "authorized" at the network
+      layer, detection must live in session behavior, not in connection
+      success.
+    how_it_works: >-
+      The pattern: valid credentials (phished, reused from an IT breach,
+      or belonging to a vendor whose own network was compromised) open a
+      VPN or remote-desktop session to the OT jump host, then move to
+      engineering workstations, HMIs, or controllers using native OT
+      protocols. BlackEnergy's 2015 Ukraine operation used compromised
+      remote-access paths into operator workstations before the disruptive
+      phase. Defenders instrument the jump host as a choke point: every
+      session is authenticated with MFA, time-boxed, recorded, and
+      correlated with an approved work order; behavior analytics flag
+      sessions at unusual hours, from unusual geographies or ASNs,
+      interactive sessions that pivot to protocol-level controller access,
+      and bulk file transfers through a channel meant for maintenance.
+    indicators:
+      - "Vendor or remote-access sessions to the OT jump host outside scheduled maintenance windows or without a matching work order"
+      - "Jump-host sessions originating from unexpected geographies, ASNs, or devices for a given vendor account"
+      - "Interactive jump-host sessions that pivot to OT-protocol traffic (Modbus/DNP3/engineering protocols) toward controllers"
+      - "Bulk file movement or new tooling staged through a remote-access session intended for interactive maintenance"
+    detection:
+      rule: detect_jump_host_abuse
+      patterns:
+        - '(jump[\s_-]?host|bastion|dmz).{0,40}(ot|ics|scada).{0,50}(unauthor|anomal|off[\s_-]?hours|no[\s_-]?ticket)'
+        - '(vendor|third[\s_-]?party|integrator).{0,30}(vpn|remote[\s_-]?access|rdp).{0,40}(ot|ics|control)'
+        - '(remote[\s_-]?access|vpn).{0,30}session.{0,40}(unusual|impossible[\s_-]?travel|new[\s_-]?(asn|geo|device))'
+    severity: high
+    mitigations:
+      - "Require phishing-resistant MFA on every OT remote-access path and time-box vendor sessions to approved windows."
+      - "Record and audit all jump-host sessions; correlate each session with an approved work order."
+      - "Give each vendor an isolated, least-privilege account — never shared credentials — and disable accounts between engagements."
+      - "Alert on any OT-protocol traffic originating from a jump host toward controllers outside maintenance activity."
+    references:
+      - "https://www.nist.gov/news-events/news/2023/09/nist-publishes-guide-operational-technology-ot-security"
+      - "https://www.forescout.com/blog/since-stuxnet-a-brief-history-of-critical-infrastructure-attacks/"
+
+  - id: AEG-T431
+    name: "OT Supply-Chain Risk (Vendor Access and Controller Firmware)"
+    category: ics_ot_attacks
+    description: >-
+      OT supply chains differ from IT ones in ways that matter for defense:
+      controllers run for 15–25 years, firmware comes only from the vendor,
+      integrators hold standing remote access, and project files move on
+      USB sticks between vendor laptops and air-gapped networks. Compromise
+      anywhere in this chain — a trojanized update, a vendor's breached
+      network, counterfeit hardware — lands directly in the control layer,
+      bypassing perimeter controls entirely.
+    how_it_works: >-
+      Observed vectors include trojanized vendor software delivered to
+      engineering workstations (the HAVEX delivery pattern), vendor remote
+      access abused as an initial-access path into OT, and firmware or
+      project files introduced via removable media during commissioning or
+      maintenance. The PIPEDREAM tooling's engineering-workstation
+      component shows why the workstation is the supply-chain junction:
+      everything the vendor touches flows through it. Defenders respond
+      with OT-specific supply-chain controls: integrity verification of
+      every vendor artifact before it reaches the EWS, procurement
+      requirements for signed firmware and SBOMs, strict vendor-access
+      lifecycle (provisioned per engagement, revoked after), and USB/media
+      control with malware scanning on a DMZ-side kiosk before media enters
+      OT. This is deliberately scoped apart from IT software supply chain
+      (see T073–T084): the assets, vendors, and lifetimes are different.
+    indicators:
+      - "Vendor software installers or firmware images on EWS hosts whose hashes do not match vendor-published values"
+      - "Standing (always-on) vendor remote-access accounts with no associated active engagement"
+      - "Removable media connected to OT hosts without passing through the designated scanning kiosk"
+      - "New controller hardware or modules whose provenance/attestation cannot be verified against procurement records"
+    detection:
+      rule: detect_ot_supply_chain_risk
+      patterns:
+        - '(vendor|firmware|update)[\s_-]?(image|installer|package).{0,50}(hash[\s_-]?mismatch|unsigned|unverified|tamper)'
+        - '(standing|always[\s_-]?on|persistent)[\s_-]?vendor.{0,30}(access|account|vpn)'
+        - '(usb|removable[\s_-]?media).{0,40}(ot|ics|ews|controller).{0,30}(bypass|unscanned|no[\s_-]?kiosk)'
+    severity: high
+    mitigations:
+      - "Verify hashes/signatures of all vendor software and firmware before it touches an EWS; reject unsigned artifacts."
+      - "Require SBOMs and signed firmware in OT procurement contracts; track firmware versions fleet-wide."
+      - "Provision vendor access per engagement with automatic expiry; audit standing vendor accounts continuously."
+      - "Enforce media control: all USB/removable media scanned on an isolated kiosk before entering OT."
+    references:
+      - "https://www.xonasystems.com/2022/04/pipedream-malware-targets-ics-what-critical-infrastructure-owners-need-to-know/"
+      - "https://attack.mitre.org/matrices/ics/"
+      - "https://www.nist.gov/news-events/news/2023/09/nist-publishes-guide-operational-technology-ot-security"
+
+  - id: AEG-T432
+    name: "Destructive OT Targeting (Behavior-Level)"
+    category: ics_ot_attacks
+    description: >-
+      Destructive OT operations aim beyond disruption: damaging equipment,
+      destroying process capability, or creating unsafe physical states.
+      Industroyer manipulated substation breakers to black out Kyiv;
+      PIPEDREAM/INCONTROLLER was assessed capable of shutting down
+      machinery, sabotaging processes, and disabling safety controllers to
+      cause physical destruction. Defenders study these behaviors —
+      breaker/relay manipulation sequences, controller wiping, safety
+      disablement — to recognize the staging that precedes them.
+    how_it_works: >-
+      Behaviorally, destructive OT attacks stage like this: prolonged
+      reconnaissance of the target process (device enumeration, process
+      understanding — Industroyer's protocol modules were tailored to the
+      substation's equipment), followed by a coordinated command sequence
+      (opening breakers in an order that maximizes damage or prevents
+      recovery), often paired with wiping controller configurations or
+      locking out operators to delay restoration. Some variants first
+      disable or degrade safety systems so the destructive sequence is not
+      interrupted. For defenders, the pre-detonation signals are the
+      valuable part: mass device-enumeration, breaker-command rehearsals
+      or test sequences, configuration backups being pulled (useful for
+      rebuilding after destruction), and operator workstations losing
+      visibility into the process. Recovery planning — offline backups of
+      controller logic, spare hardware, black-start procedures — is the
+      constructive core of this technique.
+    indicators:
+      - "Coordinated breaker/relay command sequences inconsistent with any planned switching order"
+      - "Controller configurations or project backups being wiped, encrypted, or exfiltrated at scale"
+      - "Safety-system degradation or disablement occurring in the same window as process-control anomalies"
+      - "Operator HMIs losing visibility into the process (blinded operators) during a control-system event"
+    detection:
+      rule: detect_destructive_ot_staging
+      patterns:
+        - '(breaker|relay|substation|switchgear).{0,40}(coordinated|mass|sequence).{0,30}(open|trip|command)'
+        - '(controller|plc|rtu).{0,30}(config|logic|firmware).{0,40}(wip|delet|encrypt|destroy)'
+        - '(safety|protection).{0,30}(disable|degrad|bypass).{0,40}(breaker|process|control)'
+    severity: critical
+    mitigations:
+      - "Keep offline, tested backups of all controller logic and configurations; rehearse bare-metal restoration."
+      - "Alert on breaker/relay command sequences that deviate from approved switching orders."
+      - "Harden the safety layer independently so process-control compromise cannot silently disable protection (see AEG-T426)."
+      - "Maintain black-start and manual-operation procedures so loss of control systems does not mean loss of the plant."
+    examples:
+      - summary: "Mandiant assessed INCONTROLLER/PIPEDREAM could shut down critical machinery, sabotage industrial processes, and disable safety controllers to cause physical destruction, comparing it to TRITON, INDUSTROYER, and STUXNET; it was caught before any attack was attempted."
+        reference: "https://www.xonasystems.com/2022/04/pipedream-malware-targets-ics-what-critical-infrastructure-owners-need-to-know/"
+    references:
+      - "https://www.eset.com/int/about/newsroom/press-releases/research/eset-researchers-discover-industroyer-the-biggest-threat-to-industrial-control-systems-since-stuxne-2/"
+      - "https://www.xonasystems.com/2022/04/pipedream-malware-targets-ics-what-critical-infrastructure-owners-need-to-know/"
+      - "https://attack.mitre.org/matrices/ics/"
+
+  - id: AEG-T433
+    name: "Safety-First OT Incident Response"
+    category: ics_ot_attacks
+    description: >-
+      OT incident response inverts IT priorities: safety of people and the
+      physical process comes before containment, eradication, and evidence
+      preservation. Isolating a compromised controller mid-process can
+      itself cause the unsafe state the attacker wanted; conversely,
+      waiting too long lets the attacker finish. Defenders need
+      pre-planned, safety-reviewed playbooks that sequence process
+      stabilization first and network containment second.
+    how_it_works: >-
+      In practice, OT IR starts with the control-room question — "is the
+      process safe and stable?" — answered from independent instrumentation,
+      not from the possibly-compromised HMI. Only then do responders
+      contain: segmenting affected OT zones while keeping safety systems
+      and manual controls operable, preserving volatile evidence (controller
+      memory, network captures) without rebooting devices mid-process, and
+      coordinating with operations on whether to ride through, gracefully
+      shut down, or trip to safe state. Forensic differences from IT are
+      structural: controllers lack EDR, logs live in historians and
+      network captures, and rebuilding means reloading golden-image logic
+      onto hardware. Tabletop exercises with operations, safety, and
+      engineering teams are the mitigation that actually works, because the
+      hard decisions (who authorizes a plant trip, who talks to regulators)
+      cannot be invented mid-incident.
+    indicators:
+      - "Security alerts on OT assets that coincide with process instability or safety-system actuations"
+      - "Evidence of attacker presence (unauthorized logic changes, rogue sessions) discovered during a process upset"
+      - "Containment actions proposed by IT responders that would remove safety or manual-control visibility"
+      - "Missing or conflicting process telemetry during an active security investigation (evidence-preservation gap)"
+    detection:
+      rule: detect_ot_ir_gap
+      patterns:
+        - '(ot|ics|scada).{0,30}(incident|breach|compromise).{0,40}(process[\s_-]?safe|stabiliz|trip)'
+        - '(safety[\s_-]?first|process[\s_-]?safety).{0,40}(containment|isolat|eradicat)'
+        - '(controller|plc).{0,30}(memory|forensic|evidence).{0,40}(preserv|volatile|capture)'
+    severity: medium
+    mitigations:
+      - "Write OT-specific IR playbooks with operations and safety engineering: stabilize the process first, contain second."
+      - "Pre-authorize decision authority for plant trips and safety actions; define regulator and law-enforcement notification paths in advance."
+      - "Maintain OT forensic readiness: continuous OT network capture, historian retention sized for investigation, golden-image logic backups."
+      - "Run joint IT/OT tabletop exercises that include a safety-system compromise scenario (TRITON-class) at least annually."
+    references:
+      - "https://www.nist.gov/news-events/news/2023/09/nist-publishes-guide-operational-technology-ot-security"
+      - "https://attack.mitre.org/matrices/ics/"
+
+  - id: AEG-T434
+    name: "IT/OT Convergence and IIoT Attack Surface"
+    category: ics_ot_attacks
+    description: >-
+      Cloud-connected OT, Industrial IoT sensors, and remote-monitoring
+      platforms are dissolving the isolation that legacy OT security
+      assumed: wireless sensors, cellular gateways, and cloud dashboards
+      create new entry points into the control network, often procured and
+      managed outside the OT security program. Each converged connection is
+      a new IT/OT boundary that must be defended like one.
+    how_it_works: >-
+      Convergence introduces three risk patterns defenders track. First,
+      IIoT sensors and gateways (wireless, cellular, LoRa) that bridge
+      directly from the physical process to vendor clouds, bypassing the
+      industrial DMZ. Second, cloud-hosted SCADA and historian replicas
+      that synchronize bidirectionally with on-premise OT, so a cloud
+      credential compromise becomes an OT write path. Third, remote
+      monitoring and predictive-maintenance platforms with standing
+      connections into the control network, managed by IT or the vendor
+      rather than OT security. Detection treats each as a boundary:
+      inventory every IIoT/cloud connection, baseline its traffic, alert
+      on new devices, unexpected protocols, or inbound cloud-to-OT
+      sessions. NIST's SP 800-82 revisions explicitly expanded scope to
+      cover IIoT and cloud convergence, reflecting that this is now the
+      mainstream OT architecture, not an edge case.
+    indicators:
+      - "IIoT gateways or sensors communicating directly with external clouds, bypassing the industrial DMZ"
+      - "Cloud-to-OT inbound sessions (dashboard, remote monitoring) outside the documented synchronization design"
+      - "New wireless or cellular devices appearing on OT-adjacent networks without asset-registration"
+      - "Predictive-maintenance or vendor analytics platforms with standing, unaudited connections into the control network"
+    detection:
+      rule: detect_convergence_exposure
+      patterns:
+        - '(iiot|industrial[\s_-]?iot|wireless[\s_-]?sensor).{0,50}(cloud|bypass|unregistered|unauthor)'
+        - '(cloud|remote[\s_-]?monitor).{0,30}(to|into).{0,30}(ot|ics|scada|control).{0,30}(inbound|session|write)'
+        - '(cellular|lorawan|5g)[\s_-]?gateway.{0,40}(ot|ics|control|unregistered)'
+    severity: high
+    mitigations:
+      - "Inventory every IIoT device, gateway, and cloud connection touching OT; no unregistered device talks to the control network."
+      - "Route all IIoT/cloud traffic through the industrial DMZ with protocol allowlisting; default-deny inbound cloud-to-OT sessions."
+      - "Apply the same identity, patching, and monitoring standards to IIoT gateways as to OT assets — they are OT assets."
+      - "Require security review of every new remote-monitoring or analytics integration before it connects to production OT."
+    references:
+      - "https://www.nist.gov/news-events/news/2026/09/guide-operational-technology-ot-security-nist-requests-comments-draft-sp"
+      - "https://attack.mitre.org/matrices/ics/"
