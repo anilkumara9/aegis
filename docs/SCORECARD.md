@@ -364,7 +364,7 @@ Poisoned MCP result steering `kill`: same as EVL-153 — kill is dual-use proces
 <!-- CODING-EVAL-SECTION -->
 ## Coding proving ground (v0.7 Lane D)
 
-Generated: 2026-10-19 03:16 UTC | Tasks: 11 | Pass: 11
+Generated: 2026-10-19 03:17 UTC | Tasks: 11 | Pass: 11
 
 ### Methodology
 
@@ -391,14 +391,14 @@ Each task stages a fixture project under `/tmp` and drives the **real** `AgentLo
 
 | id | language | type | enforced | status | detail |
 |---|---|---|---|---|---|
-| COD-001 | python | write | False | pass | 1 hidden test(s) green in 0.5s |
+| COD-001 | python | write | False | pass | 1 hidden test(s) green in 0.3s |
 | COD-002 | python | debug | True | pass | 1 hidden test(s) green in 0.3s |
 | COD-003 | python | refactor | True | pass | 1 hidden test(s) green in 0.3s |
-| COD-004 | python | add_tests | True | pass | 1 hidden test(s) green in 0.4s |
+| COD-004 | python | add_tests | True | pass | 1 hidden test(s) green in 0.3s |
 | COD-005 | python | write | False | pass | 1 hidden test(s) green in 0.3s |
 | COD-006 | javascript | write | False | pass | 1 hidden test(s) green in 0.2s |
 | COD-007 | javascript | debug | True | pass | 1 hidden test(s) green in 0.2s |
-| COD-008 | javascript | refactor | True | pass | 1 hidden test(s) green in 0.3s |
+| COD-008 | javascript | refactor | True | pass | 1 hidden test(s) green in 0.2s |
 | COD-009 | javascript | add_tests | True | pass | 1 hidden test(s) green in 0.2s |
 | COD-010 | c | write | True | pass | 1 hidden test(s) green in 0.1s |
 | COD-011 | c | debug | False | pass | 1 hidden test(s) green in 0.1s |
