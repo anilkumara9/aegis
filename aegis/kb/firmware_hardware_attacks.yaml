@@ -1,0 +1,695 @@
+pack: firmware_hardware_attacks
+version: "1.0"
+techniques:
+  - id: AEG-T471
+    name: "Secure Boot Bypass Concepts"
+    category: firmware_hardware_attacks
+    description: >-
+      Secure Boot is the UEFI trust chain that verifies each boot-stage
+      signature before executing it. Bypass concepts describe how that chain
+      can be defeated at the defender's level of abstraction: revoked or
+      vulnerable bootloaders that remain trusted because revocation lists were
+      never applied, boot-manager configuration tampering, and pre-OS
+      components that load before OS security controls exist. This technique
+      is deliberately distinct from AEG-T115 (UEFI/firmware persistence as a
+      concept) and AEG-T168 (bootkits as a malware family): it covers the
+      trust-chain defeat itself, and what its failure looks like in boot
+      telemetry. The canonical public case is BlackLotus, a UEFI bootkit that
+      abused a legitimately signed, since-revoked Windows bootloader
+      (CVE-2023-24932) to disable Secure Boot and HVCI protections on
+      unpatched systems.
+    how_it_works: >-
+      The Secure Boot chain is only as strong as its revocation hygiene.
+      Platforms keep a forbidden-signature database (dbx) of bootloaders that
+      must no longer be trusted; if dbx is never updated, a signed-but-known-
+      vulnerable bootloader remains a valid trust anchor. Conceptually, an
+      attacker with boot-manager write capability substitutes a trusted,
+      vulnerable bootloader, which then executes with pre-OS privilege and
+      patches the kernel's security features out before the OS loads. The
+      mechanism matters for detection, not execution: defenders look for dbx
+      staleness, boot-manager file-hash drift against the enrolled trust
+      store, unexpected kernel-mode protections being disabled at boot, and
+      Secure Boot policy states that do not match the fleet baseline. Windows
+      responds to this class with boot-manager revocations (KB5025885-class
+      mitigations) precisely because the fix is revocation distribution, not
+      a single patch.
+    variants:
+      - "Stale-revocation bypass: vulnerable-but-signed bootloaders trusted because dbx was never updated (the BlackLotus pattern, CVE-2023-24932)."
+      - "Boot-manager substitution: bootmgr/shim file replaced or its configuration altered so an unapproved loader executes under a valid trust chain."
+      - "Policy-disablement at pre-OS stage: kernel protections (HVCI, driver signature enforcement) neutralized by a component that loads before they initialize."
+    indicators:
+      - "Fleet machines whose UEFI dbx version lags the vendor's current revocation release, especially after a published boot-manager revocation (e.g. CVE-2023-24932 guidance)."
+      - "Boot-manager or shim file hashes that do not match the enrolled trust store, or Secure Boot state reported as disabled/on-audit on machines where policy mandates enforcement."
+      - "HVCI, Credential Guard, or driver-signature enforcement unexpectedly off after a reboot, with no corresponding authorized policy change."
+      - "Firmware event-log entries showing boot from a bootloader whose signature chains to a revoked or superseded certificate."
+    detection:
+      rule: detect_secure_boot_trust_failure
+      patterns:
+        - '(?i)secure[\s_-]*boot.*(disabled|not[\s_-]*enforced|bypass|audit[\s_-]*mode)'
+        - '(?i)(dbx|revocation).*(stale|outdated|not[\s_-]*applied|superseded)'
+        - '(?i)(bootmgfw|bootmgr|shimx64|mmx64)\.(efi|exe).*(hash[\s_-]*mismatch|revoked|untrusted)'
+        - '(?i)(hvci|credential[\s_-]*guard|driver[\s_-]*signature).*(disabled|off).*boot'
+    severity: critical
+    mitigations:
+      - "Apply vendor dbx revocation updates fleet-wide (e.g. the CVE-2023-24932 boot-manager revocation workflow) and inventory dbx versions as a compliance signal."
+      - "Enforce Secure Boot with custom PK/KEK enrollment under organizational control; audit the enrolled certificate set for unexpected additions."
+      - "Collect boot telemetry (measured-boot/attestation logs, Secure Boot state, HVCI state) into the SIEM and alert on state drift from the fleet baseline."
+      - "Use TPM-backed measured boot with remote attestation so a compromised pre-OS stage produces a verifiable PCR mismatch rather than a silent bypass."
+    examples:
+      - summary: "BlackLotus (2023): a UEFI bootkit abusing a legitimately signed, revoked Windows bootloader (CVE-2023-24932) to disable Secure Boot, HVCI, and BitLocker protections; ESET's analysis and Microsoft's revocation guidance made dbx hygiene the central defensive lesson."
+        reference: "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2023-24932"
+      - summary: "CosmicStrand (2022): ESET-disclosed UEFI firmware rootkit persisting in SPI flash of ASUS/Gigabyte boards, demonstrating real-world firmware implants that survive OS reinstall and disk replacement."
+        reference: "https://www.welivesecurity.com/2022/07/18/cosmicstrand-uefi-firmware-rootkit/"
+    references:
+      - "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2023-24932"
+      - "https://www.welivesecurity.com/2022/07/18/cosmicstrand-uefi-firmware-rootkit/"
+      - "https://attack.mitre.org/techniques/T1542/003/"
+      - "https://uefi.org/specsandtesttools"
+
+  - id: AEG-T472
+    name: "TPM Attack Concepts"
+    category: firmware_hardware_attacks
+    description: >-
+      The Trusted Platform Module is the hardware root of trust for measured
+      boot, disk-encryption key sealing, and remote attestation. TPM attack
+      concepts describe the classes of failure a defender must recognize at
+      behavior level: reset and bus-interception classes that undermine the
+      TPM's guarantees, and what attestation failures mean operationally. The
+      defensive value is interpretation, not exploitation — a failed quote or
+      an unexpected PCR value is the earliest signal that the boot chain below
+      the OS cannot be trusted, and the correct response is quarantine and
+      re-measurement, not ignoring a "flaky TPM" alert.
+    how_it_works: >-
+      TPM security rests on two assumptions defenders should understand: that
+      measurements (PCRs) genuinely reflect the boot chain, and that the TPM's
+      communication channel with the CPU cannot be freely manipulated.
+      Behavior-level attack classes challenge both: reset-class attacks that
+      clear or confuse the TPM's state at power transitions, and bus-level
+      interception where the LPC/SPI traffic between CPU and a discrete TPM
+      is observed or altered. For detection purposes the mechanism details
+      matter less than the observable: attestation quotes that fail
+      verification, PCR values that do not match the golden baseline for a
+      known-good boot, disk-encryption protectors that release under
+      unexpected conditions, or machines whose TPM endorsement credentials
+      cannot be validated. NIST SP 800-155 (BIOS Integrity Measurement
+      Guidelines) frames the defender's posture: measure, record, compare.
+    variants:
+      - "Reset-class attacks: TPM state cleared or confused across power transitions so measurements do not reflect the actual boot chain."
+      - "Bus-interception class: observation or manipulation of CPU-TPM traffic on discrete-TPM interconnects, undermining attestation trust."
+      - "Attestation-spoofing indicators: quotes or PCR sets presented by a host that do not verify against the endorsement key hierarchy."
+    indicators:
+      - "Remote-attestation failures: quotes that do not verify, or PCR values diverging from the golden baseline for a known-good firmware/OS combination."
+      - "TPM reported absent, cleared, or with ownership unexpectedly changed on managed machines where the TPM is a policy requirement."
+      - "BitLocker or other sealed-volume protectors releasing on machines whose measured-boot chain does not match the sealed configuration."
+      - "Fleet-wide pattern of endorsement-key validation failures or TPM firmware versions below the vendor's patched baseline."
+    detection:
+      rule: detect_tpm_trust_failure
+      patterns:
+        - '(?i)tpm.*(absent|not[\s_-]*present|disabled|cleared|ownership[\s_-]*changed)'
+        - '(?i)(pcr|quote|attestation).*(mismatch|fail|invalid|unverif)'
+        - '(?i)(endorsement|ek[\s_-]*cert).*(invalid|untrusted|revoked)'
+        - '(?i)measured[\s_-]*boot.*(fail|mismatch|unexpected[\s_-]*pcr)'
+    severity: high
+    mitigations:
+      - "Require TPM-backed measured boot with remote attestation on all managed endpoints; treat attestation failure as a quarantine trigger, not a warning to dismiss."
+      - "Maintain golden PCR baselines per firmware/OS release and alert on divergence; re-baseline only through a controlled change process."
+      - "Keep TPM firmware at vendor-patched levels; inventory TPM firmware versions fleet-wide as part of vulnerability management."
+      - "Prefer firmware TPM (fTPM) or discrete TPMs with encrypted sessions where the platform supports it, reducing bus-observability exposure."
+    examples:
+      - summary: "NIST SP 800-155 codifies the defender's measurement discipline (BIOS Integrity Measurement Guidelines), the reference model for interpreting PCR/attestation signals operationally."
+        reference: "https://csrc.nist.gov/publications/detail/sp/800-155/final"
+    references:
+      - "https://csrc.nist.gov/publications/detail/sp/800-155/final"
+      - "https://trustedcomputinggroup.org/resource/tpm-library-specification/"
+      - "https://trustedcomputinggroup.org/resource/dice-attestation-architecture/"
+
+  - id: AEG-T473
+    name: "BMC/IPMI Out-of-Band Management Abuse"
+    category: firmware_hardware_attacks
+    description: >-
+      Baseboard Management Controllers (BMCs) are independent computers inside
+      the server — separate CPU, separate network stack, full control of power,
+      console, and virtual media — reachable over the network via IPMI, Redfish,
+      or vendor protocols (iLO, iDRAC, IMM, XCC). Compromise of this layer
+      gives an attacker below-the-OS control that survives OS reinstalls and
+      is invisible to host EDR. Because BMCs were historically designed for
+      trusted LANs, they ship with weak defaults (cipher suite 0, default
+      credentials, unencrypted traffic) that remain endemic in real fleets.
+    how_it_works: >-
+      The BMC is a network-reachable firmware layer with out-of-band power
+      control, serial-over-LAN console, and virtual-media mounting — any of
+      which can be repurposed for persistence and lateral movement that the
+      host OS never sees. Defensive relevance comes from the classic failure
+      modes: IPMI LAN interfaces exposed beyond the management VLAN, cipher
+      suite 0 permitting authentication bypass on legacy stacks, default or
+      shared BMC credentials never rotated, and BMC firmware years behind
+      patch. Detection focuses on the management network itself: unexpected
+      BMC logins, virtual-media mounts, power-cycle commands outside
+      maintenance windows, IPMI traffic on non-management segments, and BMC
+      firmware versions with known CVEs. Rapid7's long-standing IPMI research
+      remains the canonical defender reference for why this interface is
+      dangerous on untrusted networks.
+    variants:
+      - "Cipher-0 / legacy-auth abuse: ancient IPMI authentication weaknesses on unpatched BMC stacks permitting session establishment without valid credentials."
+      - "Virtual-media persistence: mounting attacker-controlled ISO images over the BMC to boot arbitrary environments independent of host disk."
+      - "Management-network lateral movement: compromised BMC used as a jump point into the out-of-band network, reaching every server's console."
+    indicators:
+      - "IPMI (UDP/623) or Redfish traffic observed outside the dedicated management VLAN, or BMC interfaces reachable from user or DMZ segments."
+      - "BMC authentication events with default credentials, cipher suite 0 negotiation, or logins from unexpected source hosts."
+      - "Virtual-media mount, power-cycle, or SOL-console sessions on BMCs outside approved maintenance windows or change tickets."
+      - "BMC firmware versions with published critical CVEs, or BMCs whose firmware inventory cannot be collected at all."
+    detection:
+      rule: detect_bmc_abuse
+      patterns:
+        - '(?i)(ipmi|bmc|ilo|idrac|imm|xcc).*(cipher[\s_-]*0|default[\s_-]*credential|anonymous[\s_-]*login)'
+        - '(?i)(udp[\s_/]*623|rmcp).*(unexpected|external|untrusted)'
+        - '(?i)virtual[\s_-]*media.*(mount|attach).*(iso|img)'
+        - '(?i)(power[\s_-]*cycle|sol[\s_-]*console|kvm[\s_-]*session).*(bmc|out[\s_-]*of[\s_-]*band|unapproved)'
+    severity: critical
+    mitigations:
+      - "Isolate all BMC interfaces on a dedicated management VLAN with no route from user, DMZ, or internet segments; audit for exposure continuously."
+      - "Disable cipher suite 0 and legacy IPMI authentication; enforce unique, rotated BMC credentials and disable default accounts."
+      - "Patch BMC firmware on the same cadence as OS patching; inventory BMC firmware versions centrally — unpatched BMC is unpatched infrastructure."
+      - "Log all BMC sessions (logins, virtual-media mounts, power actions) to the SIEM and alert on any out-of-window or ticketless activity."
+    examples:
+      - summary: "Rapid7's IPMI research (2013, still relevant) documented cipher-0 authentication bypass and default-credential prevalence across BMC fleets, the evidence base for treating IPMI as untrusted-network-dangerous."
+        reference: "https://blog.rapid7.com/2013/07/02/a-pen-testers-guide-to-ipmi/"
+    references:
+      - "https://blog.rapid7.com/2013/07/02/a-pen-testers-guide-to-ipmi/"
+      - "https://www.cisa.gov/news-events/alerts/2013/07/02/ipmi-vulnerabilities"
+      - "https://attack.mitre.org/techniques/T1542/004/"
+  - id: AEG-T474
+    name: "Intel ME / AMD PSP Coprocessor Concepts"
+    category: firmware_hardware_attacks
+    description: >-
+      Modern x86 platforms embed an always-on security coprocessor — Intel's
+      Management Engine / Converged Security and Management Engine (ME/CSME)
+      and AMD's Platform Security Processor (PSP) — that runs signed vendor
+      firmware from before the main CPU boots and stays active while the OS
+      runs. It is part of the trusted computing base: Secure Boot
+      verification, TPM/fTPM services, and DRM roots often depend on it. For
+      defenders the key facts are the trust relationship (a compromise here
+      is below everything the OS can see) and the inventory problem (ME/PSP
+      firmware is opaque, rarely patched on schedule, and invisible to most
+      asset-management tools).
+    how_it_works: >-
+      The coprocessor boots first, verifies or loads platform firmware, and
+      provides runtime services (fTPM, protected audio/video path, remote
+      management on vPro-class parts) through a private interface the host
+      OS cannot fully introspect. Conceptually, vulnerabilities in this
+      firmware class — Intel's SA-00086 advisory being the canonical public
+      case — matter because exploitation yields ring-negative privilege with
+      no host-visible artifact. Defenders cannot detect compromise directly;
+      the discipline is inventory and posture: know every platform's ME/CSME
+      and PSP firmware version, track vendor security advisories for the
+      coprocessor firmware as a first-class patch stream, and treat
+      management features (AMT/vPro provisioning) as privileged attack
+      surface to be disabled where unused. Unexpected AMT provisioning or
+      ME firmware versions below advisory baselines are the observable
+      signals.
+    variants:
+      - "Coprocessor firmware vulnerability class: signed-vendor-firmware flaws (SA-00086 pattern) yielding sub-OS privilege invisible to host EDR."
+      - "Management-feature abuse: AMT/vPro remote-management provisioning as network-reachable sub-OS access when left enabled and unpatched."
+      - "fTPM dependency: firmware-TPM services rooted in the coprocessor, so coprocessor compromise undermines disk-encryption and attestation roots."
+    indicators:
+      - "ME/CSME or PSP firmware versions below the vendor's patched baseline per published security advisories (e.g. the SA-00086 remediation versions)."
+      - "Intel AMT/vPro provisioning states active on machines where remote management was never authorized, or AMT network listeners on unexpected ports."
+      - "Fleet asset inventory with no visibility into coprocessor firmware versions — the inventory gap itself is the indicator of unmanaged risk."
+      - "Vendor firmware-update utilities reporting ME/PSP update failures or version rollbacks after a servicing event."
+    detection:
+      rule: detect_coprocessor_firmware_risk
+      patterns:
+        - '(?i)(intel[\s_-]*me|csme|txe|converged[\s_-]*security).*(vulnerab|unpatched|outdated|rollback)'
+        - '(?i)(amd[\s_-]*psp|platform[\s_-]*security[\s_-]*processor|asp).*(vulnerab|unpatched|outdated)'
+        - '(?i)(amt|vpro).*(provisioned|enabled|unconfigured|unauthorized)'
+        - '(?i)me[\s_-]*firmware.*(version|update).*(fail|mismatch|downgrade)'
+    severity: high
+    mitigations:
+      - "Track ME/CSME and PSP firmware advisories as a first-class patch stream; include coprocessor firmware in the vulnerability-management SLA."
+      - "Disable or unprovision AMT/vPro remote management where it is not an approved operational requirement; verify provisioning state fleet-wide."
+      - "Extend asset inventory to coprocessor firmware versions (vendor tools, firmware-update agents) so unpatched sub-OS firmware is visible."
+      - "Prefer platforms with published coprocessor security guidance and timely firmware delivery; factor firmware-support lifetime into procurement."
+    examples:
+      - summary: "Intel SA-00086 (2017): critical vulnerabilities in ME/CSME/TXE firmware allowing sub-OS privilege; Intel's detection and firmware-update guidance established the coprocessor as a patch stream defenders must track."
+        reference: "https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-00086.html"
+    references:
+      - "https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-00086.html"
+      - "https://www.amd.com/en/developer/platform-security-processor.html"
+      - "https://csrc.nist.gov/publications/detail/sp/800-193/final"
+
+  - id: AEG-T475
+    name: "JTAG/UART Debug-Interface Abuse"
+    category: firmware_hardware_attacks
+    description: >-
+      JTAG, SWD, and UART serial consoles are hardware debug interfaces that
+      give direct access to the CPU, memory, and bootloader — by design, with
+      no software access control. They are a physical-access attack class:
+      with hands on the device, debug interfaces bypass every OS-level
+      control. Defenders encounter this class in device procurement (are debug
+      interfaces fused off in production units?), in incident response (was a
+      seized or returned device tampered with via its debug port?), and in
+      embedded/IoT fleets where UART shells ship enabled. The boundary is
+      strict: this technique covers trust models and mitigations only — never
+      exploitation steps.
+    how_it_works: >-
+      Debug interfaces exist so manufacturers can test and repair boards; in
+      production they should be disabled (fused, blown eFUSEs, or removed
+      headers). Conceptually, an exposed interface hands over memory read/
+      write, bootloader control, and firmware extraction to anyone with
+      physical access, defeating disk encryption that assumes the OS boot
+      chain is the only entry point. For defenders the work is entirely
+      preventive and detective at procurement and physical layers: verify
+      production units have debug interfaces disabled per the vendor's
+      secure-manufacturing claims, include debug-port state in hardware
+      acceptance testing, and treat unexpected bootloader or firmware
+      contents on a physically exposed device as a tamper indicator. NIST
+      SP 800-193's platform-resiliency guidance explicitly calls out debug-
+      port protection as a firmware-integrity requirement.
+    variants:
+      - "JTAG/SWD boundary-scan abuse: CPU halt, memory access, and firmware extraction through exposed test-access ports."
+      - "UART bootloader shells: serial consoles left enabled in production firmware, offering bootloader command access on physical connection."
+      - "Unfused debug: production units shipping with manufacturer debug fuses intact, preserving full test access in the field."
+    indicators:
+      - "Procurement or acceptance testing finding live JTAG/SWD/UART access on production-revision hardware that the vendor claims ships fused."
+      - "Devices in physically exposed roles (kiosks, edge gateways, field equipment) with debug headers populated or test pads accessible."
+      - "Firmware images on returned or seized devices differing from the provisioned baseline with no authorized update record — consistent with debug-port extraction/reflash."
+      - "Bootloader logs or firmware dumps appearing in incident artifacts from a device whose debug interfaces were assumed disabled."
+    detection:
+      rule: detect_debug_interface_exposure
+      patterns:
+        - '(?i)(jtag|swd|uart|serial[\s_-]*console|debug[\s_-]*port).*(enabled|exposed|unfused|populated)'
+        - '(?i)(u-boot|bootloader)[\s_-]*shell.*(serial|uart|physical)'
+        - '(?i)(tdi|tdo|tck|tms|boundary[\s_-]*scan).*(accessible|unprotected)'
+        - '(?i)efuse|fuse.*(intact|not[\s_-]*blown|unprogrammed)'
+    severity: high
+    mitigations:
+      - "Require vendors to document debug-interface disablement (fusing) for production SKUs; verify with acceptance testing on sampled units."
+      - "Specify tamper-evident enclosures and physical-access controls for devices deployed outside trusted facilities."
+      - "Treat any physically exposed or returned device as untrusted: re-image from known-good firmware and re-attest before reintroduction to the fleet."
+      - "Follow NIST SP 800-193 platform-resiliency guidance on debug-port protection as part of the firmware-security baseline."
+    references:
+      - "https://csrc.nist.gov/publications/detail/sp/800-193/final"
+      - "https://csrc.nist.gov/publications/detail/sp/800-147/final"
+      - "https://github.com/chipsec/chipsec"
+
+  - id: AEG-T476
+    name: "Evil-Maid and Cold-Boot Attack Concepts"
+    category: firmware_hardware_attacks
+    description: >-
+      Evil-maid and cold-boot are the two canonical physical-access attack
+      classes against full-disk encryption. The evil-maid class tampers with
+      the pre-boot environment (bootloader or pre-boot authentication) while
+      the machine is unattended, capturing credentials or keys on the owner's
+      next login. The cold-boot class exploits DRAM remanence: memory contents
+      decay slowly enough after power loss that a rebooted or transplanted
+      DIMM can be imaged, recovering encryption keys. Both are strictly
+      physical-access concepts; the defender's job is understanding the trust
+      assumptions of disk encryption and closing the physical and pre-boot
+      gaps.
+    how_it_works: >-
+      Full-disk encryption assumes the pre-boot chain is trustworthy and that
+      keys in RAM are safe while the machine is locked or sleeping. Evil-maid
+      breaks the first assumption: with brief unattended access, the boot
+      path is altered so the next legitimate authentication is intercepted
+      (conceptually — the defense is measured boot plus PIN, which binds the
+      key release to an unmodified boot chain). Cold-boot breaks the second:
+      DRAM retains data for seconds to minutes after power loss (longer when
+      cooled), so a powered-down or sleeping machine's memory can be read by
+      rebooting into an imaging environment or moving DIMMs. Joanna
+      Rutkowska's 2009 'Evil Maid' writeup and Princeton's 2008 'Lest We
+      Remember' cold-boot paper are the public foundations. Defenses are
+      architectural: TPM+PIN sealing (key release requires the measured boot
+      chain), memory encryption (Intel TME/AMD SME), avoiding sleep states
+      that keep keys in RAM, and physical custody controls.
+    variants:
+      - "Evil-maid class: unattended-access tampering with bootloader or pre-boot authentication to intercept the next credential entry."
+      - "Cold-boot class: DRAM-remanence key recovery via reboot-to-image or DIMM transplantation after power loss."
+      - "Sleep-state exposure: S3 suspend keeping encryption keys in powered RAM, the practical cold-boot window for laptops."
+    indicators:
+      - "Bootloader or pre-boot-authentication binaries differing from the measured baseline on a machine that was physically unattended (evil-maid tamper signal)."
+      - "TPM PCR values at unlock time not matching the sealed configuration, causing PIN/sealed-key release failures — treat as tamper, not flakiness."
+      - "Incident artifacts showing unexpected reboots or memory-imaging tooling on a machine whose disk encryption was assumed intact."
+      - "Fleet laptops configured for S3 sleep rather than hibernate/shutdown in high-risk travel roles, preserving the cold-boot window."
+    detection:
+      rule: detect_physical_boot_tamper
+      patterns:
+        - '(?i)(evil[\s_-]*maid|pre[\s_-]*boot).*(tamper|modif|intercept)'
+        - '(?i)(cold[\s_-]*boot|dram[\s_-]*remanence|memory[\s_-]*remanence)'
+        - '(?i)(bitlocker|luks|filevault).*(pcr|seal).*(fail|mismatch|changed)'
+        - '(?i)sleep[\s_-]*state.*(s3|suspend[\s_-]*to[\s_-]*ram).*(key|exposure)'
+    severity: high
+    mitigations:
+      - "Require TPM+PIN (not TPM-only) for OS volume unlock so key release is bound to both the measured boot chain and a user secret."
+      - "Enable memory encryption (Intel TME, AMD SME/SEV) where the platform supports it, neutralizing the DRAM-remanence class."
+      - "Prefer hibernate or shutdown over S3 sleep for high-risk mobile roles; configure sleep policy accordingly."
+      - "Maintain measured-boot baselines and alert on pre-boot component drift; treat PCR-mismatch unlock failures as tamper indicators."
+    examples:
+      - summary: "Joanna Rutkowska's 'Evil Maid Goes After TrueCrypt' (2009) defined the unattended-access pre-boot tampering class against disk encryption, the reference case for measured-boot + PIN defenses."
+        reference: "https://blog.invisiblethings.org/2009/10/07/evil-maid-attack.html"
+      - summary: "Princeton's 'Lest We Remember: Cold Boot Attacks on Encryption Keys' (2008) demonstrated DRAM-remanence key recovery, the empirical basis for memory-encryption and sleep-policy mitigations."
+        reference: "https://citp.princeton.edu/our-work/memory/"
+    references:
+      - "https://blog.invisiblethings.org/2009/10/07/evil-maid-attack.html"
+      - "https://citp.princeton.edu/our-work/memory/"
+      - "https://csrc.nist.gov/publications/detail/sp/800-155/final"
+  - id: AEG-T477
+    name: "Hardware Implants and Interdiction Concepts"
+    category: firmware_hardware_attacks
+    description: >-
+      Hardware implants are malicious additions or modifications to computing
+      hardware — extra chips, altered board components, or tampered firmware
+      introduced during manufacturing, shipping, or servicing — and
+      interdiction is their insertion during transit or maintenance. Unlike
+      software supply-chain attacks (AEG-T077/T078, which are strictly
+      software and out of scope here), hardware implants live in the physical
+      build: they are detected through inspection regimes, provenance
+      controls, and attestation anomalies, never through endpoint telemetry
+      alone. This technique is concept-level by necessity: defenders need to
+      know what implant classes look like and how inspection and custody
+      controls defeat them — never construction details.
+    how_it_works: >-
+      The implant threat model has three insertion points defenders control:
+      the factory (compromised or coerced manufacturing), transit
+      (interdiction — packages opened and modified in shipping or customs
+      custody), and servicing (malicious replacement parts during repair).
+      Conceptually, implants range from passive (extra components enabling
+      later access) to firmware-level (modified BMC or NIC firmware flashed
+      before delivery). Because a well-built implant is invisible to the OS,
+      detection is a supply-chain discipline: tamper-evident packaging and
+      chain-of-custody logging, visual/X-ray inspection of high-assurance
+      builds against golden-board references, firmware attestation at first
+      boot (any deviation from the vendor-signed baseline is a red flag),
+      and component provenance records that make substitution visible. The
+      absence of an implant can never be proven; the goal is making
+      insertion expensive and detectable.
+    variants:
+      - "Factory insertion: malicious components or firmware introduced during manufacturing by a compromised supplier."
+      - "Transit interdiction: hardware opened and modified while in shipping, customs, or reseller custody."
+      - "Servicing insertion: counterfeit or trojanized replacement parts introduced during repair or refurbishment."
+    indicators:
+      - "Tamper-evident seals broken or packaging inconsistent with the vendor's documented shipping controls on high-assurance orders."
+      - "First-boot firmware attestation failures: BMC, UEFI, or NIC firmware hashes not matching the vendor's signed baseline for that SKU."
+      - "Visual or X-ray inspection finding unpopulated-design components present, unexpected board revisions, or rework inconsistent with the golden reference."
+      - "Chain-of-custody gaps: devices whose shipping, customs, or servicing handlers cannot be fully accounted for."
+    detection:
+      rule: detect_hardware_tamper_signals
+      patterns:
+        - '(?i)(tamper[\s_-]*evident|seal).*(broken|violated|mismatch)'
+        - '(?i)(implant|interdict|unauthorized[\s_-]*modification).*(hardware|shipment|supply)'
+        - '(?i)(attestation|firmware[\s_-]*hash).*(first[\s_-]*boot|provisioning).*(fail|mismatch)'
+        - '(?i)(golden[\s_-]*board|reference[\s_-]*board).*(deviation|mismatch|unexpected[\s_-]*component)'
+    severity: critical
+    mitigations:
+      - "Enforce chain-of-custody controls for high-assurance hardware: tamper-evident packaging, custody logging, and documented handoffs end to end."
+      - "Perform first-boot firmware attestation against vendor-signed baselines (UEFI, BMC, NIC) before any sensitive workload is provisioned."
+      - "Run inspection regimes proportionate to assurance needs: visual comparison against golden boards, X-ray sampling for critical deployments."
+      - "Buy through authorized channels with component-provenance records; quarantine and forensically inspect any device with custody gaps."
+    references:
+      - "https://www.cisa.gov/ict-supply-chain"
+      - "https://csrc.nist.gov/publications/detail/sp/800-193/final"
+      - "https://attack.mitre.org/techniques/T1542/004/"
+
+  - id: AEG-T478
+    name: "Rowhammer-Class Memory Attacks"
+    category: firmware_hardware_attacks
+    description: >-
+      Rowhammer-class attacks exploit DRAM physics: rapidly activating
+      ('hammering') one memory row induces bit flips in adjacent rows,
+      breaking the fundamental assumption that a process can only change its
+      own memory. Demonstrated publicly by Google Project Zero in 2015 to
+      gain kernel privileges from unprivileged code, the class has since
+      expanded (RowPress, Half-Double, TRRespass bypassing early mitigations).
+      For defenders the lesson is architectural — memory safety cannot be
+      assumed at the DRAM layer — and operational: ECC telemetry and
+      platform mitigations are the detection and defense surface.
+    how_it_works: >-
+      DRAM cells leak charge; repeated row activations accelerate leakage in
+      neighbors until bits flip. Conceptually, an attacker who can perform
+      enough uncached memory accesses flips bits in memory they do not own —
+      corrupting page tables, credentials, or cryptographic keys. The
+      defender's view is entirely about signals and mitigations: correctable
+      and uncorrectable ECC error rates (a spike in correctable errors is the
+      classic in-the-wild indicator), platform mitigations (targeted row
+      refresh / TRR, increased refresh rates, memory encryption), and
+      hardware selection (DDR5 and ECC DIMMs with published Rowhammer
+      resistance). Detection never involves reproducing the hammering —
+      only watching the error counters and enforcing the mitigation stack.
+    variants:
+      - "Classic Rowhammer: single/double-sided hammering inducing flips in adjacent rows (the 2015 Project Zero privilege-escalation demonstration)."
+      - "TRR-bypass variants (TRRespass, Half-Double): hammering patterns engineered around early target-row-refresh mitigations."
+      - "RowPress: keeping aggressor rows open longer rather than hammering faster — a distinct physical mechanism defenders track as the same risk class."
+    indicators:
+      - "Sustained spikes in correctable ECC errors on a host, especially correlated with a single tenant, container, or process's memory activity."
+      - "Uncorrectable ECC errors or machine-check exceptions on memory regions holding page tables or security-critical structures."
+      - "Fleet DIMM inventory showing non-ECC or pre-TRR memory generations in multi-tenant or high-assurance roles."
+      - "Hypervisor or kernel logs showing memory-error rates far above the vendor's expected baseline for the DIMM population."
+    detection:
+      rule: detect_rowhammer_indicators
+      patterns:
+        - '(?i)row[\s_-]*hammer|half[\s_-]*double|trrespass|row[\s_-]*press'
+        - '(?i)(ecc|correctable|uncorrectable).*(error|spike|threshold|storm)'
+        - '(?i)(bit[\s_-]*flip|memory[\s_-]*disturbance).*(dram|row|adjacent)'
+        - '(?i)machine[\s_-]*check.*(memory|dram|ecc)'
+    severity: high
+    mitigations:
+      - "Deploy ECC memory everywhere it matters (servers, multi-tenant hosts) and monitor ECC error counters as a security signal, not just a reliability one."
+      - "Select platforms with published Rowhammer mitigations (TRR/RFM-class refresh management, DDR5) and keep memory-controller firmware current."
+      - "Apply OS/hypervisor mitigations where offered and isolate mutually untrusted tenants with memory encryption (AMD SEV, Intel TDX) so a flip cannot cross trust boundaries usefully."
+      - "Baseline ECC error rates per DIMM population and alert on deviation; treat unexplained error storms as a security event, not only a hardware ticket."
+    examples:
+      - summary: "Google Project Zero (2015) demonstrated Rowhammer privilege escalation from unprivileged code — 'Exploiting the DRAM Rowhammer bug to gain kernel privileges' — the public proof that DRAM physics is a security boundary."
+        reference: "https://googleprojectzero.blogspot.com/2015/03/exploiting-dram-rowhammer-bug-to-gain.html"
+    references:
+      - "https://googleprojectzero.blogspot.com/2015/03/exploiting-dram-rowhammer-bug-to-gain.html"
+      - "https://en.wikipedia.org/wiki/Row_hammer"
+      - "https://www.kernel.org/doc/html/latest/admin-guide/hw-vuln/index.html"
+
+  - id: AEG-T479
+    name: "Speculative-Execution Attacks (Spectre/Meltdown-Class)"
+    category: firmware_hardware_attacks
+    description: >-
+      Speculative-execution attacks exploit the gap between what a CPU
+      speculatively executes and what it architecturally commits: transient
+      instructions can touch privileged data, and although the results are
+      discarded, microarchitectural side effects (cache state) remain
+      measurable. The January 2018 Spectre/Meltdown disclosures showed
+      unprivileged code reading kernel memory and cross-VM data on nearly
+      every modern processor. For defenders this is a detection-and-isolation
+      discipline: the attacks are identified by their side-channel
+      observables, and the mitigations are patching, microcode, and
+      trust-boundary isolation — described here at detection level only.
+    how_it_works: >-
+      Modern CPUs execute ahead along predicted paths. When a prediction is
+      wrong, architectural state rolls back but cache occupancy does not —
+      and cache occupancy is measurable by timing. Conceptually, the attack
+      is: trick speculation into touching a secret, then read the cache
+      timing to recover it. Defenders do not need the gadget mechanics;
+      they need the response playbook: track CPU vulnerability/mitigation
+      state per host (the kernel's hw-vuln reporting), deploy microcode plus
+      OS/hypervisor mitigations as a unit, isolate trust boundaries the
+      mitigations cannot fully close (dedicated hosts for high-assurance
+      tenants, disabling SMT where the threat model demands it), and watch
+      for the behavioral observables — processes performing high-rate
+      cache-timing measurements or exploiting perf-counter access. The
+      variant tree (Foreshadow, MDS/ZombieLoad, Retbleed) matters only as a
+      patch-tracking list.
+    variants:
+      - "Bounds-check bypass (Spectre v1) and branch-target injection (Spectre v2): mistraining prediction to steer speculation across trust boundaries."
+      - "Rogue data-cache load (Meltdown): speculative reads of kernel memory from user space on affected microarchitectures."
+      - "Microarchitectural data sampling (MDS/ZombieLoad, Fallout, RIDL): sampling stale data from shared CPU buffers across threads and VMs."
+    indicators:
+      - "Hosts reporting CPU vulnerabilities as 'Vulnerable' in kernel hw-vuln status, or running microcode below the vendor's patched revision for Spectre/Meltdown-class issues."
+      - "Processes performing sustained high-frequency cache-timing loops or flush+reload-style access patterns outside benchmarking contexts."
+      - "Unexpected perf-counter or high-resolution-timer usage by untrusted tenants in multi-tenant environments."
+      - "SMT enabled on hosts holding mixed-trust workloads where the threat model requires thread-level isolation."
+    detection:
+      rule: detect_speculative_execution_exposure
+      patterns:
+        - '(?i)(spectre|meltdown|foreshadow|zombie[\s_-]*load|fallout|ridl|retbleed)'
+        - '(?i)speculative[\s_-]*execution.*(vulnerab|mitigat|leak)'
+        - '(?i)(flush[\s_-]*reload|prime[\s_-]*probe|cache[\s_-]*timing).*(loop|attack|anomal)'
+        - '(?i)hw[\s_-]*vuln.*(vulnerable|mitigation[\s_-]*off|not[\s_-]*affected)'
+    severity: high
+    mitigations:
+      - "Deploy CPU microcode and OS/hypervisor mitigations as a unit; track per-host mitigation state and never let microcode lag the OS patch."
+      - "Isolate trust boundaries the mitigations cannot fully close: dedicated hosts for high-assurance tenants, SMT disablement where the threat model requires it."
+      - "Restrict perf-counter and high-resolution-timer access for untrusted tenants; monitor for cache-timing measurement behavior."
+      - "Maintain a living variant-to-patch map (Spectre v1/v2, Meltdown, Foreshadow, MDS, Retbleed) and verify each is mitigated per host class."
+    examples:
+      - summary: "Spectre/Meltdown (Jan 2018): Google Project Zero's 'Reading privileged memory with a side-channel' disclosed transient-execution data theft across process, kernel, and VM boundaries on most modern CPUs."
+        reference: "https://googleprojectzero.blogspot.com/2018/01/reading-privileged-memory-with-side.html"
+    references:
+      - "https://googleprojectzero.blogspot.com/2018/01/reading-privileged-memory-with-side.html"
+      - "https://meltdownattack.com/"
+      - "https://spectreattack.com/"
+      - "https://www.kernel.org/doc/html/latest/admin-guide/hw-vuln/index.html"
+  - id: AEG-T480
+    name: "Microcode and Firmware-Update Abuse"
+    category: firmware_hardware_attacks
+    description: >-
+      Microcode and firmware updates are the vendor's last-resort fix channel
+      for below-the-OS flaws — and a high-value target in their own right.
+      Abuse concepts cover two directions: malicious or unauthorized update
+      payloads (unsigned, stale, or attacker-supplied firmware applied through
+      legitimate update mechanisms) and rollback attacks (downgrading to a
+      signed-but-vulnerable firmware to re-open patched flaws). Because
+      firmware updates legitimately require high privilege, the defender's
+      controls are signature verification, rollback protection, and
+      update-path auditing — the same primitives that make the mechanism
+      trustworthy are what attackers try to defeat.
+    how_it_works: >-
+      Legitimate firmware servicing verifies a signature chain before
+      flashing and records version monotonicity so older, vulnerable images
+      cannot be reinstalled. Conceptually, abuse defeats one of these:
+      updates applied without signature verification (tools or workflows that
+      skip checks), rollback to a vulnerable-but-signed image where no
+      anti-rollback fuse or version enforcement exists, or update utilities
+      themselves compromised to deliver attacker payloads. For detection,
+      the observables are version telemetry: firmware or microcode versions
+      moving backward, versions below the fleet's patched baseline appearing
+      after a servicing window, update-tool executions outside approved
+      maintenance, and signature-verification failures in update logs. CHIPSEC
+      and vendor capsule-update attestation exist precisely to give defenders
+      an independent check on what firmware a machine actually runs.
+    variants:
+      - "Unsigned/stale update application: firmware flashed through paths that skip signature verification or accept superseded images."
+      - "Rollback attacks: downgrading to signed-but-vulnerable firmware to re-open patched below-the-OS flaws."
+      - "Update-utility compromise: legitimate flashing tools or workflows subverted to deliver attacker-controlled images."
+    indicators:
+      - "Firmware or microcode version telemetry showing a downgrade, or versions below the patched baseline appearing after servicing."
+      - "Firmware-update tool executions (capsule updates, vendor flash utilities) outside approved maintenance windows or change tickets."
+      - "Signature-verification failures or verification-skipped events in firmware update logs."
+      - "CHIPSEC-class platform assessments reporting unlocked flash descriptors, disabled BIOS write protection, or missing rollback protection."
+    detection:
+      rule: detect_firmware_update_abuse
+      patterns:
+        - '(?i)(firmware|microcode|bios|uefi).*(rollback|downgrade|revert)'
+        - '(?i)(firmware|microcode).*(unsigned|unverified|signature[\s_-]*fail|verification[\s_-]*skip)'
+        - '(?i)(capsule[\s_-]*update|flash[\s_-]*util|fwupd).*(unauthorized|unapproved|unexpected)'
+        - '(?i)(bios[\s_-]*write|flash[\s_-]*descriptor|smm[\s_-]*bios).*(unlocked|unprotected|disabled)'
+    severity: critical
+    mitigations:
+      - "Enforce signed firmware updates with signature verification that cannot be skipped by tooling or workflow; alert on verification failures."
+      - "Enable rollback protection (anti-rollback fuses, version monotonicity) so vulnerable firmware cannot be reinstalled once superseded."
+      - "Restrict firmware-update capability to approved maintenance windows and privileged servicing roles; log every flash event centrally."
+      - "Run periodic platform-security assessments (CHIPSEC-class tooling) to verify flash protections, write-protection, and actual running firmware versions."
+    references:
+      - "https://github.com/chipsec/chipsec"
+      - "https://csrc.nist.gov/publications/detail/sp/800-193/final"
+      - "https://uefi.org/specsandtesttools"
+
+  - id: AEG-T481
+    name: "Peripheral Firmware Attack Surface"
+    category: firmware_hardware_attacks
+    description: >-
+      Every peripheral with its own processor is a computer the OS does not
+      manage: NICs, GPUs, storage controllers, Thunderbolt/USB controllers,
+      and the Embedded Controller (EC) that handles power, keyboard, and
+      thermal policy all run independent firmware with DMA or bus-master
+      access to system memory. This firmware is rarely inventoried, rarely
+      patched, and invisible to host EDR — making it an overlooked
+      persistence and access layer. Defenders need a device-firmware
+      inventory discipline and IOMMU/DMA-protection posture, not peripheral
+      internals.
+    how_it_works: >-
+      A bus-mastering peripheral can read and write system memory directly
+      (DMA), bypassing CPU and OS access controls — which is why IOMMU/VT-d
+      and kernel DMA protection exist. Conceptually, malicious or vulnerable
+      peripheral firmware turns a trusted device into a memory-access
+      primitive the OS cannot see. The defender's controls are all
+      architectural and inventory-based: enumerate every firmware-bearing
+      device (PCI option ROMs, EC firmware, Thunderbolt controllers),
+      enforce IOMMU and kernel DMA protection so a rogue device cannot
+      touch arbitrary memory, require signed/verified peripheral firmware
+      where the vendor supports it, and watch the telltales — unexpected
+      option-ROM execution at boot, DMA-protection state disabled, or
+      peripheral firmware versions that cannot be inventoried. LoJax
+      (ESET, 2018) remains the reference case: a UEFI rootkit delivered
+      through a legitimate anti-theft technology's firmware persistence
+      mechanism, surviving disk replacement.
+    variants:
+      - "Option-ROM persistence: PCI expansion-ROM code executing at boot with pre-OS privilege, outside the OS's trust view."
+      - "DMA-capable peripheral abuse: bus-mastering devices (NIC, Thunderbolt, storage) used as memory-access primitives when IOMMU/DMA protection is absent."
+      - "Embedded-controller firmware: EC/system-management firmware with keyboard, power, and thermal control, rarely inventoried or patched."
+    indicators:
+      - "Kernel DMA protection or IOMMU/VT-d reported disabled on machines where policy requires it, especially on laptops with Thunderbolt ports."
+      - "Unexpected option-ROM execution or unknown PCI expansion ROMs observed during boot on managed machines."
+      - "Peripheral firmware versions (NIC, storage controller, EC, Thunderbolt) absent from asset inventory or below vendor patched baselines."
+      - "Thunderbolt/USB-C devices authorized without user approval on machines where pre-boot DMA protection is not enforced."
+    detection:
+      rule: detect_peripheral_firmware_risk
+      patterns:
+        - '(?i)(dma[\s_-]*protection|iommu|vt[\s_-]*d).*(disabled|off|not[\s_-]*enforced)'
+        - '(?i)(option[\s_-]*rom|expansion[\s_-]*rom|oprom).*(unknown|unexpected|unsigned)'
+        - '(?i)(thunderbolt|usb[\s_-]*c).*(dma|direct[\s_-]*memory).*(unprotected|authorized)'
+        - '(?i)(nic|gpu|ec|embedded[\s_-]*controller)[\s_-]*firmware.*(unpatched|unknown|unverif)'
+    severity: high
+    mitigations:
+      - "Enforce IOMMU/VT-d and kernel DMA protection fleet-wide; treat DMA-protection-off as a compliance failure, especially for Thunderbolt-equipped machines."
+      - "Inventory peripheral firmware (NIC, storage, EC, Thunderbolt controllers) alongside OS patching; include it in vulnerability management."
+      - "Require signed peripheral firmware and verified boot for option ROMs where the platform supports it; block unknown expansion ROMs."
+      - "Control Thunderbolt/USB-C authorization (pre-boot ACLs, user approval) so untrusted devices cannot DMA-attach before the OS is up."
+    examples:
+      - summary: "LoJax (2018): ESET-disclosed UEFI rootkit abusing the LoJack anti-theft agent's firmware persistence mechanism — the canonical case of legitimate peripheral/firmware persistence repurposed as an implant surviving disk replacement."
+        reference: "https://www.welivesecurity.com/2018/09/27/lojax-first-uefi-rootkit-found-wild-courtesy-sednit-group/"
+      - summary: "MosaicRegressor (2020): Kaspersky-disclosed UEFI firmware bootkit used in targeted espionage, reinforcing that SPI-flash-resident implants are a live, in-the-wild persistence class."
+        reference: "https://securelist.com/mosaicregressor/98849/"
+    references:
+      - "https://www.welivesecurity.com/2018/09/27/lojax-first-uefi-rootkit-found-wild-courtesy-sednit-group/"
+      - "https://securelist.com/mosaicregressor/98849/"
+      - "https://attack.mitre.org/techniques/T1542/004/"
+      - "https://csrc.nist.gov/publications/detail/sp/800-193/final"
+
+  - id: AEG-T482
+    name: "Hardware Supply Chain: Counterfeit-Component Concepts"
+    category: firmware_hardware_attacks
+    description: >-
+      Counterfeit components — remarked, recycled, cloned, or out-of-spec
+      parts sold as genuine — are the quality-and-trust failure mode of the
+      hardware supply chain, distinct from the software supply chain covered
+      by AEG-T077/T078 and from deliberate implants (AEG-T477). A counterfeit
+      part can fail under load, behave out of spec, or carry cloned firmware
+      with unknown provenance; for defenders the discipline is provenance
+      verification, incoming inspection, and authorized-channel procurement.
+      This is a detection-and-prevention concept for procurement and
+      asset-management teams, not a technical exploitation topic.
+    how_it_works: >-
+      Counterfeits enter through unauthorized brokers, excess-inventory
+      markets, and long-lifecycle equipment where original parts are scarce.
+      Conceptually, the classes are: remarked parts (lower-spec chips
+      relabeled), recycled parts (pulled from e-waste, leads re-tinned),
+      cloned parts (copies with unknown firmware and no vendor errata
+      support), and out-of-spec/substituted materials. None of this is
+      detectable by software: the defenses are procedural — buy only through
+      authorized distribution, require certificates of conformance and
+      traceability to the original component manufacturer, run incoming
+      inspection (visual, X-ray, decapsulation sampling, electrical testing)
+      proportionate to criticality, and quarantine lots with provenance gaps.
+      SAE AS5553 is the industry standard codifying this counterfeit-
+      avoidance discipline for high-reliability supply chains.
+    variants:
+      - "Remarked/recycled parts: lower-spec or e-waste-recovered components relabeled and sold as new, failing under rated conditions."
+      - "Cloned components: unauthorized copies with unknown firmware provenance and no vendor support or errata coverage."
+      - "Brokered-lot substitution: counterfeits mixed into legitimate lots through unauthorized distribution channels."
+    indicators:
+      - "Components with mismatched or inconsistent date/lot codes, sanded or irregular laser markings, or packaging inconsistent with the manufacturer."
+      - "Parts sourced outside authorized distribution, or lots lacking certificates of conformance and traceability documentation."
+      - "Field failures clustering by lot or supplier — out-of-spec behavior, thermal failures, or firmware anomalies traceable to a suspect batch."
+      - "X-ray or decapsulation inspection finding die markings, bond-wire geometry, or internal structures inconsistent with the genuine part."
+    detection:
+      rule: detect_counterfeit_component_signals
+      patterns:
+        - '(?i)(counterfeit|remarked|recycled|cloned)[\s_-]*(component|chip|part|capacitor|ic)'
+        - '(?i)(date[\s_-]*code|lot[\s_-]*code|laser[\s_-]*mark).*(mismatch|sanded|irregular|inconsistent)'
+        - '(?i)(certificate[\s_-]*of[\s_-]*conformance|traceability).*(missing|absent|unverif)'
+        - '(?i)(unauthorized|unapproved|broker)[\s_-]*(distributor|source|supplier)'
+    severity: medium
+    mitigations:
+      - "Procure exclusively through authorized distribution; require certificates of conformance and full traceability to the original component manufacturer."
+      - "Run incoming inspection proportionate to criticality: visual, X-ray, and electrical testing, with decapsulation sampling for high-assurance builds."
+      - "Quarantine and forensically evaluate any lot with provenance gaps, marking anomalies, or clustered field failures; report confirmed counterfeits."
+      - "Adopt SAE AS5553-class counterfeit-avoidance processes in procurement policy for high-reliability and long-lifecycle programs."
+    references:
+      - "https://www.sae.org/standards/content/as5553/"
+      - "https://www.cisa.gov/ict-supply-chain"
+      - "https://csrc.nist.gov/publications/detail/sp/800-193/final"
