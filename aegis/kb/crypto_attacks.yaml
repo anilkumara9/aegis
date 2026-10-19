@@ -1,0 +1,692 @@
+pack: crypto_attacks
+version: "1.0"
+techniques:
+  - id: AEG-T459
+    name: "Timing Side-Channel Concepts: Execution Time as a Leak"
+    category: crypto_attacks
+    description: >-
+      Cryptographic code that runs in different amounts of time depending on
+      secret data leaks that data to anyone who can measure the difference.
+      Early-exit comparisons, secret-dependent table lookups, and branching on
+      key bits all create measurable timing skew; attackers recover secrets
+      statistically over many samples, even across a network. For defenders,
+      timing behavior is an attack surface: any secret-dependent timing in
+      authentication, decryption, or signature verification is a finding.
+    how_it_works: >-
+      Conceptually, if comparing a candidate MAC to the real one stops at the
+      first wrong byte, a correct prefix measurably takes longer — letting an
+      attacker brute-force one byte at a time by watching the clock. Cache
+      timing works similarly: AES table lookups whose addresses depend on key
+      bytes cause cache hits and misses with different latency, and the
+      latency pattern is a function of the key (Daniel Bernstein demonstrated
+      practical AES cache-timing key recovery in 2005; Kocher's 1996 paper
+      founded the field). The defender's counter is constant-time code: no
+      branches, no memory addresses, and no loop bounds derived from secrets,
+      plus blinding where constant-time is impractical. What defenders
+      observe: latency distributions that correlate with secret guesses, and
+      cryptographic libraries advertising constant-time implementations as a
+      selection criterion.
+    variants:
+      - "Early-exit comparison oracles (byte-at-a-time MAC/signature guessing)"
+      - "Cache-timing attacks on table-based ciphers (key-dependent lookup latency)"
+      - "Branch-predictor and microarchitectural timing classes (detection-level overlap with speculative-execution concepts)"
+    indicators:
+      - "Authentication or decryption endpoints whose response latency measurably correlates with how much of the guess was correct"
+      - "Use of non-constant-time comparison (e.g. memcmp-style) on MACs, tokens, or password hashes in the codebase"
+      - "Crypto implementations chosen without constant-time guarantees on shared or multi-tenant hosts"
+      - "High-resolution timing telemetry showing secret-dependent latency skew in signing or verification paths"
+    detection:
+      rule: detect_timing_sidechannel
+      patterns:
+        - "(?i)(timing|latency)\\s+(side.?channel|attack|leak|oracle)"
+        - "(?i)non.?constant.?time|variable.?time\\s+(compar|mac|decrypt|verif)"
+        - "(?i)aes.*(cache|t.?table|s.?box).*timing|cache.?timing.*aes"
+    severity: high
+    mitigations:
+      - "Require constant-time implementations for all secret-handling code paths (comparisons, table lookups, modular arithmetic)"
+      - "Use constant-time comparison primitives (e.g. CRYPTO_memcmp-style) for MACs, tokens, and hashes — never early-exit equality"
+      - "Prefer modern primitives designed for constant-time implementation (ChaCha20-Poly1305, Ed25519) and vetted libraries (libsodium, BoringSSL)"
+      - "Add random blinding or jitter where constant-time code is impractical, and rate-limit verification endpoints"
+    examples:
+      - summary: "Paul Kocher's 1996 'Timing Attacks on Implementations of Diffie-Hellman, RSA, DSS, and Other Systems' founded the field, showing secret keys recoverable from execution-time measurements."
+        reference: "https://www.paulkocher.com/TimingAttacks.pdf"
+      - summary: "AlFardan and Paterson's 2013 'Lucky 13' attack exploited TLS CBC timing behavior to recover plaintext across the network, a canonical network-measurable timing leak."
+        reference: "https://www.ieee-security.org/TC/SP2013/papers/497m242.pdf"
+    references:
+      - "https://www.paulkocher.com/TimingAttacks.pdf"
+      - "https://cr.yp.to/antiforgery/cachetiming-20050414.pdf"
+      - "https://owasp.org/www-community/attacks/Timing_attack"
+
+  - id: AEG-T460
+    name: "Weak RNG and Nonce Reuse: When Randomness Fails, Keys Fall"
+    category: crypto_attacks
+    description: >-
+      Cryptography assumes access to unpredictable randomness; when the random
+      number generator is weak or a one-time nonce is reused, the mathematics
+      collapses and private keys become computable from public outputs. The
+      classic case is ECDSA: reusing the per-signature nonce across two
+      signatures exposes the private key through elementary algebra. Defenders
+      treat entropy health and nonce uniqueness as key-management controls, not
+      implementation details.
+    how_it_works: >-
+      At defender-intuition level: an ECDSA signature binds the nonce, the
+      message hash, and the private key in one equation. With two signatures
+      sharing a nonce, the nonce cancels out of the algebra and the private
+      key solves directly — no brute force needed. The same principle breaks
+      stream ciphers and CTR/GCM modes when IVs repeat (the 'forbidden
+      attack': XOR of two ciphertexts under one keystream cancels the key,
+      leaving plaintext XOR plaintext). Weak entropy has the same effect at
+      scale: the 2008 Debian OpenSSL flaw collapsed the key space so badly
+      that every generated key was guessable (CVE-2008-0166). Defenders look
+      for nonce-reuse signatures in logs and protocol captures, enforce
+      deterministic nonce schemes (RFC 6979) or synthetic IVs, and monitor
+      entropy sources on virtualized and embedded fleets.
+    variants:
+      - "ECDSA/DSA nonce reuse across signatures (private key solvable from two signatures)"
+      - "IV/keystream reuse in CTR and GCM modes (ciphertext XOR cancels the key)"
+      - "Weak or predictable CSPRNG seeding (Debian-class entropy collapse, VM snapshot cloning)"
+    indicators:
+      - "Two or more signatures from the same key sharing an identical nonce (r-value) in logs or blockchain data"
+      - "Duplicate IVs under the same key observed in protocol captures or stored ciphertexts"
+      - "Keys or nonces generated on freshly cloned VMs, containers, or embedded devices without entropy reseeding"
+      - "Applications using non-cryptographic PRNGs (e.g. language rand()) for keys, tokens, or nonces"
+    detection:
+      rule: detect_nonce_reuse_weak_rng
+      patterns:
+        - "(?i)nonce\\s*reuse|repeated\\s+nonce|reused\\s+(iv|nonce|counter)"
+        - "(?i)ecdsa.*(nonce|k.?value)|deterministic\\s+ecdsa|\\brfc\\s*6979\\b"
+        - "(?i)(weak|predictable|low.?entropy|insufficient).*(rng|random|seed|entropy)"
+    severity: critical
+    mitigations:
+      - "Use deterministic nonce generation (RFC 6979) or synthetic-IV constructions (AES-GCM-SIV) so nonce misuse degrades gracefully"
+      - "Source all key material and nonces from the OS CSPRNG (/dev/urandom, BCryptGenRandom, getrandom) — never language-level rand()"
+      - "Reseed entropy after VM snapshots, container clones, and on embedded first-boot; monitor entropy health fleet-wide"
+      - "Scan historical signature and ciphertext stores for repeated nonces/IVs and rotate any exposed keys"
+    examples:
+      - summary: "In 2010 the fail0verflow team showed Sony's PS3 reused its ECDSA nonce, making the console's private signing key directly computable — the canonical nonce-reuse key compromise."
+        reference: "https://www.engadget.com/2010-12-29-ps3-completely-hacked-through-poor-implementation-of-cryptog.html"
+      - summary: "Debian's 2008 OpenSSL flaw (CVE-2008-0166) crippled the entropy pool so every generated SSH and TLS key was predictable; mass key rotation followed."
+        reference: "https://www.debian.org/security/2008/dsa-1571"
+    references:
+      - "https://www.rfc-editor.org/rfc/rfc6979.txt"
+      - "https://www.debian.org/security/2008/dsa-1571"
+      - "https://owasp.org/www-community/vulnerabilities/Insecure_Randomness"
+
+  - id: AEG-T461
+    name: "Certificate Mis-Issuance and PKI Abuse Detection"
+    category: crypto_attacks
+    description: >-
+      The web PKI trusts hundreds of certificate authorities, and any one of
+      them — or any compromise of one — can issue a certificate for any
+      domain, enabling invisible man-in-the-middle interception. Attackers
+      exploit this through CA compromise, rogue resellers, or validation
+      flaws; defenders counter with Certificate Transparency (CT) logs, which
+      make every publicly trusted certificate publicly auditable. Monitoring
+      CT logs for your own domains is the primary detection control.
+    how_it_works: >-
+      Conceptually, a browser trusts a connection if *some* trusted CA signed
+      the presented certificate — it cannot tell which CA was 'supposed' to
+      sign it. A mis-issued or rogue certificate for your domain therefore
+      passes validation everywhere, and traffic interception becomes
+      invisible to users. Real history: DigiNotar's 2011 compromise produced
+      rogue certificates (including for Google domains) used in large-scale
+      interception, ending in the CA's distrust and bankruptcy; Symantec's
+      mis-issuance record led browsers to distrust its roots in 2017–2018.
+      Defenders subscribe to CT log feeds (crt.sh, Cert Spotter) and alert on
+      any certificate for their domains they did not request; CAA DNS records
+      constrain which CAs may issue; short-lived certificates and key pinning
+      (where still used) shrink the window of abuse.
+    variants:
+      - "CA compromise or rogue reseller issuance (attacker-controlled valid certificates)"
+      - "Domain-validation bypass issuance (flawed ownership checks at the CA)"
+      - "Malicious or coerced issuance by state-influenced CAs"
+    indicators:
+      - "CT log entries for organizational domains from CAs the organization never uses"
+      - "Certificates with unexpected validity periods, subjects, or SANs appearing in CT feeds"
+      - "CAA DNS records absent or permitting CAs outside the approved set"
+      - "Historical distrust events or mis-issuance disclosures involving the organization's CA vendor"
+    detection:
+      rule: detect_pki_abuse_ct
+      patterns:
+        - "(?i)certificate\\s*transparency|\\bct\\s*log|\\bcrt\\.sh\\b|cert.?spotter"
+        - "(?i)(rogue|mis.?issued|unauthorized|fraudulent)\\s+certificate"
+        - "(?i)\\bcaa\\b.*(dns|record|unauthorized\\s+ca)|unauthorized\\s+ca.*issu"
+    severity: high
+    mitigations:
+      - "Continuously monitor CT logs for all organizational domains and alert on unrecognized issuance"
+      - "Publish restrictive CAA DNS records naming only approved CAs (including issuewild)"
+      - "Prefer short-lived certificates and automate renewal so a mis-issued cert's useful life is minimal"
+      - "Maintain an approved-CA inventory and track browser distrust actions against your vendors"
+    examples:
+      - summary: "The 2011 DigiNotar breach produced rogue certificates for Google and others, used for large-scale interception; browsers distrusted the CA and the company collapsed — the textbook PKI-abuse case."
+        reference: "https://en.wikipedia.org/wiki/DigiNotar"
+      - summary: "Symantec's pattern of mis-issuance led Google and Mozilla to distrust Symantec roots in 2017–2018, forcing mass certificate replacement across the web."
+        reference: "https://security.googleblog.com/2017/09/chromes-plan-to-distrust-symantec.html"
+    references:
+      - "https://www.rfc-editor.org/rfc/rfc6962.txt"
+      - "https://attack.mitre.org/techniques/T1553/004/"
+      - "https://www.cisa.gov/news-events/alerts/2011/09/06/fraudulent-digital-certificates-could-allow-spoofing"
+  - id: AEG-T462
+    name: "TLS Stripping at the Network Layer: HTTPS-to-HTTP Downgrade"
+    category: crypto_attacks
+    description: >-
+      TLS stripping keeps the victim on plaintext HTTP while proxying the
+      real HTTPS session itself: the attacker intercepts traffic on the
+      network, rewrites HTTPS links and redirects to HTTP, and relays the
+      encrypted session to the server — harvesting credentials the victim
+      typed into what looked like a normal page. Unlike padding oracles or
+      cipher negotiation, this attacks the *transport upgrade*, not the
+      crypto. Defenders detect it at the network and client layer: missing
+      HSTS, plaintext credential submission, and proxy-observable URL
+      rewriting.
+    how_it_works: >-
+      Conceptually, most users reach HTTPS via an HTTP first hop (a typed
+      domain or an HTTP link), and that first hop is attacker-controlled on a
+      hostile network. The stripper rewrites every https:// reference to
+      http:// in transit, terminates the victim's plaintext session, and
+      opens its own legitimate TLS session to the server — the server sees
+      nothing wrong, and the victim sees a page that merely lacks the lock
+      icon (Moxie Marlinspike demonstrated this as sslstrip at Black Hat
+      2009). Defensive implications: HSTS (with preload and includeSubDomains)
+      removes the vulnerable first hop by forcing HTTPS client-side; network
+      monitoring watches for outbound credential POSTs over plaintext HTTP to
+      hosts that normally serve HTTPS; captive-portal and public-Wi-Fi
+      segments get extra scrutiny. This is deliberately distinct from
+      `algorithms` T195's oracle/downgrade mechanics — the subject here is
+      the network-layer upgrade attack and its detection.
+    variants:
+      - "Classic sslstrip-class HTTPS rewriting on hostile networks"
+      - "Captive-portal and evil-twin adjacent stripping of the upgrade hop"
+      - "Mixed-content and redirect-chain stripping in complex applications"
+    indicators:
+      - "Credential or session-token POSTs observed over plaintext HTTP to domains that normally serve HTTPS"
+      - "Hosts missing HSTS headers or absent from the HSTS preload list while handling logins"
+      - "Proxy logs showing https:// rewritten to http:// in Location headers or page bodies in transit"
+      - "Users reporting missing lock icons or certificate warnings only on specific networks"
+    detection:
+      rule: detect_tls_stripping
+      patterns:
+        - "(?i)sslstrip|tls\\s*stripping|https?\\s+downgrade|strip.*https"
+        - "(?i)hsts.*(missing|absent|not\\s+set)|strict.?transport.?security"
+        - "(?i)credential.*(plaintext|cleartext)\\s+http|http\\s+(post|login).*no\\s+tls"
+    severity: high
+    mitigations:
+      - "Deploy HSTS with preload, includeSubDomains, and long max-age on every HTTPS property"
+      - "Eliminate HTTP-to-HTTPS redirect chains for authentication flows; link and serve HTTPS directly"
+      - "Monitor network egress for plaintext credential submission to HTTPS-normal domains and alert"
+      - "Treat untrusted networks as hostile in policy; prefer VPN or known-good networks for sensitive access"
+    examples:
+      - summary: "Moxie Marlinspike's 2009 sslstrip tool demonstrated practical HTTPS-to-HTTP stripping at Black Hat, defeating 'the lock icon' for users on hostile networks."
+        reference: "https://moxie.org/software/sslstrip/"
+      - summary: "RFC 6797 defines HSTS as the protocol-level countermeasure, letting servers declare themselves HTTPS-only so clients never attempt the strippable HTTP hop."
+        reference: "https://www.rfc-editor.org/rfc/rfc6797.txt"
+    references:
+      - "https://moxie.org/software/sslstrip/"
+      - "https://www.rfc-editor.org/rfc/rfc6797.txt"
+      - "https://owasp.org/www-project-secure-headers/#http-strict-transport-security"
+
+  - id: AEG-T463
+    name: "Chosen-Prefix Hash Collisions: The Shattered Class"
+    category: crypto_attacks
+    description: >-
+      A chosen-prefix collision lets an attacker start from two different
+      chosen prefixes and compute suffixes that make both files hash
+      identically — so a benign document and a malicious one share one hash.
+      This breaks every security decision anchored on 'same hash means same
+      content': code signing, document integrity, certificate fingerprints,
+      and deduplication. SHA-1 fell to this in practice (SHAttered, 2017);
+      defenders treat any SHA-1 or MD5 integrity anchor as compromised.
+    how_it_works: >-
+      At defender-intuition level: a collision attack finds two inputs with
+      the same digest; a *chosen-prefix* attack is far stronger because the
+      attacker picks meaningful prefixes (e.g. a clean PDF header and a
+      malicious PDF header) and then computes colliding suffix blocks, so
+      both resulting files are valid and hash-identical. Google and CWI
+      Amsterdam published the first practical SHA-1 collision in 2017
+      (SHAttered: two distinct PDFs, same SHA-1), and the 2020 SHAmbles work
+      made chosen-prefix attacks concretely affordable. The precedent that
+      defenders remember: the Flame malware (2012) used an MD5
+      chosen-prefix collision to forge a Microsoft code-signing certificate
+      and spread via Windows Update. Detection is migration-shaped: inventory
+      every place a broken hash anchors trust (signatures, fingerprints,
+      HMAC-less integrity checks) and move to SHA-256/SHA-3; verify that
+      'same hash' is never the sole integrity evidence for high-value
+      artifacts.
+    variants:
+      - "SHA-1 chosen-prefix collisions (SHAttered/SHAmbles class — practical and affordable)"
+      - "MD5 chosen-prefix forgery (Flame-class certificate forgery)"
+      - "Hash-anchored trust abuse (deduplication, signing, and fingerprint decisions on broken hashes)"
+    indicators:
+      - "Code-signing, document-signing, or update pipelines still anchored on SHA-1 or MD5 digests"
+      - "Certificate or artifact fingerprints presented as SHA-1 in trust decisions"
+      - "Deduplication or allowlisting systems keyed on MD5/SHA-1 where collision means substitution"
+      - "Legacy HMAC or integrity checks using broken hashes in file-transfer or backup verification"
+    detection:
+      rule: detect_broken_hash_trust
+      patterns:
+        - "(?i)(shattered|shambles|chosen.?prefix).*(collision|attack|sha)"
+        - "(?i)\\bsha-?1\\b.*(sign|cert|fingerprint|integrity|deprecat)"
+        - "(?i)\\bmd5\\b.*(sign|cert|integrity|collision)"
+    severity: high
+    mitigations:
+      - "Migrate all trust anchors (signatures, fingerprints, integrity checks) from MD5/SHA-1 to SHA-256 or SHA-3"
+      - "Require collision-resistant hashes wherever 'same hash implies same content' is a security assumption"
+      - "For legacy verification needs, use SHA-1 only inside HMAC constructions — never as a bare digest for integrity"
+      - "Audit signing pipelines end to end; a single SHA-1-anchored step undermines the whole chain"
+    examples:
+      - summary: "SHAttered (2017, Google/CWI) produced two distinct PDFs with the identical SHA-1 hash — the first practical SHA-1 collision, published with a public proof."
+        reference: "https://shattered.io/"
+      - summary: "The Flame malware used an MD5 chosen-prefix collision to forge a Microsoft certificate and propagate through Windows Update — collision-as-code-signing-abuse in the wild."
+        reference: "https://www.crySyS.hu/publications/files/Flame-MD5-collision.pdf"
+    references:
+      - "https://shattered.io/"
+      - "https://sha-mbles.github.io/"
+      - "https://csrc.nist.gov/projects/hash-functions"
+
+  - id: AEG-T464
+    name: "Key-Lifecycle Theft via HSM/KMS API Abuse"
+    category: crypto_attacks
+    description: >-
+      Hardware security modules and cloud key-management services are meant to
+      make keys unextractable — operations happen inside the boundary, keys
+      never leave. Attackers therefore target the *API layer around* the
+      boundary: wrap/unwrap and decrypt oracles, overly broad IAM grants, and
+      key-use outside approved contexts. The theft is rarely a hardware
+      break; it is legitimate API calls used illegitimately. Defenders monitor
+      key-use telemetry as closely as the keys themselves.
+    how_it_works: >-
+      Conceptually, an HSM exposes 'decrypt with key K' and 'wrap key K under
+      key W' as services. An attacker with API access but no key-export
+      permission can still decrypt arbitrary data (a decryption oracle), or
+      wrap K under an attacker-controlled key and unwrap it outside the HSM —
+      achieving extraction through authorized operations. Cloud KMS adds the
+      IAM dimension: a broad kms:Decrypt grant on a data key is equivalent to
+      key possession for anyone holding it. Defenders therefore log and alert
+      on every key operation (caller identity, source, operation type,
+      volume), enforce separation between key-administration and key-use
+      roles, disable wrap/export paths that are not operationally required,
+      and treat anomalous decrypt volume or off-hours use as a key-compromise
+      indicator. Key-use telemetry is the detection surface; the HSM boundary
+      is only as strong as the API policy in front of it.
+    variants:
+      - "Wrap/unwrap oracle abuse (extracting keys through authorized wrapping operations)"
+      - "Decrypt-oracle abuse (bulk decryption via legitimate API calls)"
+      - "Overly broad cloud KMS IAM grants (key-use permission as key possession)"
+    indicators:
+      - "Decrypt or unwrap call volumes far above the application's baseline, or from unexpected identities"
+      - "Key-use operations from new source IPs, regions, or at unusual hours"
+      - "IAM policies granting kms:Decrypt, unwrap, or export on data keys to broad principals"
+      - "Wrap operations targeting keys that were designated non-exportable, or exports to unknown wrapping keys"
+    detection:
+      rule: detect_kms_hsm_api_abuse
+      patterns:
+        - "(?i)(hsm|kms|key.?vault).*(wrap|unwrap|export|decrypt).*(anomal|unauthorized|bulk)"
+        - "(?i)kms:decrypt|key.?usage.*(telemetry|audit|anomal)"
+        - "(?i)non.?exportable.*(wrap|export)|wrap\\s+key.*(unknown|external)"
+    severity: critical
+    mitigations:
+      - "Apply least-privilege IAM to every key: separate key-administration from key-use, and scope grants to specific operations and callers"
+      - "Disable wrap/export/decrypt paths that are not operationally required; mark data keys non-exportable"
+      - "Log every key operation centrally (identity, source, operation, volume) and alert on baseline deviations"
+      - "Rotate keys on any anomalous-use signal and verify attestation of HSM-backed keys where available"
+    examples:
+      - summary: "MITRE ATT&CK T1552.004 documents adversaries collecting private keys and certificates from compromised systems — the key-material theft class this technique detects at the API layer."
+        reference: "https://attack.mitre.org/techniques/T1552/004/"
+      - summary: "NIST SP 800-57 establishes key-lifecycle management principles (separation of duties, usage auditing) that directly counter API-layer key abuse."
+        reference: "https://csrc.nist.gov/pubs/sp/800/57/part/1/rev/5/final"
+    references:
+      - "https://attack.mitre.org/techniques/T1552/004/"
+      - "https://csrc.nist.gov/pubs/sp/800/57/part/1/rev/5/final"
+      - "https://docs.aws.amazon.com/kms/latest/developerguide/logging-using-cloudtrail.html"
+  - id: AEG-T465
+    name: "Full-Disk Encryption Deployment Attack Concepts"
+    category: crypto_attacks
+    description: >-
+      Full-disk encryption is only as strong as its key protectors: the
+      passphrase, TPM binding, and recovery material that guard the volume
+      key. Attackers rarely break AES itself — they attack the deployment:
+      weak passphrases cracked offline against stolen volume headers, TPM-only
+      protectors that auto-unlock a stolen device, and recovery keys scattered
+      across helpdesk tickets and printouts. Defenders audit protector
+      configuration, not just 'encryption enabled'.
+    how_it_works: >-
+      Conceptually, FDE wraps a random volume key with one or more
+      protectors. A passphrase protector feeds the passphrase through a KDF
+      (LUKS, BitLocker, FileVault all tune work factors here); a weak
+      passphrase or a low KDF cost makes offline guessing cheap once the
+      volume header is copied. A TPM-only protector seals the key to boot
+      measurements and unlocks automatically — convenient, but a stolen
+      laptop that boots normally decrypts itself, so TPM+PIN is the
+      meaningfully stronger mode. Recovery keys are the third protector class
+      and the most abused: emailed to users, pasted into tickets, stored in
+      spreadsheets — each copy is a key-compromise waiting to happen.
+      Defenders inventory every device's protector set (flagging TPM-only and
+      missing-PIN), centralize recovery keys in an access-controlled escrow
+      with audit trails, set KDF work factors to current guidance, and watch
+      for volume headers or recovery material appearing outside managed
+      storage. Physical-access classes like evil-maid and cold-boot sit
+      adjacent to this technique; the subject here is protector-configuration
+      and recovery-material abuse.
+    variants:
+      - "Weak-passphrase offline attack (volume-header theft plus KDF guessing economics)"
+      - "TPM-only auto-unlock on stolen devices (missing PIN as the real weakness)"
+      - "Recovery-key sprawl and theft (helpdesk tickets, emails, printouts as key stores)"
+    indicators:
+      - "Fleet devices reporting TPM-only protectors or missing pre-boot PIN on portable machines"
+      - "Recovery keys found in email, tickets, chat logs, or unmanaged file shares"
+      - "Volume headers or key-backup files copied to external or unmanaged storage"
+      - "KDF iteration counts or memory costs far below current vendor guidance on deployed volumes"
+    detection:
+      rule: detect_fde_protector_abuse
+      patterns:
+        - "(?i)(bitlocker|filevault|luks).*(tpm.?only|no\\s*pin|missing\\s*pin|protector)"
+        - "(?i)recovery\\s*(key|password).*(email|ticket|spreadsheet|print|sprawl|exposed)"
+        - "(?i)(luks\\s*header|volume\\s*header|key\\s*backup).*(copied|exposed|unmanaged)"
+    severity: high
+    mitigations:
+      - "Require TPM+PIN (or equivalent two-factor pre-boot authentication) on all portable devices — never TPM-only"
+      - "Centralize recovery keys in an access-controlled, audited escrow; prohibit email, tickets, and printouts"
+      - "Tune KDF work factors to current guidance and re-verify on OS and tooling upgrades"
+      - "Inventory protector configuration fleet-wide via MDM/endpoint telemetry and remediate weak modes"
+    examples:
+      - summary: "NIST SP 800-111 establishes the storage-encryption model where key protectors — not the cipher — are the primary assurance boundary defenders must manage."
+        reference: "https://csrc.nist.gov/pubs/sp/800/111/final"
+      - summary: "CISA's guidance on device encryption emphasizes recovery-key management and pre-boot authentication as the controls that decide whether FDE survives device theft."
+        reference: "https://www.cisa.gov/news-events/news/securing-our-mobile-world"
+    references:
+      - "https://csrc.nist.gov/pubs/sp/800/111/final"
+      - "https://attack.mitre.org/techniques/T1552/004/"
+      - "https://www.cisa.gov/news-events/news/securing-our-mobile-world"
+
+  - id: AEG-T466
+    name: "SSH Key Management Abuse: Sprawl, Stale Keys, Shared Secrets"
+    category: crypto_attacks
+    description: >-
+      SSH keys accumulate silently: engineers generate them once, copy them
+      across laptops and jump hosts, share them with contractors, and never
+      rotate them — while authorized_keys files grow entries nobody owns.
+      Every stale key is a persistent, unmonitored access path, and every
+      shared private key means an incident cannot be attributed or cleanly
+      revoked. Defenders treat SSH keys as credentials with lifecycles:
+      inventoried, attributed, rotated, and expired.
+    how_it_works: >-
+      Conceptually, an SSH private key is a password that never expires and
+      is trivially copied. The failure modes defenders see: keys generated
+      years ago still valid on production hosts; the same private key on five
+      engineers' laptops and a CI runner; ex-employees' keys lingering in
+      authorized_keys; private keys committed to repos or baked into images;
+      and passphrase-less keys on shared jump hosts. Because SSH
+      authentication is cryptographic, none of this triggers password-expiry
+      or failed-login telemetry — access just works, indefinitely. Detection
+      is inventory-shaped: scan authorized_keys across the fleet, attribute
+      every key to an owner, flag keys older than policy, keys with no
+      passphrase where policy requires one, and keys appearing on hosts their
+      owner never uses. The structural fix is SSH certificates (short-lived,
+      centrally issued, no authorized_keys sprawl) or at minimum enforced
+      rotation with expiry.
+    variants:
+      - "Stale and orphaned keys (ex-employees, forgotten automation, never-rotated access)"
+      - "Shared private keys across people and systems (unattributable, unrevocable access)"
+      - "Exposed private keys (repos, images, backups, chat) enabling silent reuse"
+    indicators:
+      - "authorized_keys entries older than rotation policy, or belonging to departed personnel"
+      - "The same public key deployed across hosts its owner has no business accessing"
+      - "Private key material discovered in source repos, container images, backups, or chat logs"
+      - "Passphrase-less keys on shared jump hosts or long-lived automation accounts with no rotation record"
+    detection:
+      rule: detect_ssh_key_sprawl
+      patterns:
+        - "(?i)authorized_keys.*(stale|orphan|unrotated|sprawl|unknown\\s+owner)"
+        - "(?i)(id_rsa|id_ed25519|\\.pem|private\\s+key).*(repo|github|commit|image|backup|shared)"
+        - "(?i)ssh\\s*(key|access).*(never\\s*rotated|years?\\s*old|no\\s*expir)"
+    severity: high
+    mitigations:
+      - "Maintain a centralized SSH key inventory: every key attributed to an owner, with issuance date and rotation deadline"
+      - "Migrate to SSH certificates (short-lived, centrally issued) to eliminate authorized_keys sprawl structurally"
+      - "Enforce rotation on personnel changes and on schedule; automatically revoke keys of departed staff"
+      - "Scan repos, images, and backups for private key material and treat any hit as a key-compromise event"
+    examples:
+      - summary: "MITRE ATT&CK T1552.004 covers adversaries harvesting private SSH keys from compromised systems — sprawl and exposure are what make those keys findable."
+        reference: "https://attack.mitre.org/techniques/T1552/004/"
+      - summary: "CISA's guidance on securing remote access stresses credential lifecycle management; unrotated SSH keys are a recurring finding in incident-response engagements."
+        reference: "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-347a"
+    references:
+      - "https://attack.mitre.org/techniques/T1552/004/"
+      - "https://www.rfc-editor.org/rfc/rfc4252.txt"
+      - "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-347a"
+
+  - id: AEG-T467
+    name: "Crypto-Agility Failure Modes: When Algorithm Transitions Stall"
+    category: crypto_attacks
+    description: >-
+      Algorithms die — MD5, SHA-1, 3DES, RC4, TLS 1.0 all went from standard
+      to liability — and every deprecation becomes a race between defenders
+      migrating and attackers exploiting the stragglers. Transitions fail in
+      predictable ways: hardcoded algorithm identifiers, protocol stacks that
+      cannot negotiate anything newer, embedded devices that will never be
+      patched, and nobody owning the inventory of what is deployed where.
+      Defenders win the race by knowing their cryptographic estate before the
+      deadline arrives.
+    how_it_works: >-
+      Conceptually, crypto-agility is the ability to replace an algorithm
+      everywhere it is used without redesigning the system — and most estates
+      lack it. The failure pattern repeats: a weakness is published
+      (SWEET32 for 64-bit block ciphers, practical SHA-1 collisions), a
+      sunset date is set (browser SHA-1 distrust in 2017, PCI DSS TLS 1.0
+      deadline, NIST 3DES disallowance), and then the long tail of legacy —
+      payment terminals, industrial controllers, old Java stacks, hardcoded
+      cipher strings — keeps negotiating the dead algorithm for years. Each
+      straggler is an attacker foothold: downgrade pressure, collision
+      forgery, or sweet32-style ciphertext recovery against sessions the
+      organization assumed were modern. Defenders detect stragglers through
+      handshake census (what versions and ciphers are actually negotiated on
+      the wire), dependency and binary scans for deprecated primitives, and
+      procurement rules that require algorithm agility; mitigation is
+      inventory-first migration with explicit ownership and deadlines.
+    variants:
+      - "Protocol-version stragglers (TLS 1.0/1.1, SSLv3 lingering on legacy endpoints)"
+      - "Deprecated-cipher stragglers (3DES, RC4, export suites in old stacks)"
+      - "Hardcoded-algorithm designs (no negotiation path, migration requires re-engineering)"
+    indicators:
+      - "Handshake telemetry showing deprecated TLS versions or ciphersuites negotiated by production endpoints"
+      - "Codebase or dependency scans referencing MD5, SHA-1, DES, 3DES, or RC4 in security-relevant paths"
+      - "Embedded or OT-adjacent devices with no upgrade path still terminating encrypted sessions"
+      - "Missed deprecation deadlines (PCI, browser, NIST) with no owned migration plan"
+    detection:
+      rule: detect_crypto_agility_gaps
+      patterns:
+        - "(?i)(tls\\s*1\\.[01]|sslv?[23]|\\b3des\\b|\\brc4\\b).*(negotiat|enabled|support|handshake)"
+        - "(?i)(sha-?1|\\bmd5\\b|\\bdes\\b).*(sign|cert|encrypt|cipher|legacy)"
+        - "(?i)crypto.?agility|crypto.*(inventory|estate|census)|algorithm.*(deprecat|sunset|migration)"
+    severity: medium
+    mitigations:
+      - "Build and maintain a cryptographic inventory (algorithms, versions, libraries) across code, infrastructure, and devices"
+      - "Design for agility: negotiate algorithms, never hardcode them; parameterize cipher choices in configuration"
+      - "Track deprecation timelines (NIST, CAB Forum, PCI) as compliance-grade deadlines with named owners"
+      - "Quarantine or sunset stragglers: disable deprecated versions/ciphers at the edge and segment unpatchable devices"
+    examples:
+      - summary: "The SWEET32 research (2016) showed 3DES's 64-bit blocks enabling practical ciphertext recovery, accelerating the industry's 3DES deprecation — a textbook agility failure for slow movers."
+        reference: "https://sweet32.info/"
+      - summary: "Browser vendors' SHA-1 distrust timeline (completed 2017) forced a web-wide migration; organizations without certificate inventory scrambled at the deadline."
+        reference: "https://security.googleblog.com/2016/11/sha-1-certificates-in-chrome.html"
+    references:
+      - "https://sweet32.info/"
+      - "https://csrc.nist.gov/pubs/sp/800/131/a/rev/2/final"
+      - "https://www.rfc-editor.org/rfc/rfc7525.txt"
+  - id: AEG-T468
+    name: "Negotiation Downgrade in Non-TLS Protocols: SSH, VPN, STARTTLS"
+    category: crypto_attacks
+    description: >-
+      Every protocol that negotiates its security parameters — SSH cipher and
+      MAC selection, VPN IKE proposals, SMTP/IMAP STARTTLS upgrades — can be
+      pushed toward its weakest option by an attacker on the path. The
+      mechanics differ from TLS downgrade (covered in `algorithms` T195), but
+      the defender's question is the same: did these two endpoints settle on
+      the strongest mutually supported option, or on something weaker? Terrapin
+      (2023) showed even SSH's handshake could be manipulated to strip
+      security extensions.
+    how_it_works: >-
+      Conceptually, negotiation downgrade exploits the gap between what peers
+      support and what they select: the attacker suppresses or alters the
+      strong options in transit so both ends agree on a weak one. In SSH,
+      the Terrapin attack (CVE-2023-48795) manipulated sequence numbers
+      during the handshake to strip negotiated extensions like
+      countermeasures against keystroke-timing attacks — the session stayed
+      encrypted but lost hardening. In VPNs, IKEv1 aggressive mode and
+      legacy proposals (DES, MD5-based auth) can be forced where policy
+      still permits them; PPTP's MS-CHAPv2 is cryptographically broken yet
+      persists in legacy deployments. In mail, STARTTLS-stripping removes
+      the upgrade command so the session silently stays plaintext. Defenders
+      detect the pattern the same way everywhere: negotiated parameters
+      weaker than both endpoints' capabilities, handshake telemetry showing
+      strong-then-weak retries, and policy that disables the weak options
+      outright so there is nothing to downgrade to.
+    variants:
+      - "SSH handshake manipulation (Terrapin-class extension stripping, weak kex/MAC selection)"
+      - "VPN proposal downgrade (IKEv1 aggressive mode, DES/MD5 legacy proposals, PPTP persistence)"
+      - "STARTTLS stripping in mail and messaging protocols (silent plaintext fallback)"
+    indicators:
+      - "SSH sessions negotiating deprecated key-exchange, cipher, or MAC algorithms despite clients offering strong ones"
+      - "VPN tunnels establishing with IKEv1, DES/3DES, or MD5-based authentication where policy forbids them"
+      - "Mail flows to partners that should be TLS-encrypted observed in plaintext after STARTTLS-capable handshakes"
+      - "Handshake logs showing strong-option attempts followed by weak-option success from the same peer"
+    detection:
+      rule: detect_protocol_negotiation_downgrade
+      patterns:
+        - "(?i)(terrapin|cve-2023-48795|ssh.*(extension\\s*strip|sequence.*manipulat))"
+        - "(?i)ssh.*(kex|cipher|mac).*(downgrade|weak|deprecated|negotiat)"
+        - "(?i)(ikev1|pptp|ms-?chapv?2|starttls).*(downgrade|strip|fallback|plaintext)"
+    severity: high
+    mitigations:
+      - "Disable weak options entirely (deprecated SSH kex/ciphers/MACs, IKEv1, DES/3DES, PPTP) so negotiation cannot select them"
+      - "Deploy Terrapin countermeasures: update OpenSSH and peers to versions implementing the strict key-exchange countermeasure"
+      - "Enforce TLS for mail transport (MTA-STS, DANE) rather than relying on opportunistic STARTTLS"
+      - "Monitor negotiated parameters continuously and alert when sessions settle below the configured strong baseline"
+    examples:
+      - summary: "The Terrapin attack (CVE-2023-48795, disclosed 2023) broke SSH channel integrity at handshake time, stripping negotiated security extensions — a prefix-truncation attack on a protocol long assumed immune to downgrade."
+        reference: "https://terrapin-attack.com/"
+      - summary: "RFC 7435 documents opportunistic security design principles, noting that downgrade resistance must be designed in — STARTTLS-style upgrades fail open by default."
+        reference: "https://www.rfc-editor.org/rfc/rfc7435.txt"
+    references:
+      - "https://terrapin-attack.com/"
+      - "https://www.rfc-editor.org/rfc/rfc7435.txt"
+      - "https://www.cisa.gov/news-events/alerts/2023/12/18/terrapin-ssh-attack"
+
+  - id: AEG-T469
+    name: "Key-Escrow and Recovery-Mechanism Abuse"
+    category: crypto_attacks
+    description: >-
+      Any system that can recover keys without the owner's participation —
+      enterprise key escrow, recovery agents, 'lawful access' backdoors — is
+      a skeleton key by design, and attackers treat it as the highest-value
+      target in the cryptographic estate. Compromise the escrow and every key
+      it guards falls at once; abuse the recovery workflow and social
+      engineering becomes key recovery. Defenders manage escrow as a
+      critical trust root: minimal scope, split control, and fully audited
+      access.
+    how_it_works: >-
+      Conceptually, escrow inverts the normal security assumption: instead of
+      'no key, no data', it creates a second path to every key. The attack
+      surface follows: the escrow store itself (a database of recovery keys
+      is the single most valuable file in the enterprise), the recovery
+      workflow (helpdesk-driven key recovery is social-engineerable — the
+      attacker becomes the 'locked-out executive'), and mandated-access
+      mechanisms where they exist (the 1990s Clipper chip debate established
+      the enduring lesson: a backdoor for the good guys is a backdoor for
+      whoever finds it). Defenders apply the same discipline as for root CAs:
+      hardware-backed escrow stores, multi-person (split-knowledge) recovery
+      authorization, immutable audit logs of every escrow access, strict
+      identity verification in recovery workflows, and regular drills proving
+      recovery works without weakening day-to-day security. Policy framing
+      matters: every escrow capability should have a documented owner,
+      scope, and sunset review.
+    variants:
+      - "Escrow-store compromise (bulk recovery-key theft as total key compromise)"
+      - "Recovery-workflow social engineering (impersonating locked-out users to helpdesk)"
+      - "Mandated-access/backdoor mechanisms (the Clipper-class architectural weakness)"
+    indicators:
+      - "Escrow or recovery-key stores without hardware backing, split control, or access audit trails"
+      - "Helpdesk key-recovery workflows lacking strong identity verification steps"
+      - "Recovery keys accessible to broad administrator groups rather than a named, minimal set"
+      - "Undocumented or unreviewed escrow capabilities discovered during cryptographic inventory"
+    detection:
+      rule: detect_escrow_recovery_abuse
+      patterns:
+        - "(?i)key\\s*escrow|escrowed\\s+key|recovery\\s+agent"
+        - "(?i)(clipper|lawful.?access|backdoor).*(crypto|encrypt|escrow)"
+        - "(?i)recovery\\s*(key|workflow|portal).*(abuse|bypass|unaudit|social.?engineer)"
+    severity: high
+    mitigations:
+      - "Back escrow stores with hardware (HSM) and require split-knowledge / multi-person authorization for any recovery"
+      - "Log every escrow and recovery access immutably, alert on out-of-pattern use, and review access quarterly"
+      - "Harden recovery workflows with strong identity verification resistant to impersonation and pretexting"
+      - "Document every escrow capability with owner, scope, and sunset review; eliminate escrow that no longer serves a purpose"
+    examples:
+      - summary: "The 1990s Clipper chip proposal — key escrow built into encryption hardware — collapsed under the analysis that any universal recovery mechanism becomes a universal target, a lesson still cited in lawful-access debates."
+        reference: "https://www.epic.org/crypto/clipper/"
+      - summary: "NIST SP 800-57's key-management guidance treats recovery and escrow as high-risk lifecycle phases requiring separation of duties and audit — the control set this technique checks for."
+        reference: "https://csrc.nist.gov/pubs/sp/800/57/part/1/rev/5/final"
+    references:
+      - "https://www.epic.org/crypto/clipper/"
+      - "https://csrc.nist.gov/pubs/sp/800/57/part/1/rev/5/final"
+      - "https://www.rfc-editor.org/rfc/rfc1984.txt"
+
+  - id: AEG-T470
+    name: "Cryptographic Inventory (CBOM) as Detection Prerequisite"
+    category: crypto_attacks
+    description: >-
+      Defenders cannot detect misuse of cryptography they do not know exists:
+      every undocumented cipher, library version, certificate, and key is a
+      blind spot where downgrade, collision, and mis-issuance attacks hide.
+      A Cryptography Bill of Materials (CBOM) — the crypto-focused extension
+      of software supply-chain transparency — makes the estate visible:
+      which algorithms, which libraries, which keys, where. It is the
+      prerequisite control on which every other technique in this pack
+      depends.
+    how_it_works: >-
+      Conceptually, a CBOM answers three questions continuously: what
+      cryptographic objects exist (algorithms, modes, key lengths, library
+      versions, certificates, protocol versions), where they are used (which
+      services, endpoints, and data flows), and what state they are in
+      (current, deprecated, unknown). Defenders build it from multiple
+      sources because no single source is complete: static scans of code and
+      dependencies for crypto API usage, handshake census from network
+      telemetry (what TLS versions and ciphers are really negotiated),
+      certificate inventory from CT logs and internal CAs, and SBOM feeds
+      enriched with crypto metadata (CycloneDX's CBOM support standardizes
+      the format). The detection value is immediate: a CBOM turns 'is
+      anything still on SHA-1?' from a forensic project into a query, makes
+      post-quantum migration plannable (bridging to `algorithms` T202's PQC
+      transition topic — the inventory is its input, not its duplicate), and
+      exposes shadow crypto (developer-rolled TLS, vendored old OpenSSL)
+      that no policy ever approved.
+    variants:
+      - "Code-and-dependency crypto census (static discovery of algorithms and libraries)"
+      - "Network handshake census (observed protocol versions and ciphersuites)"
+      - "Certificate and key inventory (CT logs, internal CAs, key stores unified)"
+    indicators:
+      - "No maintained inventory of cryptographic algorithms, libraries, or certificates exists"
+      - "Handshake census revealing ciphers or protocol versions absent from the approved list"
+      - "Vendored or statically linked crypto libraries invisible to dependency scanners"
+      - "Certificates or keys discovered in the estate with no owner and no issuance record"
+    detection:
+      rule: detect_crypto_inventory_gaps
+      patterns:
+        - "(?i)\\bcbom\\b|crypto(graphic|graphy)?\\s*(bill\\s*of\\s*materials|inventory|estate|census)"
+        - "(?i)(cyclonedx|spdx).*(crypto|algorithm|cbom)"
+        - "(?i)(shadow|unknown|unapproved|undocumented)\\s+(crypto|cipher|tls|library|certificate)"
+    severity: medium
+    mitigations:
+      - "Establish a CBOM program: standardized format (CycloneDX), continuous collection, named ownership"
+      - "Fuse code scans, SBOM feeds, handshake census, and CT-log monitoring into one crypto inventory"
+      - "Gate deployments on inventory registration: no new crypto usage without an approved, recorded entry"
+      - "Use the inventory to drive deprecation, post-quantum migration planning, and incident scoping"
+    examples:
+      - summary: "CycloneDX's Cryptography Bill of Materials support gives defenders a standard format for crypto inventory — the machine-readable foundation this technique's detections consume."
+        reference: "https://cyclonedx.org/capabilities/cbom/"
+      - summary: "NIST's post-quantum migration guidance (SP 1800-38) makes cryptographic discovery the mandatory first phase — migration is impossible without the inventory this technique builds."
+        reference: "https://csrc.nist.gov/pubs/sp/1800/38/final"
+    references:
+      - "https://cyclonedx.org/capabilities/cbom/"
+      - "https://csrc.nist.gov/pubs/sp/1800/38/final"
+      - "https://www.cisa.gov/resources-tools/resources/software-bill-materials-sbom"
