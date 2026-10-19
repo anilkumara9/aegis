@@ -14,7 +14,8 @@ from .agent import AgentLoop
 from .guard import Policy
 from .kb import KB
 from .providers import get_provider
-from .skills import SKILLS, emulate, hunt, plan_attack_surface
+from .skills import SKILLS, build, emulate, fix, hunt, index_cmd, \
+    plan_attack_surface, refactor, repomap_cmd, test_suite
 from .tools import safe_path
 from .tools.registry import TOOL_NAMES
 
@@ -160,7 +161,26 @@ def run_repl(provider_name: str = "", model: str = "",
     def approval_cb(findings, tool="", args=None):
         return interactive_approval(findings, tool, args, cwd=cwd)
 
-    policy = Policy(allowed_tools=set(TOOL_NAMES),
+    # v0.7 Lane A: discover plugins and expose them as agent-loop tools.
+    # Non-fatal by design: a broken plugin dir must never stop the REPL.
+    plugin_names: list[str] = []
+    try:
+        from . import plugins as plugins_mod
+        from .tools.registry import TOOLS
+        _specs, _warns = plugins_mod.discover()
+        for _w in _warns:
+            print(f"[plugins] warning: {_w}")
+        _added, _collide = plugins_mod.register_plugin_tools(TOOLS, _specs)
+        for _w in _collide:
+            print(f"[plugins] warning: {_w}")
+        plugin_names = _added
+        if plugin_names:
+            print(f"[plugins] loaded: {', '.join(plugin_names)}")
+    except Exception as e:  # noqa: BLE001 - plugin boot must never be fatal
+        print(f"[plugins] discovery failed ({type(e).__name__}: {e}); "
+              f"continuing without plugins.")
+
+    policy = Policy(allowed_tools=set(TOOL_NAMES) | set(plugin_names),
                     approval_callback=approval_cb,
                     egress_allowlist=None,  # any egress pauses for approval
                     name="repl",
@@ -309,6 +329,24 @@ def _handle_slash(line: str, loop: AgentLoop,
                   "the guard screens every step, then the approved plan runs")
         else:
             loop.run(rest, plan_first=True)
+        return False
+    if cmd == "/build":
+        print(build(rest, kb))
+        return False
+    if cmd == "/test":
+        print(test_suite(rest, kb))
+        return False
+    if cmd == "/fix":
+        print(fix(rest, loop, kb))
+        return False
+    if cmd == "/refactor":
+        print(refactor(rest, loop, kb))
+        return False
+    if cmd == "/repomap":
+        print(repomap_cmd(rest or ".", kb))
+        return False
+    if cmd == "/index":
+        print(index_cmd(rest or ".", kb))
         return False
     if cmd == "/guard":
         sub = (rest or "status").lower()

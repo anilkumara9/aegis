@@ -14,6 +14,13 @@ from pathlib import Path
 
 from .detect import secrets as sec
 
+# v0.7 Lane A: polyglot coding skills (lazy imports keep skills importable
+# without the agent loop; tdd needs no skills import, so this is safe).
+from . import polyglot
+from . import repomap as repomap_mod
+from . import tdd as tdd_mod
+from .index import CodeIndex, query_index
+
 # Static audit patterns: (kind, regex, kb_hint)
 AUDIT_PATTERNS: list[tuple[str, str, str]] = [
     ("hardcoded_secret",
@@ -265,11 +272,247 @@ def emulate(path: str, campaign: str | None = None, kb=None) -> str:
         return str(exc)
 
 
+# ---------------------------------------------------------------------------
+# v0.7 Lane A — polyglot coding skills: /build /test /fix /refactor
+# /repomap /index. All operate on the user's OWN local directories only
+# (same local-only rule as /hunt). /build and /test run the project's
+# real toolchain; /fix and /refactor drive the agent loop (dev mode).
+# ---------------------------------------------------------------------------
+
+def _coding_target(target: str, skill: str) -> tuple[Path | None, str, str]:
+    """Split '<dir> [extra]' for coding skills. Returns (dir, extra, error)."""
+    target = (target or "").strip()
+    if not target:
+        return None, "", f"usage: {skill} <local-directory> [args]"
+    first, _, extra = target.partition(" ")
+    p, err = _resolve_local_dir(first, skill)
+    if p is None:
+        return None, "", err
+    return p, extra.strip(), ""
+
+
+def _render_run_results(title: str, results: "list") -> str:
+    lines = [title, ""]
+    if not results:
+        lines.append("No toolchains detected — nothing to run.")
+        return "\n".join(lines)
+    for r in results:
+        step = r.steps[0] if r.steps else None
+        mark = "✓" if r.ok else "✗"
+        lines.append(f"{mark} [{r.language}] {r.summary}")
+        if step is not None:
+            if step.skipped_missing:
+                lines.append(f"  skipped: {step.skipped_missing}")
+            else:
+                lines.append(f"  $ {' '.join(step.argv)}"
+                             f" (exit {step.returncode}"
+                             f"{', TIMEOUT' if step.timed_out else ''})")
+                if step.output.strip():
+                    lines.append("  ```")
+                    lines.extend(f"  {l}" for l in
+                                 step.output.splitlines()[-25:])
+                    lines.append("  ```")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def build(path: str, kb=None) -> str:
+    """Detect the toolchain and run the project's build. Real commands."""
+    p, _, err = _coding_target(path, "/build")
+    if p is None:
+        return err
+    results = polyglot.run_build(p)
+    return _render_run_results(f"# /build: {p}", results)
+
+
+def test_suite(path: str, kb=None) -> str:
+    """Run the project's real test suite and summarize pass/fail."""
+    p, _, err = _coding_target(path, "/test")
+    if p is None:
+        return err
+    results = polyglot.run_tests(p)
+    return _render_run_results(f"# /test: {p}", results)
+
+
+def _require_dev(loop, skill: str) -> str:
+    if loop is None:
+        return (f"refused: {skill} needs a live agent session to drive "
+                f"code changes.")
+    if getattr(loop, "mode", "dev") != "dev":
+        return (f"refused: {skill} writes code — switch to dev mode first "
+                f"(/mode dev). Plan mode is read-only by guard design.")
+    return ""
+
+
+def fix(target: str, loop=None, kb=None) -> str:
+    """Fix failing tests: run the suite, then drive the agent loop.
+
+    Usage: /fix <local-directory> [error-file-or-text]
+    Caps at 5 TDD rounds, then reports honestly "stuck" with what was
+    tried. Never invents a fix: the test suite is the verdict.
+    """
+    denied = _require_dev(loop, "/fix")
+    if denied:
+        return denied
+    p, extra, err = _coding_target(target, "/fix")
+    if p is None:
+        return err
+    error_text = ""
+    if extra:
+        ep = Path(extra).expanduser()
+        if ep.is_file():
+            try:
+                error_text = ep.read_text(encoding="utf-8",
+                                          errors="replace")[:8000]
+            except OSError:
+                error_text = ""
+        else:
+            error_text = extra[:8000]
+    # Baseline: run the suite ourselves. If an error was handed in, use it.
+    baseline = polyglot.run_tests(p)
+    failing = [r for r in baseline if not r.ok]
+    base_note = " | ".join(r.summary for r in baseline) or "no results"
+    if not failing:
+        extra_note = (" (the supplied error did not reproduce locally)"
+                      if error_text else "")
+        return (f"# /fix: {p}\n\nSuite is already GREEN: {base_note}"
+                f"{extra_note}\nNothing to fix.")
+    task = (f"Fix the failing tests in {p}. Baseline: {base_note}."
+            + (f" Reported error:\n{sec.redact(error_text)[0][:4000]}"
+               if error_text else ""))
+    res = tdd_mod.tdd_loop(loop, p, task, max_rounds=5)
+    lines = [f"# /fix: {p}", "",
+             f"Baseline: {base_note}", "",
+             f"Result: **{res['status'].upper()}** — {res['summary']}", ""]
+    if res["status"] == "stuck":
+        lines.append("The loop is stuck: it tried, the suite stayed red, "
+                     "and it stopped instead of inventing a fix. What was "
+                     "tried is itemized per round in the session audit log "
+                     "(event: tdd_step). Suggested next step: read the "
+                     "failing test output above and fix by hand, then "
+                     "/test again.")
+    return "\n".join(lines)
+
+
+def refactor(target: str, loop=None, kb=None) -> str:
+    """Refactor for clarity, keep behavior: re-runs tests after.
+
+    Usage: /refactor <local-directory> [relative-target]
+    Baseline test run -> agent refactor turn -> test run again. A
+    green->red transition is reported as a REGRESSION, not hidden.
+    """
+    denied = _require_dev(loop, "/refactor")
+    if denied:
+        return denied
+    p, extra, err = _coding_target(target, "/refactor")
+    if p is None:
+        return err
+    scope = extra or "the project"
+    if extra:
+        sp = (p / extra).resolve()
+        try:
+            sp.relative_to(p.resolve())
+        except ValueError:
+            return f"refused: target '{extra}' escapes {p}"
+        if not sp.exists():
+            return f"refused: target '{extra}' does not exist under {p}"
+    before = polyglot.run_tests(p)
+    before_ok = bool(before) and all(r.ok for r in before)
+    before_note = " | ".join(r.summary for r in before) or "no test results"
+    prompt = (
+        f"Refactor {scope} in {p} for clarity and readability: better "
+        f"names, smaller functions, remove duplication. Do NOT change "
+        f"behavior, do NOT change public APIs, do NOT add features. "
+        f"Use write/edit tools; keep the diff minimal. Do NOT run the "
+        f"test suite yourself — I will run it after.")
+    try:
+        loop.run(prompt)
+    except Exception as e:  # noqa: BLE001 - surfaced honestly below
+        return (f"# /refactor: {p}\n\nRefactor turn raised "
+                f"{type(e).__name__}: {e}\nNo post-refactor test run was "
+                f"possible — inspect the tree before trusting it.")
+    after = polyglot.run_tests(p)
+    after_ok = bool(after) and all(r.ok for r in after)
+    after_note = " | ".join(r.summary for r in after) or "no test results"
+    lines = [f"# /refactor: {p} (scope: {scope})", "",
+             f"Tests before: {before_note}",
+             f"Tests after:  {after_note}", ""]
+    if before_ok and after_ok:
+        lines.append("**Refactor clean**: suite green before and after — "
+                     "behavior preserved as far as the tests can tell.")
+    elif not before_ok and not after_ok:
+        lines.append("Suite was red before and is still red — the refactor "
+                     "did not make things worse, but nothing is proven "
+                     "green. Run /fix to chase the failures.")
+    elif before_ok and not after_ok:
+        lines.append("**REGRESSION**: suite was GREEN before the refactor "
+                     "and is RED now. The refactor broke behavior — review "
+                     "the diff and run /fix, or revert.")
+    else:
+        lines.append("Suite went from red to GREEN — the refactor fixed "
+                     "whatever was failing (or the failures were flaky; "
+                     "re-run /test to confirm).")
+    return "\n".join(lines)
+
+
+def repomap_cmd(path: str, kb=None) -> str:
+    """Show the compact repo map for a local directory."""
+    p, err = _resolve_local_dir(path or ".", "/repomap")
+    if p is None:
+        return err
+    return repomap_mod.render_repo_map(p)
+
+
+def index_cmd(target: str, kb=None) -> str:
+    """Codebase index: stats, or ranked file retrieval for a query.
+
+    Usage: /index <local-directory> [query]
+    """
+    p, extra, err = _coding_target(target or ".", "/index")
+    if p is None:
+        return err
+    if not extra:
+        idx = CodeIndex.load(p)
+        fresh = False
+        if idx is None:
+            idx = CodeIndex.build(p)
+            idx.save()
+            fresh = True
+        else:
+            changed = idx.check()
+            if changed:
+                idx.save()
+        st = idx.stats()
+        lines = [f"# Code index: {st['root']}",
+                 f"Files: {st['files']} | symbols: {st['symbols']} "
+                 f"({'freshly built' if fresh else 'from cache, refreshed'})",
+                 ""]
+        for lang, n in sorted(st["languages"].items(),
+                              key=lambda kv: (-kv[1], kv[0]))[:12]:
+            lines.append(f"- {lang}: {n} files")
+        lines += ["", "Query it: /index <dir> <keywords or symbol name>"]
+        return "\n".join(lines)
+    ranked = query_index(p, extra, top_k=10)
+    lines = [f"# Index query '{extra}' in {p}", ""]
+    if not ranked:
+        lines.append("No indexed files matched.")
+    else:
+        for score, rel in ranked:
+            lines.append(f"- {rel}  (score {score:.0f})")
+    return "\n".join(lines)
+
+
 SKILLS = {
     "/hunt": "Audit YOUR OWN local codebase for vulnerabilities: /hunt <dir>",
     "/plan": "Hacker-mindset attack plan for YOUR OWN code (read-only): /plan <dir>",
     "/emulate": "Purple-team adversary campaign emulation on YOUR OWN code: /emulate <dir> [campaign]",
     "/planexec": "Plan-then-execute a complex task: model proposes steps, guard screens, approved plan runs",
+    "/build": "Detect toolchain and run the project build: /build <dir>",
+    "/test": "Run the project's real test suite: /test <dir>",
+    "/fix": "Fix failing tests via the agent loop (max 5 rounds): /fix <dir> [error-file-or-text]",
+    "/refactor": "Refactor for clarity, re-run tests after: /refactor <dir> [target]",
+    "/repomap": "Compact project intelligence map: /repomap <dir>",
+    "/index": "Codebase index stats or ranked file search: /index <dir> [query]",
     "/mode": "Switch dev/plan mode: /mode <dev|plan>",
     "/guard": "Guard session status and kill-switch: /guard [status|kill]",
     "/scan": "Analyze a tool-call trace: /scan <trace.jsonl>",
