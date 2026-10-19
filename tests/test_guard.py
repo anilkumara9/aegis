@@ -55,8 +55,17 @@ def test_egress_allowlist_enforced(kb):
     assert v.decision == "deny" and "allowlist" in v.reason
 
 
-def test_egress_without_allowlist_needs_approval(kb):
+def test_egress_without_allowlist_clean_allowed(kb):
+    # Policy change (v0.6): allowlist=None gates only RISKY egress
+    # (secrets/taint/sensitive). Clean egress is allowed without approval.
     s = _sess(egress_allowlist=None)
+    v = s.check_call("webfetch", {"url": "https://example.com/"})
+    assert v.decision == "allow"
+
+
+def test_egress_without_allowlist_risky_needs_approval(kb):
+    s = _sess(egress_allowlist=None)
+    s.check_call("read", {"path": ".env"})  # taints the session
     v = s.check_call("webfetch", {"url": "https://example.com/"})
     assert v.decision == "needs_approval"
 
@@ -64,6 +73,7 @@ def test_egress_without_allowlist_needs_approval(kb):
 def test_approval_escalation_callback(kb):
     s = _sess(egress_allowlist=None,
               approval_callback=lambda findings: True)
+    s.check_call("read", {"path": ".env"})  # taints the session
     v = s.check_call("webfetch", {"url": "https://example.com/"})
     assert v.decision == "needs_approval"
     assert s.resolve(v) is True
@@ -71,6 +81,7 @@ def test_approval_escalation_callback(kb):
 
 def test_no_callback_defaults_to_deny(kb):
     s = _sess(egress_allowlist=None)
+    s.check_call("read", {"path": ".env"})  # taints the session
     v = s.check_call("webfetch", {"url": "https://example.com/"})
     assert v.decision == "needs_approval"
     assert s.resolve(v) is False

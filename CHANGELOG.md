@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.6.0 (2026-10-19) — "Unmatched": proving ground + training wave 2
+
+Founder goal: **no AI hacking agent stands against Aegis.**
+
+- **Proving ground** (`aegis eval`): 306 scripted adversarial scenarios
+  (prompt injection direct/indirect, exfiltration, tool-output poisoning,
+  MCP/tool-description poisoning, jailbreaks, multi-stage campaigns) plus
+  64 benign negative controls. Each scenario drives the REAL AgentLoop +
+  guard via a scripted MockProvider; verdicts are read from the guard's
+  own JSONL audit log. `aegis eval [--json]` runs the battery offline and
+  writes `docs/SCORECARD.md`. Final: **237/242 hostile caught (97.9%),
+  0 false positives on 64 benign, 5 honest residual misses** (each with a
+  written reason: cross-call slow-drip reassembly, package-registry
+  vetting, dual-use process kill).
+- **Training wave 2**: 8 new KB domains (ML serialization attacks,
+  fraud/BEC operations, insider threat patterns, ICS/OT attacks,
+  wiper/destruction, mobile attacks, cryptographic attacks,
+  firmware/hardware attacks) — **386 → 482 techniques, 31 → 39 packs**,
+  all at TTP/detection level, ≥2 compiling detection regexes each.
+- **Guard gap-fills from the battery loop** (every miss → detection →
+  re-run): escape-decoding layer for secrets (base64/hex/URL/unicode),
+  whitespace-collapsed secret scan (split-across-newline keys),
+  untrusted-content injection taint (tool outputs steering egress),
+  staged-file chain detection, raw-channel (nc/ftp/ws) and DNS/ICMP
+  exfil rules, sensitive-file upload gating, clipboard-pull gating,
+  steered prepare-and-run (chmod +x) chain breaking, self-protection
+  (guard-disable attempts denied), user@host and private-key-via-shell
+  rules. Egress policy: allowlist=None now gates only risky egress
+  (secret/tainted/sensitive); clean egress is allowed — zero false
+  positives on the benign battery.
+- Baseline → final: 201 caught / 41 misses / 10 FP → **237 caught /
+  5 honest misses / 0 FP**.
+
 ## v0.5.0 (2026-10-18) — god-level power + demo-ectomy
 
 Founder order: "upgrade everything more powerfully; god-level super power;

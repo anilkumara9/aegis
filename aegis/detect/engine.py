@@ -100,7 +100,9 @@ PRIVESC_CATS = ["privilege_escalation"]
 
 SENSITIVE_PATH_RE = re.compile(
     r"(?i)(\.env\b|\.aws/credentials|id_rsa|\.pem\b|secrets?\.ya?ml|"
-    r"credentials\.json|netrc|\.gnupg/|keychain|vault\.db)")
+    r"credentials\.json|netrc|\.gnupg/|keychain|vault\.db|"
+    r"\.bash_history|\.zsh_history|/proc/self/environ|authorized_keys|"
+    r"\bsecrets?\b)")
 EXEC_TOOLS = {"bash", "exec", "shell", "run_command", "terminal"}
 NETWORK_TOOLS = {"webfetch", "curl", "http_request", "wget"}
 

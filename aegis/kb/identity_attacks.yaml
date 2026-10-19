@@ -299,7 +299,7 @@ techniques:
       click grants persistent API access that survives password changes and
       generates no failed logins. Separately, OAuth tokens themselves are
       stolen from devices, logs, and misconfigured apps, then replayed
-      (bridge to AEG-T1528-style token abuse). This differs from AEG-T137
+      (token-replay abuse). This differs from AEG-T137
       (helpdesk social engineering for MFA resets): that attacks the *recovery
       process*, while this abuses the *authorization framework* users are
       trained to trust. Defenses: app-consent governance, least-privilege
